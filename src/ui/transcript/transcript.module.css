@@ -1,0 +1,271 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 0 8px;
+}
+
+.search {
+  position: relative;
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.search svg {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--tt-muted);
+  pointer-events: none;
+}
+
+.search input {
+  padding-left: 30px;
+}
+
+.viewRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-bottom: 8px;
+}
+
+.viewRow > [role='group'] {
+  flex: 1 1 200px;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 10px;
+  font-size: 12px;
+  color: var(--tt-muted);
+  padding-bottom: 6px;
+}
+
+.coverage {
+  font-size: 12px;
+  color: var(--tt-muted);
+  padding: 6px 8px;
+  background: var(--tt-soft);
+  border-radius: var(--tt-radius-sm);
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.listWrap {
+  position: relative;
+  flex: 1;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+}
+
+.list {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px;
+  overscroll-behavior: contain;
+}
+
+.follow {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  box-shadow: var(--tt-shadow);
+  z-index: 2;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  gap: 6px;
+  padding: 8px 4px 8px 6px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 64px;
+}
+
+.rowActive {
+  background: var(--tt-tint);
+  border-color: var(--tt-line);
+}
+
+.rowSelected {
+  border-color: var(--tt-accent);
+}
+
+.time {
+  align-self: start;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  font-size: 12px;
+  color: var(--tt-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.time:hover {
+  color: var(--tt-accent);
+  text-decoration: underline;
+}
+
+.timeStatic {
+  cursor: default;
+}
+
+.timeStatic:hover {
+  color: var(--tt-muted);
+  text-decoration: none;
+}
+
+.rowActive .time {
+  color: var(--tt-accent);
+  font-weight: 600;
+}
+
+.body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.primaryText {
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.secondaryText {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--tt-muted);
+  white-space: pre-wrap;
+}
+
+.placeholder {
+  font-size: 12px;
+  color: var(--tt-muted);
+  font-style: italic;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.chip {
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--tt-soft);
+  color: var(--tt-muted);
+  border: 1px solid var(--tt-line);
+}
+
+.chipDanger {
+  background: var(--tt-danger-bg);
+  color: var(--tt-danger);
+  border-color: var(--tt-danger-line);
+}
+
+.chipWarning {
+  background: var(--tt-warning-bg);
+  color: var(--tt-warning);
+  border-color: var(--tt-warning-line);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.actions button {
+  width: 28px;
+  height: 28px;
+}
+
+.favorite[aria-pressed='true'] svg {
+  fill: currentColor;
+}
+
+.footer {
+  display: flex;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--tt-line);
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.footer > button {
+  flex: 1 1 120px;
+}
+
+.exportGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.preview {
+  width: 100%;
+  min-height: 180px;
+  height: 220px;
+  font-family: var(--tt-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--tt-soft);
+}
+
+.statsList {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--tt-muted);
+  line-height: 1.7;
+}
+
+.filename {
+  font-family: var(--tt-mono);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+@media (pointer: coarse) {
+  .actions button {
+    width: 44px;
+    height: 44px;
+  }
+  .row {
+    grid-template-columns: 50px minmax(0, 1fr) auto;
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "id": "chatcmpl_fixture_1",
+  "object": "chat.completion",
+  "model": "gpt-5.6-luna",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"translations\":[{\"id\":\"c1\",\"text\":\"安娜，下午3点前请不要开门。\"}]}"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": { "prompt_tokens": 150, "completion_tokens": 30, "total_tokens": 180 }
+}

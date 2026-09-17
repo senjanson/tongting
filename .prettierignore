@@ -1,0 +1,10 @@
+node_modules
+.output
+.output-e2e
+.wxt
+pnpm-lock.yaml
+docs/reference
+services/asr-local/.venv
+test-results
+playwright-report
+data

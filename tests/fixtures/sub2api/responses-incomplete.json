@@ -1,0 +1,8 @@
+{
+  "id": "resp_fixture_2",
+  "object": "response",
+  "status": "incomplete",
+  "incomplete_details": { "reason": "max_output_tokens" },
+  "model": "gpt-5.6-terra",
+  "output": []
+}

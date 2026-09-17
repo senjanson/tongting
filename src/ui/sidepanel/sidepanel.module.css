@@ -1,0 +1,194 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-width: 0;
+  background: var(--tt-bg);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--tt-panel);
+  border-bottom: 1px solid var(--tt-line);
+  min-width: 0;
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.surface {
+  background: var(--tt-panel);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.video {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--tt-line);
+  background: var(--tt-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.videoTitle {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.videoMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 12px;
+  color: var(--tt-muted);
+}
+
+.videoMeta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.playerPaused {
+  color: var(--tt-warning);
+  font-weight: 500;
+}
+
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+.pane {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.transcriptPane {
+  padding: 12px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.actionsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.actionsRow > button {
+  flex: 1 1 130px;
+}
+
+.languages {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
+  gap: 6px;
+  align-items: end;
+}
+
+.arrow {
+  height: 36px;
+  display: grid;
+  place-items: center;
+  color: var(--tt-muted);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  font-size: 13px;
+  margin: 0;
+}
+
+.kv dt {
+  color: var(--tt-muted);
+  white-space: nowrap;
+}
+
+.kv dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.shortcut {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.footerNote {
+  font-size: 12px;
+  color: var(--tt-muted);
+  text-align: center;
+}
+
+@media (min-width: 560px) {
+  .pane {
+    padding: 16px 20px;
+    gap: 14px;
+  }
+  .transcriptPane {
+    padding: 14px 20px;
+  }
+  .header,
+  .video {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+}
+
+@media (min-width: 900px) {
+  .pane {
+    max-width: 880px;
+    margin: 0 auto;
+    width: 100%;
+  }
+  .wideGrid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 28px;
+  }
+  .wideGrid > section + section {
+    border-top: 0 !important;
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+  }
+}

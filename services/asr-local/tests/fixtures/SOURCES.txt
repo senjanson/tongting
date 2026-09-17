@@ -1,0 +1,21 @@
+本目录音频均为本机合成语音，不含任何真实人声、视频音轨或私人内容。
+
+生成日期：2026-09-16
+生成机器：macOS 15.5（Apple M4 Pro）
+生成方式：macOS `say` 合成 AIFF → ffmpeg 8.0.1 转为 16 kHz、单声道、16-bit PCM WAV，
+前置 200 ms 静音并用静音补足到正好 5 秒（-flags +bitexact -map_metadata -1，文件头只有 fmt 与 data 块）。
+
+en_5s.wav  声音 Samantha（en_US）
+           文本：The meeting starts at nine thirty tomorrow morning. Please bring the quarterly report.
+ja_5s.wav  声音 Kyoko（ja_JP），语速 -r 200
+           文本：明日の会議は午前九時半から始まります。資料を忘れないでください。
+zh_5s.wav  声音 Tingting（zh_CN）
+           文本：今天下午三点，我们在会议室讨论新的翻译功能。
+
+复现命令示例（英文）：
+  say -v Samantha -o en.aiff "The meeting starts at nine thirty tomorrow morning. Please bring the quarterly report."
+  ffmpeg -i en.aiff -af "adelay=200:all=1,apad" -t 5 -ar 16000 -ac 1 -c:a pcm_s16le \
+         -flags +bitexact -fflags +bitexact -map_metadata -1 en_5s.wav
+
+合成语音发音清晰、无背景噪声，识别难度明显低于真实视频音轨；
+用它们得到的准确率与速度只能证明链路可用，不能代表真实 YouTube 内容的识别质量。

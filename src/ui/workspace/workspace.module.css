@@ -1,0 +1,210 @@
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--tt-panel);
+  border-bottom: 1px solid var(--tt-line);
+}
+
+.headerTitle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.headerTitle h1 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr) 340px;
+  gap: 12px;
+  padding: 12px;
+}
+
+.panel {
+  background: var(--tt-panel);
+  border: 1px solid var(--tt-line);
+  border-radius: var(--tt-radius);
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--tt-line);
+}
+
+.panelTitle {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.records {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-height: 0;
+}
+
+.record {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.record:hover {
+  background: var(--tt-soft);
+}
+
+.record[aria-current='true'] {
+  background: var(--tt-tint);
+  border-color: var(--tt-accent);
+}
+
+.recordTitle {
+  font-size: 13px;
+  font-weight: 500;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.recordMeta {
+  font-size: 12px;
+  color: var(--tt-muted);
+}
+
+.main {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1;
+}
+
+.mainHead {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.mainTitle {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.mainMeta {
+  font-size: 12px;
+  color: var(--tt-muted);
+}
+
+.transcript {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.notes {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+.noteArea {
+  flex: 1;
+  min-height: 200px;
+  resize: none;
+}
+
+.noteStatus {
+  font-size: 12px;
+  color: var(--tt-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.noteError {
+  color: var(--tt-danger);
+}
+
+@media (max-width: 1180px) {
+  .layout {
+    grid-template-columns: 260px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(260px, 38vh);
+  }
+  .notesPanel {
+    grid-column: 2;
+  }
+  .recordsPanel {
+    grid-row: 1 / span 2;
+  }
+}
+
+@media (max-width: 760px) {
+  .app {
+    height: auto;
+    min-height: 100vh;
+  }
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    padding: 8px;
+  }
+  .recordsPanel {
+    grid-row: auto;
+    max-height: 40vh;
+  }
+  .notesPanel {
+    grid-column: auto;
+    min-height: 300px;
+  }
+  .mainPanel {
+    min-height: 70vh;
+  }
+}

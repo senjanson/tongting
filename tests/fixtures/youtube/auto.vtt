@@ -1,0 +1,30 @@
+WEBVTT
+Kind: captions
+Language: en
+
+NOTE
+人工构造，待真实样本核对：模拟 YouTube 自动字幕 fmt=vtt 的滚动重复行、行内时间标签与 10ms 过渡 cue
+
+00:00:00.400 --> 00:00:02.440 align:start position:0%
+ 
+so<00:00:00.720><c> today</c><00:00:01.120><c> we</c><00:00:01.300><c> are</c><00:00:01.500><c> going</c>
+
+00:00:02.440 --> 00:00:02.450 align:start position:0%
+so today we are going
+ 
+
+00:00:02.450 --> 00:00:05.190 align:start position:0%
+so today we are going
+to<00:00:02.750><c> talk</c><00:00:03.050><c> about</c><00:00:03.450><c> captions</c>
+
+00:00:05.190 --> 00:00:05.200 align:start position:0%
+to talk about captions
+ 
+
+00:00:05.200 --> 00:00:08.200 align:start position:0%
+to talk about captions
+and<00:00:05.400><c> how</c><00:00:05.600><c> they</c><00:00:05.800><c> work</c>
+
+00:00:10.200 --> 00:00:13.400 align:start position:0%
+ 
+first<00:00:10.500><c> let&#39;s</c><00:00:10.700><c> look</c><00:00:10.900><c> at</c><00:00:11.000><c> the</c><00:00:11.100><c> player</c>

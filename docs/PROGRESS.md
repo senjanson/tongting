@@ -1,0 +1,236 @@
+# 实施进度
+
+> 「代码完成」≠「真实链路已验收」。每项注明实际验证方式；仅 mock 通过的项目不写成实测通过。
+> Git：实施开始时本目录不是 Git 仓库；暂停期间用户自行初始化了仓库并暂存了部分文件（尚无提交）。暂存区完全由用户控制，实施方只修改工作区，不暂存、不提交。暂存区中的旧快照请以工作区最新版本为准重新 review。
+
+## 总览（2026-09-17）
+
+「代码完成 / 自动化通过」不等于「真实链路已验收」。真实 YouTube、真实 sub2api、真实用户手势、真人试听与长时间运行均未验收（见「阻塞」）。
+
+| 阶段                    | 状态                     | 实际验证与未验收项                                                                                                     |
+| ----------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| P0 现状检查与能力验证   | 部分完成                 | 环境已记录；本机音频实验（捕获、时间映射、云端配音播放）实测；YouTube 与 huggingface.co 本机不可达，sub2api 凭证未提供 |
+| P1 扩展骨架与共享协议   | 完成                     | 单元/集成测试；扩展在 Playwright Chromium 中加载                                                                       |
+| P2 完整 UI 与播放器接入 | 完成（夹具验收）         | UI 单测与页面 E2E；播放器接入在本地夹具页 E2E 通过；真实 YouTube 页面未验收                                            |
+| P3 字幕获取与规范化     | 完成（夹具验收）         | 解析/合句单测；完整轨道、增量字幕、播放器延迟初始化等夹具 E2E；真实字幕轨道读取未验收                                  |
+| P4 sub2api 真实文本翻译 | 完成（mock 验收）        | 适配器、调度、连接检查在 mock sub2api 上通过；真实服务待凭证（`pnpm smoke:sub2api`）                                   |
+| P5 中文配音与混音       | 完成（系统语音 E2E）     | 系统语音真实发声 E2E（同步、暂停、跳转、停止、ducking）；sub2api 合成仅 mock；真人试听未做                             |
+| P6 无字幕音频识别       | 完成（本地识别 E2E）     | 真实本地识别服务 + 真实捕获 E2E（用 allowlist 替代用户手势）；sub2api 识别未验证；≥20 分钟连续运行未测                 |
+| P7 工作台、导出与布局   | 完成                     | 工作台真实点击导出 12 个文件，并用解析器与 ffprobe 校验；B/C 布局未实现（用户未选择）                                  |
+| P8 异常恢复、权限与性能 | 完成（自动化验收）       | worker 重启接管租约、offscreen 丢失、故障注入、权限与安全 E2E；30 分钟长时运行与真实积压提示未测                       |
+| P9 交付与使用说明       | 完成（真实验收记录待补） | README、USER_GUIDE、ASR_LOCAL、CAPABILITIES、VALIDATION 已更新；VALIDATION 第 5 节真实链路记录待有凭证与网络后填写     |
+
+## 阻塞与需要用户提供的信息
+
+1. **sub2api Base URL 与 Key**：Key 请在扩展设置页填写，或写入本地 `.env.local`（已被忽略）后运行 `pnpm smoke:sub2api`；不要粘贴到对话或文档。
+2. **网络**：本机当前无法访问 www.youtube.com 与 huggingface.co（代理 TLS 握手失败）。真实 YouTube 验收需要可访问 YouTube 的网络。
+3. 三个用于验收的公开视频：有人工字幕、有自动字幕、无字幕。
+4. 是否有可用的 sub2api 语音识别 / 合成接口（未知时按本地识别 + 系统语音实现）。
+
+## 技术决策
+
+| 决策                                                             | 理由                                                                                                                                                                                           |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Node 24.15.0（Volta）而非默认 Node 20                            | WXT 0.21.4 要求 Node ≥ 22                                                                                                                                                                      |
+| TypeScript 6.0.3                                                 | typescript-eslint 8.70 不支持 TS 7                                                                                                                                                             |
+| `imports: false`                                                 | 显式导入，便于静态检查与审查                                                                                                                                                                   |
+| Playwright Chromium 做扩展 E2E                                   | 品牌 Chrome 137+ 不支持 `--load-extension`                                                                                                                                                     |
+| 一次性在 manifest 声明 tabCapture / offscreen / tts              | 多阶段并行实施；用途见 CAPABILITIES「权限」                                                                                                                                                    |
+| 翻译请求 `redirect: 'manual'`，3xx / opaqueredirect 一律视为错误 | 与 `'error'` 同样不跟随重定向、不把 Authorization 发往其他站点（T30），但能给出「服务返回了重定向」的明确提示；Chrome worker 中的实际表现待真实服务验证                                        |
+| 更换 API Key 不递增 configRevision                               | Key 不改变译文内容：保留已完成译文，以新凭证替换 provider 并立即中止旧请求（T28）；删除 Key 则停止会话                                                                                         |
+| 本地识别服务仅靠主机权限访问，不设 CORS                          | 防止网页探测/调用本机服务                                                                                                                                                                      |
+| 默认 A 轻巧侧栏                                                  | 用户未选择 B/C；按计划默认值                                                                                                                                                                   |
+| 跨文档时间戳统一用 Date.now() 基准（src/domain/clock.ts）        | 各文档的 `performance.timeOrigin + performance.now()` 在系统睡眠期间可能停走、长寿命文档会漂移，跨文档比较会出现秒级到小时级偏差（音频审查 #2）；文档内高精度时间用 perfToEpochMs 现测偏移换算 |
+
+（各阶段详细记录见下文，随实施更新。）
+
+## 当前状态（2026-09-16 恢复后，集成与审查阶段）
+
+### 已交付模块（均为 mock/夹具验证，真实服务未验收）
+
+| 模块                                                     | 自动化结果                                                                                 | 审查                                                |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| service worker 协调器 src/background                     | 集成 26 项、单元若干通过；已接入 entrypoints/background.ts，真实 Chromium 中侧栏可收到快照 | bg-reviewer 完成，修复进行中（见下）                |
+| YouTube 接入与字幕 src/youtube、src/captions             | 单元 106、E2E 5（假 worker 接收方）                                                        | youtube-reviewer 进行中                             |
+| sub2api 文本翻译 src/providers/text、src/translation     | 单元 113、集成 32                                                                          | translation-reviewer 完成；translation-agent 修复中 |
+| 音频链路 src/audio、offscreen、TTS、ASR 客户端           | 单元 166；P0 实机实验 a–f 通过（docs/validation/p0-audio.md）                              | audio-reviewer 进行中                               |
+| 本地识别服务 services/asr-local                          | pytest 109；small 模型实测 RTF≈0.44                                                        | asr-reviewer 完成；asr-service-agent 修复中         |
+| UI 与导出 src/ui、src/export、存储                       | 单元 88（unit 项目共 495）、E2E 6                                                          | ui-reviewer 进行中                                  |
+| 文档 README / USER_GUIDE / VALIDATION                    | 起草完成，含「以实际界面为准」待回填                                                       | —                                                   |
+| 全链路 E2E（夹具 YouTube + mock sub2api + 真实本地识别） | e2e-agent 进行中，构建变体 `TONGTING_E2E=1` 输出 .output-e2e                               | —                                                   |
+
+### 协调器审查（bg-reviewer）修复清单
+
+已完成（代码已改，尚缺对应回归测试）：
+
+- 启动/恢复操作可中止（opAbort + abortable），协议探测 signal 传递；外部 cancelled 字幕错误归一为 captions；stop 同步置 stopping；停止各等待步骤 5s 上限；续租单次失败短间隔重试，仅租约不存在或逾期才判定丢失；获取捕获后补发最新原声音量；识别路由指纹 captureRouteKey / needsCaptureRefresh 与 refreshCapture()；快照 notice/error 截断、coverage.durationMs 夹紧；字幕记录合并按 translationKey/同会话判定；本地识别只允许 127.0.0.1；直播拒绝、Shorts 提示；调度器 'pending' 状态处理；TranslationStats 增加 blockedError/cacheWriteFailures（契约）。
+
+待完成（coordinator.ts 为主）：
+
+1. ~~启动配置指纹~~ **已完成（2026-09-17）**：设置变化后，启动中的会话 abortPending，由收敛循环以新配置重启；有集成测试。
+2. **已完成（2026-09-17）**：
+   - session/start 时页面未登记，先唤醒再等待。
+   - 恢复记录按页面身份匹配，窗口放宽到 6 小时。
+   - 暂停中的会话不自动恢复，给出 worker-restarted-paused 提示。
+   - 设置已变化时用新配置重新开始。
+   - 未接管的租约立即停止。
+   - 有待核对的恢复记录时，hello 阶段不下发「无会话」。
+   - 均有集成测试。
+3. ~~识别路由变化重新获取捕获~~ **已完成**：路由指纹只包含识别实际使用的凭证（本地令牌或 API Key 各自计数），换 Key 不打断本地识别；有集成测试。**未验证**：从设置页触发的重新获取没有标签页调用，真实 Chrome 中大概率因缺少 activeTab 而失败，届时会保持暂停并提示下一步。后续可考虑在 offscreen 增加 set-route，免去重新捕获。
+4. ~~无会话时拒绝暂停/继续~~ **已完成**：返回 no-session，只有 desired=running 才创建会话。有集成测试。
+5. **已完成**：收敛轮次耗尽时写入 start-retry-exhausted 错误快照（没有会话实例时使用合成快照）；其他标签页会话 15 秒未释放时报 other-session-stuck，不启动第二套资源。R12 已反转为回归测试。
+6. ~~reconcile 入口中止~~ **已完成**：停止、页面变化、继续期间暂停时，立即中止在途等待。
+7. **已完成**：整份快照发送前校验，非法的错误快照、页面、检查报告逐项剔除，整体仍不合法时降级发送；page.durationMs 夹紧。R8 回归测试检查每份快照都能通过 UI schema。
+8. ~~凭证代数与在途检查作废~~ **已完成**：换 Key、删除 Key、识别令牌变化、服务地址变化时，中止在途连接检查和模型发现，并按代数作废结果。删除 Key 先同步停止会话（onFatal 同步进入 stop），再读写存储。有集成测试（在途检查作废）。
+9. **已完成**：「记住在本机」的凭证存到扩展 origin 的独立 IndexedDB（src/storage/secure-area.ts）；旧版本存在 storage.local 的凭证读取时自动迁移并删除。有单测。
+10. **已完成**：同一 documentId 重连保留导航身份（暂停中的会话不被结束），拒绝没有 documentId 的内容端口；不同 documentId 由收敛循环按页面变化停止旧会话。有集成测试。
+11. **已完成**：L1 继续和重新获取捕获时检查页面身份；L3 自动协议下修改地址时重启会话重新探测，不再报错停止；L4 stale-session；L5 被切走的标签页保留 moved-to-other-tab 提示。有集成测试。
+12. **大部分完成**：
+    - provider 实例按「配置 + Key」复用，会话启动和设置变化共用同一入口 host.textProvider（R7）。
+    - 跳转时先 setPlayhead 再 setEpoch。
+    - doStop 先释放调度器再递增 epoch。
+    - 实际探测到的协议变化（非首次探测）时递增 revision 并重新翻译（翻译审查 #10）。
+13. **已完成**：isSameLanguage 中文按简繁判断（单独的 zh 视为书写系统未知，仍会翻译）；db.ts 与凭证库都增加了 blocking 时关闭连接。
+14. **已完成**：
+    - 审查复现 R1–R12 已全部反转为回归测试（tests/integration/background/review-regressions.test.ts 及 coordinator.test.ts）。
+    - 续租断言改为按租约计数并使用短计时。
+    - 补充了关闭标签页、视频结束、T26 清理异常、内容脚本重连、sub2api 音频探测等用例。
+    - 协调器集成测试共 52 条。
+
+### UI 审查（ui-reviewer）中属于 worker 的项
+
+- 会话命令携带的 sessionId 与当前会话不一致时返回 `stale-session`（契约已加可选 sessionId）。
+- 检查结果/快照中凭证代数：契约已加 `credential.generation`、`ConnectionReport.credentialGeneration`，coordinator 已填充；换 Key 时仍需递增 credentialGeneration 并中止在途检查（与上面第 8 条合并）。
+- ~~增量字幕记录 sourceKey 按会话~~ **已完成**。
+- ~~systemTts 能力按目标语言判定~~ **已完成**：与配音共用 voiceLanguageRank；目标语言变化后旧结论作废。
+- 唤醒：契约 src/messaging/wake.ts 已加；worker 在 session/start 时对未登记页面发唤醒并短暂等待；内容脚本监听待 YouTube 审查结果后一起派发。
+- ui-agent 正在修复 UI 侧 20 项（契约新增字段导致的 UI 编译错误由其补齐）。
+
+### YouTube 审查（youtube-reviewer）中属于 worker 的项
+
+- hello 时不要立即发 `session/state: null`：等该连接首个 page/video 处理完、恢复结论确定后再发（审查 #11）；同时去掉 hello 中因 navigationId=-1 必然被拦截的推送死代码。
+- ~~所有发往内容脚本的 request 带上 `navigationId`~~ **已完成**（ContentConnection.request 第三个参数）。
+- ~~主动 track-data 预算与 trackKey 校验、trackWaiter 核对 trackKey~~ **已完成**：每会话最多 3 次，间隔至少 5 秒。
+- ~~ducking 用户覆盖时同步 duckActive~~ **已完成**。
+- 增量来源：配合内容侧「仅结束时间变化不重新翻译」的表示方式（等 youtube-agent 报告）。
+- youtube-agent 正在修复内容脚本侧 16 项；夹具改进需求（轨道已激活、tlang、延迟初始化等）待其报告后转给 e2e-agent。
+
+### 音频审查（audio-reviewer）处理情况（2026-09-17）
+
+- 主会话已修（session.ts / coordinator.ts，集成测试 30 条通过）：
+  - #1：跳转、继续、视频结束后重播、换轨、改配置、切换输出模式之后，把已完成的 final 字幕重新交给配音控制器。暂停期间不交付。
+  - #7：断点只在跳转、暂停/播放、倍速、广告、缓冲、seeking、结束、换视频时递增。调音量、全屏不再切断识别片段。
+  - #8：新 worker 收到 offscreen 握手时，如有新鲜的恢复记录，立即续租到孤立资源宽限期末尾（50 秒）。持有租约的恢复会话直接接管租约，不再等待字幕轨道。
+  - #10（会话侧）：续租返回 `offscreen-missing` 时立即判为致命；offscreenInstanceId 变化且新文档中没有该会话租约时，立即报 `offscreen-lost`。
+- 已派给 audio-agent（进行中）：#2（offscreen、配音控制器改用统一时钟），#3、#4、#5、#6、#9，#10（客户端断开信号），#11 至 #18。
+- youtube-agent 追加：player-adapter 的 epochNow 改为统一时钟。
+
+### 翻译审查修复（translation-agent 已完成，2026-09-17）
+
+- 翻译模块审查中派给该代理的 11 项与 base-url 收紧已修复。
+- 测试：单元 152 条、集成 42 条通过，lint 和 tsc 对其路径均无错误。
+- 未验证：sub2api 真实错误体（含中文余额提示）的分类；熔断阈值 5、缓存查找上限 800 ms 均为经验默认值。
+- 属于主会话的 R7（范围只涉及调度的设置变更时复用 provider）、R9（中文简繁判断）仍待处理，已在协调器清单第 12、13 项中。
+- 契约建议：TranslateOptions 增加可选字段 `maxRepairAttempts`，目前通过扩展类型传递。
+
+### 全链路 E2E（e2e-agent 已完成，2026-09-17）
+
+- 环境：Chromium 加载真实扩展，YouTube 使用本地夹具页，sub2api 使用本地 mock，未访问真实服务。
+- 结果：4 个 spec 共 10 个用例，连续两轮全部通过，覆盖 T01、暂停/恢复/停止、T16（字幕部分）、T11、T20、T23、T12、T13、T05、T07、T30、T08、T29，以及仅字幕模式的 T21。记录见 docs/validation/e2e-full-chain.md。
+- **未做**：T03（无字幕视频走真实本地识别）、P5 配音自动化（含 T31）、识别捕获进行中重启 worker 的 T21、youtube-content.spec.ts 与真实协调器共存的调整。
+- 其报告的产品问题已由主会话修复：
+  - 覆盖层状态文字重复加了「同听 · 」前缀。
+  - 阻断、限流、连续失败时没有会话级提示：现在提升为 notice（translation-blocked / translation-rate-limited / translation-failing），并同步到覆盖层状态文字。有集成测试。
+
+### UI 审查修复（ui-agent 已完成，2026-09-17）
+
+- 20 项中 19 项修复。第 18 项部分完成：记录列表仍整条读出 IndexedDB 记录，需增加摘要存储。
+- 测试：界面、导出、存储单测 115 条通过；tsc 和 eslint 对其路径均无错误。
+- 未运行 build 和 tests/e2e/ui-pages.spec.ts，文案变化后该 spec 可能需要调整。
+- 未实测：唤醒消息的真实效果、BroadcastChannel 跨扩展页同步、带 BOM 的导出文件在 Windows 播放器中的表现。
+- 界面现在对暂停/继续/停止/重试都携带 sessionId，并会向未登记的标签页发送唤醒消息。worker 侧 stale-session 已实现；session/start 时唤醒未登记页面仍待做（清单第 2 项）。
+
+### YouTube 内容脚本审查修复（youtube-agent 已完成，2026-09-17）
+
+- 16 项修复：
+  - 唤醒监听、增量来源提前 final、覆盖层保留上一条译文。
+  - srv3 线性解析，消除正则回溯。
+  - 原生字幕状态恢复。
+  - 发往页面的请求带导航序号，已导航则回复 stale-video。
+  - 时钟改用 epochNowMs 等。
+- 测试：单测 16 个文件、126 条通过；eslint 和 tsc 对其路径均无错误。未运行 build、Playwright。
+- **需真实页面验证**：
+  - 完整轨道获取（正文缓存与重放、强制播放器重新请求）。
+  - timedtext 的 `name` 参数与 vssId 轨道名的对应关系（推断）。
+  - 伪造 WXT 启动事件的防护。
+  - 主动 track-data 的限频没有单测。
+- worker 已配合：同 revision、同原文的 upsert（只改结束时间或 interim→final）保留翻译状态，并把 final 且已译的字幕交给配音。
+- **夹具改进需求（未分派，E2E 代理已结束）**：
+  - 目标轨道已激活时，播放器不重新请求 timedtext。
+  - 模拟 tlang 自动翻译。
+  - 正文请求早于内容脚本就绪。
+  - 播放器延迟初始化。
+  - getOption 反映真实开关。
+  - 字幕开关和所选轨道跨视频保留。
+
+### 本地识别服务审查修复（asr-service-agent 已完成，2026-09-17）
+
+- 13 项修复：
+  - 连接与请求头超时、请求体 408、连接上限 32。
+  - 停止流程。
+  - 日志限流、模型路径脱敏。
+  - 令牌不进命令行，文件属主与权限检查。
+  - Windows 明确不支持。
+- 契约已补 408 request_timeout。
+- 测试：pytest 155 条通过、4 条跳过；真实模型测试 4 条通过。
+- 未验证：Linux 与 Windows；超时和连接上限的调优；与扩展真实联调；20 分钟连续运行。
+
+### 最终全量检查（2026-09-17，全部缺陷修复后）
+
+- format:check、lint、typecheck 全部通过。
+- 单元测试 53 个文件 625 条、集成测试 5 个文件 99 条，全部通过。
+- build、zip 成功：`.output/tongting-0.1.0-chrome.zip`。生产 manifest 无 host_permissions；E2E 变体只预授予 `http://127.0.0.1/*`。
+- Playwright 未开门控：33 条通过、10 条跳过，跳过的都是门控用例。
+- `TONGTING_E2E_ASR=1` 真实本地识别 spec：5 条全部通过（T03、T03 生命周期、T32、T21、T22），在最后一次产品代码修改之后运行。
+- 配音（`TONGTING_E2E_TTS=1`，3 条）与 P0 音频（`TONGTING_P0_AUDIO=1`，2 条）：由 e2e-verify-agent 在相关修复后运行并通过；之后的修改不涉及配音与音频实验路径，最终检查未重跑。
+- 本地识别服务 `uv run pytest`：155 条通过，4 条跳过（真实模型测试需 `TONGTING_ASR_REAL_MODEL=1`）。
+- 早先 youtube-content.spec 的 5 条失败已随该 spec 按真实协调器重写而解决。
+
+### 其他待办
+
+- ~~重写 tests/e2e/youtube-content.spec.ts，适配真实协调器与唤醒流程~~ **已完成**（6 条，真实协调器 + 只读端口观察器）。
+
+- ~~识别服务审查 #6：扩展侧去掉 localhost~~ **已完成**：manifest、offscreen 的 sub2api 地址规则、本地识别地址、UI 与文档。
+- ~~审查结果派回各模块修复~~ **已完成**。
+- ~~sub2api 语音识别/合成的计费探测~~ **已实现**：
+  - 设置页勾选「允许实际调用」后才执行，仅本次有效。
+  - 合成：朗读「你好」。
+  - 识别：上传 1 秒合成测试音，只验证接口与认证。
+  - `pnpm smoke:sub2api` 在配置 SUB2API_TTS_MODEL / SUB2API_ASR_MODEL 后另行实测。
+  - **真实服务未实测**（无凭证）。
+- ~~全片补译模式~~ **已实现**：
+  - 调度器 tier 2 候选；只在播放窗口与预取都没有待办、且没有在途请求时发送，并发 1，遵守暂停、限流、熔断与预取开关。
+  - 会话命令 session/backfill 只接受完整字幕轨道来源，快照中显示 backfill 状态。
+  - 侧栏字幕页提供「翻译全片」按钮和进度。
+  - 有调度器单测、协调器集成测试和侧栏单测。
+- ~~E2E 发现：侧栏已打开时新开的 YouTube 标签页不会被唤醒~~ **已修复**：页面加载完成时再唤醒一次，未登记期间每 2 秒重试、最多 8 次（src/ui/state/page-wake.ts），有单测。
+- ~~E2E 发现：播放器初始化晚于页面加载时，开始翻译后被误判为「无字幕」~~ **已修复（待 E2E 复测）**：
+  - worker 等待轨道期间，只有页面明确报出可用性才结束等待；元数据读取失败不再提前结束。
+  - 会话处于 starting 时，内容脚本每 500 ms 重新请求播放器数据（每次导航最多 60 次），不再受指数退避影响。
+  - worker 等待上限 14 秒（目标约 13 秒内就绪的播放器都能拿到轨道，留 1 秒余量覆盖轮询相位；E2E 复测曾在 12.5 秒就绪时以 8 ms 之差误报）。
+  - 等待上限后仍未就绪时，报 captions-not-ready，文案为「页面字幕接入尚未就绪…请稍后重试」，不再说「此视频没有可读取的字幕」；界面下一步为「重试」。
+  - 有内容脚本单测、协调器集成测试与界面单测。
+- ~~E2E 发现（高）：语音识别来源连续播放时覆盖层始终不显示字幕~~ **已修复（待 E2E 复测）**：
+  - 原因：识别字幕在句末之后约 2.6 秒才连同译文到达，此时播放位置已越过该句，按「当前时间落在区间内」选择永远选不中；只能回看。
+  - 修复：session/state 增加可选 sourceMode；识别来源时覆盖层显示「开始时间不晚于当前、结束后 8 秒内的最新已译字幕」，更新的译文到达即替换；当前句尚无译文时标记为保留显示。字幕轨道来源的显示逻辑不变。
+  - 有选择逻辑单测（按实测延迟模拟 8 句，每条译文至少显示 2 秒、句间不空白）和覆盖层单测。
+  - 已知取舍：识别模式下译文总是晚于语音数秒显示，这是识别分段 + 识别 + 翻译的真实延迟，不是同步字幕。
+- E2E 报告「配音跳转后重读旧句」**经核实为测试归因错误**：测试字幕文本每 20 句循环，第 21 句与第 1 句同文。用例已改为唯一文本，重跑后跳转只朗读新位置的句子。另外用真实配音控制器模拟了三种跳转事件序列，结果一致。
+- ~~E2E 发现（低）：会话快照资源字段与实际不一致~~ **已修复（待 E2E 复测）**：
+  - 致命错误（如 offscreen-lost）时，错误快照原先固定为出错瞬间的资源状态；现在停止完成后按真实释放结果更新（捕获不再显示为进行中，识别为 idle，音轨 0）。
+  - offscreen 的 asr/status 心跳增加 activeTracks（readyState 为 live 的音轨数），会话快照据此同步。
+  - 复测发现暂停翻译释放捕获后 activeTracks 仍为 1：释放后没有心跳。现按 capture/stop 回报的真实音轨数复位（未回报视为 0），同时清除识别积压值。
+  - 有协调器集成测试（错误快照、暂停复位；去掉修复后会失败）和捕获单测。
+- 不做（按计划 P8「只在实测有必要时优化」）：UI 审查第 18 项的字幕记录摘要表。目前列表会整条读出 IndexedDB 记录，没有测出性能问题，暂不引入 DB 版本升级。
+- 文档已同步：USER_GUIDE（凭证存储位置、音频接口检查、翻译全片、新增错误提示、localhost 限制）、CAPABILITIES。
+- ~~全部完成后：format、lint、typecheck、unit、integration、E2E、build；回填 README/USER_GUIDE/VALIDATION~~ **已完成**，见「最终全量检查」。

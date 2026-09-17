@@ -1,0 +1,6 @@
+# 本地识别服务的运行与工具缓存（虚拟环境与模型目录已由仓库根 .gitignore 忽略）
+.venv/
+models/
+.pytest_cache/
+.ruff_cache/
+__pycache__/

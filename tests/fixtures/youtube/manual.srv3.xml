@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8" ?><timedtext format="3">
+<!-- 人工构造，待真实样本核对：模拟 YouTube 人工字幕 timedtext fmt=srv3 -->
+<head>
+<pen id="1" b="1"/>
+<ws id="0"/>
+<wp id="0"/>
+</head>
+<body>
+<p t="1000" d="2500">Welcome to the</p>
+<p t="3500" d="2000">channel, everyone.</p>
+<p t="6000" d="3000">Today we test &lt;img src=x onerror=alert(1)&gt; &amp;amp; &amp;lt;b&amp;gt;</p>
+<p t="9000" d="3000">It costs $5.99.<br/>That&#39;s not cheap.</p>
+<p t="12000" d="3000"><s p="1">Mr. Smith</s> didn&#x27;t agree.</p>
+<p t="-100" d="3000">negative</p>
+<p t="abc" d="3000">bad time</p>
+<p t="16000" d="2000"></p>
+<p t="30000" d="2000">日本語の字幕です。</p>
+</body>
+</timedtext>

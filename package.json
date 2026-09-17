@@ -1,0 +1,59 @@
+{
+  "name": "tongting",
+  "displayName": "同听 Tongting",
+  "private": true,
+  "version": "0.1.0",
+  "description": "YouTube 实时翻译字幕与配音 Chrome 扩展（基于 sub2api）",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "volta": {
+    "node": "24.15.0"
+  },
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "postinstall": "wxt prepare",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "typecheck": "wxt prepare && tsc --noEmit",
+    "test": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "playwright test",
+    "smoke:sub2api": "vitest run --project smoke"
+  },
+  "dependencies": {
+    "idb": "8.0.3",
+    "lucide-react": "1.46.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "1.63.0",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "^24.13.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@wxt-dev/module-react": "1.2.2",
+    "eslint": "^10.10.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "fake-indexeddb": "6.2.5",
+    "globals": "^17.12.0",
+    "happy-dom": "20.14.5",
+    "prettier": "3.9.6",
+    "srt-parser-2": "^1.2.3",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.1",
+    "webvtt-parser": "^2.2.0",
+    "wxt": "0.21.4"
+  }
+}

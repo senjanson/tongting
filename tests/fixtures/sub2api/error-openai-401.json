@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "Incorrect API key provided: sk-FAKEFIXTUREKEY000000. You can find your API key at https://platform.example.com/account/api-keys?token=FAKETOKEN123.",
+    "type": "invalid_request_error",
+    "param": null,
+    "code": "invalid_api_key"
+  }
+}

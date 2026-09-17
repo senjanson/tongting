@@ -1,0 +1,30 @@
+WEBVTT
+
+NOTE 人工构造，待真实样本核对：通用 WebVTT 人工字幕，含标识、说话人标签、实体与样式块
+
+STYLE
+::cue { color: white; }
+
+intro-1
+00:01.000 --> 00:03.500
+<v Host>Welcome to the</v>
+
+00:00:03.500 --> 00:00:05.500 line:90%
+channel, everyone.
+
+3
+00:00:06.000 --> 00:00:09.000
+Today we test &lt;script&gt;alert(1)&lt;/script&gt; &amp; <b>bold</b>
+
+00:00:09.000 --> 00:00:12.000
+It costs $5.99.
+That's not cheap.
+
+00:00:12.000 --> 00:00:11.000
+End before start.
+
+00:00:99.000 --> 00:01:00.000
+Invalid seconds.
+
+00:00:30.000 --> 00:00:32.000
+日本語の字幕です。

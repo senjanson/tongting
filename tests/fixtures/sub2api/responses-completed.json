@@ -1,0 +1,22 @@
+{
+  "id": "resp_fixture_1",
+  "object": "response",
+  "status": "completed",
+  "model": "gpt-5.6-terra",
+  "output": [
+    { "type": "reasoning", "id": "rs_1", "summary": [] },
+    {
+      "type": "message",
+      "id": "msg_1",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "text": "{\"translations\":[{\"id\":\"c1\",\"text\":\"安娜，下午3点前请不要开门。\"},{\"id\":\"c2\",\"text\":\"我没有两只猫。\"}]}"
+        }
+      ]
+    }
+  ],
+  "usage": { "input_tokens": 180, "output_tokens": 42, "total_tokens": 222 }
+}
