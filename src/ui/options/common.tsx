@@ -72,7 +72,7 @@ export function credentialStorageText(storage: 'none' | 'session' | 'local'): st
     case 'local':
       return '保存在本机扩展存储';
     case 'session':
-      return '仅保存在本次浏览器会话';
+      return '仅保存在本次浏览器会话（扩展重载或浏览器重启后清除）';
     case 'none':
       return '未保存，仅本次后台运行期间有效，可能随时丢失';
   }

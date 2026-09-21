@@ -49,7 +49,7 @@ export function DataSection({ snapshot }: { snapshot: AppSnapshot }) {
         <Button
           variant="danger"
           icon={<Trash size={15} aria-hidden="true" />}
-          disabled={!snapshot.credential.configured}
+          disabled={!snapshot.credential.configured && !snapshot.credential.cleanupPending}
           onClick={() => setConfirm('key')}
         >
           删除 Key

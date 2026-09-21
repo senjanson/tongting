@@ -572,7 +572,8 @@ describe('review fixes: navigation, requests and metadata retry', () => {
   });
 
   it('M1: retries metadata on play after the fixed schedule when the player initializes late', async () => {
-    const t = start();
+    // 本文件共用 MAIN bridge，独立视频避免上一用例已发布的元数据干扰初始化时序。
+    const t = start({ videoId: 'LLLLLLLLLLL' });
     const gpr = t.root.getPlayerResponse;
     delete (t.root as Record<string, unknown>).getPlayerResponse;
     t.workerHandshake(null);
@@ -585,18 +586,22 @@ describe('review fixes: navigation, requests and metadata retry', () => {
   });
 
   it('polls player data at a fixed interval only while the worker session is starting', async () => {
-    const t = start();
+    const id = 'MMMMMMMMMMM';
+    const t = start({ videoId: id });
     const gpr = t.root.getPlayerResponse;
     delete (t.root as Record<string, unknown>).getPlayerResponse;
     // 会话已在运行（例如语音识别来源）：不轮询，没有播放器事件时可用性保持 unknown。
-    t.workerHandshake(sessionA);
+    t.workerHandshake({ ...sessionA, videoId: id });
     await new Promise((r) => setTimeout(r, 200));
     t.root.getPlayerResponse = gpr;
     await new Promise((r) => setTimeout(r, 400));
     expect(t.controller.debug().availability).toBe('unknown');
 
     // 会话处于 starting（worker 正在等待轨道）：不依赖播放器事件也能在播放器就绪后拿到轨道。
-    t.port().receive({ type: 'session/state', session: { ...sessionA, phase: 'starting' } });
+    t.port().receive({
+      type: 'session/state',
+      session: { ...sessionA, videoId: id, phase: 'starting' },
+    });
     await vi.waitFor(() => expect(t.controller.debug().availability).toBe('available'));
     const tracks = t.port().ofType('captions/tracks').at(-1) as { availability?: string };
     expect(tracks.availability).toBe('available');

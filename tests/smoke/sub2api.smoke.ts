@@ -4,7 +4,7 @@
  * 配置：项目根目录 `.env.local`（已被 .gitignore 忽略），或同名环境变量：
  *   SUB2API_BASE_URL   必填，例如 https://api.example.com 或 https://api.example.com/v1
  *   SUB2API_API_KEY    必填
- *   SUB2API_MODELS     可选，逗号分隔，默认 gpt-5.6-terra
+ *   SUB2API_MODELS     可选，逗号分隔，默认 gpt-5.6-luna
  *   SUB2API_PROTOCOL   可选，responses | chat | both（默认 both）
  *   SUB2API_TTS_MODEL  可选，设置后额外实测一次语音合成（SUB2API_TTS_VOICE 可选）
  *   SUB2API_ASR_MODEL  可选，设置后额外实测一次语音识别（上传本仓库 5 秒英文合成语音样本）
@@ -73,7 +73,7 @@ const configured = Boolean(baseUrl && apiKey);
 const ttsModel = env.SUB2API_TTS_MODEL?.trim() ?? '';
 const ttsVoice = env.SUB2API_TTS_VOICE?.trim() ?? '';
 const asrModel = env.SUB2API_ASR_MODEL?.trim() ?? '';
-const models = (env.SUB2API_MODELS ?? 'gpt-5.6-terra')
+const models = (env.SUB2API_MODELS ?? 'gpt-5.6-luna')
   .split(',')
   .map((m) => m.trim())
   .filter(Boolean);

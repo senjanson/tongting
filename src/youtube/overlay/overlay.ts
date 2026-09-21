@@ -86,6 +86,7 @@ export function createCaptionOverlay(opts: CaptionOverlayOptions): CaptionOverla
   let rootObserver: MutationObserver | null = null;
   let rafId: number | undefined;
   let lastRenderKey = '';
+  let lateAfterMs = -Infinity;
 
   const ensureHost = () => {
     if (host) return host;
@@ -177,7 +178,9 @@ export function createCaptionOverlay(opts: CaptionOverlayOptions): CaptionOverla
     const t = video.currentTime;
     if (!Number.isFinite(t)) return undefined;
     return selector.select(store.cues, t * 1000 - settings.offsetMs, (id) => store.get(id), {
-      late: store.session?.sourceMode === 'asr',
+      late:
+        store.session?.sourceMode === 'asr' || store.session?.sourceMode === 'incremental-captions',
+      lateAfterMs,
     });
   };
 
@@ -249,7 +252,11 @@ export function createCaptionOverlay(opts: CaptionOverlayOptions): CaptionOverla
     if (!video) return;
     videoAbort = new AbortController();
     const signal = videoAbort.signal;
-    const onChange = () => {
+    const onChange = (event: Event) => {
+      if (event.type === 'seeking') {
+        selector.reset();
+        lateAfterMs = video!.currentTime * 1000 - settings.offsetMs;
+      }
       lastRenderKey = FORCE_RENDER;
       render();
       startLoop();
@@ -303,15 +310,34 @@ export function createCaptionOverlay(opts: CaptionOverlayOptions): CaptionOverla
       refresh();
     },
     setSession(session) {
+      const previous = store.session;
+      if (previous?.sessionId !== session?.sessionId) {
+        selector.reset();
+        lateAfterMs = -Infinity;
+      } else if (previous?.epoch !== session?.epoch) {
+        selector.reset();
+        lateAfterMs = video ? video.currentTime * 1000 - settings.offsetMs : -Infinity;
+      }
       store.setSession(session);
       refresh();
     },
     applyCues(msg) {
+      const previousEpoch = store.session?.epoch;
       const ok = store.applyCues(msg);
-      if (ok) refresh();
+      if (ok) {
+        if (previousEpoch !== store.session?.epoch) {
+          selector.reset();
+          lateAfterMs = video ? video.currentTime * 1000 - settings.offsetMs : -Infinity;
+        }
+        refresh();
+      }
       return ok;
     },
     setPageVideoId(videoId) {
+      if (pageVideoId !== videoId) {
+        selector.reset();
+        lateAfterMs = -Infinity;
+      }
       pageVideoId = videoId;
       refresh();
     },

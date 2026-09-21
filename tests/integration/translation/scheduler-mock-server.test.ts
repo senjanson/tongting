@@ -24,11 +24,8 @@ import type {
   TranslationCache,
   TranslationConfig,
 } from '@src/translation/types';
-import {
-  startMockSub2api,
-  type MockSub2api,
-  type RecordedRequest,
-} from '../../helpers/mock-sub2api/server';
+import { startMockSub2api, type MockSub2api } from '../../helpers/mock-sub2api/server';
+import { maxRequestOverlap } from './request-overlap';
 
 const servers: MockSub2api[] = [];
 const schedulers: InspectableTranslationScheduler[] = [];
@@ -128,20 +125,6 @@ async function until(predicate: () => boolean, timeoutMs = 5_000): Promise<void>
   }
 }
 
-/** 每个请求开始时刻仍在进行中的请求数（含自身）的最大值；毫秒级时间戳，首尾相接不算重叠。 */
-function maxOverlap(requests: RecordedRequest[]): number {
-  let max = 0;
-  for (const x of requests) {
-    const active = requests.filter(
-      (r) =>
-        r === x ||
-        (r.receivedAt <= x.receivedAt && (r.finishedAt ?? Number.MAX_SAFE_INTEGER) > x.receivedAt),
-    ).length;
-    max = Math.max(max, active);
-  }
-  return max;
-}
-
 const idA: SchedulerIdentity = {
   sessionId: 'session-A-0001',
   epoch: 1,
@@ -198,7 +181,7 @@ describe('scheduler over HTTP', () => {
     // 冷却期内没有任何请求
     expect(Math.min(...after.map((r) => r.receivedAt))).toBeGreaterThanOrEqual(cooldownStart + 280);
     // 限流后的前几次请求串行（并发 1）
-    expect(maxOverlap(after.slice(0, 3))).toBe(1);
+    expect(maxRequestOverlap(after.slice(0, 3))).toBe(1);
     // 没有重试风暴：24 条字幕总请求数有界
     expect(s.requestsTo('responses').length).toBeLessThanOrEqual(8);
     expect(updatesFailed(scheduler)).toBe(0);

@@ -8,7 +8,13 @@
  * - worker 重启后从 storage.session 中的会话记录与 offscreen 实际状态核对再恢复（T21）。
  */
 import type { Cue } from '../domain/cue';
-import { AppError, redactUrl, toAppErrorInfo, type AppErrorInfo } from '../domain/errors';
+import {
+  AppError,
+  cancelledError,
+  redactUrl,
+  toAppErrorInfo,
+  type AppErrorInfo,
+} from '../domain/errors';
 import type { CapabilityKey, CapabilityMatrix, ProviderCapability } from '../domain/capability';
 import {
   PageInfoSchema,
@@ -51,8 +57,16 @@ import type { TtsVoice } from '../providers/tts/types';
 import { voiceLanguageRank } from '../providers/tts/voices';
 import type { CoordinatorDeps } from './deps';
 import { toPageInfo, type PageState } from './pages';
+import { SearchController } from './search-controller';
+import {
+  generateSearchKeywords,
+  type SearchGenerationParams,
+} from '../providers/text/search-keywords';
+import { searchHistory } from '../storage/search-history';
 import { TranslationSession, type SessionHost } from './session';
 import {
+  beginSecretRevocation,
+  type SecretRevocation,
   clearSecret,
   loadSecret,
   loadSettings,
@@ -100,6 +114,8 @@ interface TabSlot {
   intentSeq: number;
   /** 当前会话启动时的配置指纹；启动期间配置或凭证变化则中止并以新配置重启。 */
   startFingerprint?: string;
+  /** 恢复/路由替换期间也必须隔离每次异步捕获配置。 */
+  captureOperationKey?: string;
 }
 
 type CommandHandlerResult<K extends UiCommand['kind']> = UiCommandResultMap[K];
@@ -117,6 +133,7 @@ const TEXT_CAPABILITY_KEYS: CapabilityKey[] = [
 ];
 
 export class Coordinator implements SessionHost {
+  private readonly search: SearchController;
   readonly workerInstanceId: string;
   readonly ready: Promise<void>;
 
@@ -147,9 +164,33 @@ export class Coordinator implements SessionHost {
   /** 分别记录 API Key 与本地识别令牌的变化，识别路由只受其实际使用的凭证影响。 */
   private apiKeyGeneration = 0;
   private asrTokenGeneration = 0;
-  private previewActive = false;
+  /** 配置写入共享同一队列，保证磁盘与配置副作用保持命令顺序。 */
+  private mutationTail: Promise<void> = Promise.resolve();
+  private apiKeyIntent = 0;
+  private asrTokenIntent = 0;
+  private permissionCheckGeneration = 0;
+  private permissionsChangeGeneration = 0;
+  private preview?: {
+    id: string;
+    timer?: ReturnType<typeof setTimeout>;
+    cancel(): void;
+  };
 
   constructor(readonly deps: CoordinatorDeps) {
+    this.search = new SearchController({
+      route: (signal) => this.searchRoute(signal),
+      generate: (params) => (deps.generateSearchKeywords ?? generateSearchKeywords)(params),
+      history: {
+        list: () => (deps.searchHistory ?? searchHistory).list(),
+        save: (record, signal) => (deps.searchHistory ?? searchHistory).save(record, signal),
+        clear: () => (deps.searchHistory ?? searchHistory).clear(),
+      },
+      now: deps.now,
+      randomId: deps.randomId,
+      detected: (protocol) => {
+        if (this.settingsValue.provider.protocol === 'auto') this.saveDetectedProtocol(protocol);
+      },
+    });
     this.workerInstanceId = deps.randomId('w');
     this.ready = this.init();
     deps.offscreen.onEvent((event) => this.onOffscreenEvent(event));
@@ -175,6 +216,17 @@ export class Coordinator implements SessionHost {
     ]);
     this.apiKeyState = apiKey;
     this.asrTokenState = asrToken;
+    // 在发布首个快照前迁移仍可读取的临时凭证。只移动权威读取结果，不能复活已删除的旧副本。
+    // 若上次写入失败而临时副本仍存在，下次启动会重试；已经被 Chrome 清空的值无法恢复。
+    if (
+      this.settingsValue.rememberCredentials &&
+      [apiKey, asrToken].some((secret) => secret.value && secret.storage !== 'local')
+    )
+      this.settingsPersisted = await this.moveSecrets(true);
+    if (loaded.needsPersistence) {
+      const persisted = await saveSettings(deps.storage.local, this.settingsValue);
+      this.settingsPersisted = persisted && this.settingsPersisted;
+    }
     try {
       const stored = await deps.storage.session.get([
         CONFIG_REVISION_KEY,
@@ -227,6 +279,8 @@ export class Coordinator implements SessionHost {
     const s = this.settingsValue;
     return JSON.stringify([
       s.asr.backend,
+      s.sourceLanguage,
+      s.asr.segmentMs,
       s.asr.backend === 'local' ? s.asr.localUrl : '',
       s.asr.backend === 'sub2api' ? [s.provider.baseUrl, s.asr.sub2apiModel] : '',
       s.asr.backend === 'local'
@@ -256,11 +310,17 @@ export class Coordinator implements SessionHost {
 
   /** 凭证变化：递增代数，作废在途连接检查与模型发现（结果不得归到新凭证名下）。 */
   private invalidateCredentials(which: 'apiKey' | 'asrToken'): void {
+    if (which === 'apiKey') this.search.cancelAll();
     if (which === 'apiKey') this.apiKeyGeneration++;
     else this.asrTokenGeneration++;
     this.credentialGeneration++;
     this.connectionCheckAbort?.abort();
     this.modelDiscoveryAbort?.abort();
+    if (which === 'asrToken') {
+      delete this.capabilities.localAsr;
+      this.lastConnectionReport = undefined;
+      this.persistCapabilities();
+    }
   }
 
   /**
@@ -276,6 +336,26 @@ export class Coordinator implements SessionHost {
       if (slot.startFingerprint !== undefined && slot.startFingerprint !== fingerprint) {
         session.abortPending('config-changed');
         void this.reconcile(slot);
+        continue;
+      }
+      if (slot.captureOperationKey !== undefined && slot.captureOperationKey !== routeKey) {
+        session.needsCaptureRefresh = true;
+        session.abortPending('asr-route-changed');
+        void this.reconcile(slot);
+        continue;
+      }
+      if (
+        session.sourceMode === 'asr-preload' &&
+        session.captureRouteKey !== undefined &&
+        session.captureRouteKey !== routeKey
+      ) {
+        session.restartRequested = true;
+        // A paused preloader already owns no request. Keep its paused intent and
+        // transcript visible; the next explicit resume rebuilds the new route.
+        if (slot.desired === 'running') {
+          void session.stop('preload-route-changed');
+          void this.reconcile(slot);
+        }
         continue;
       }
       if (
@@ -334,6 +414,7 @@ export class Coordinator implements SessionHost {
   }
 
   private async refreshHostPermission(): Promise<void> {
+    const generation = ++this.permissionCheckGeneration;
     const normalized = this.settingsValue.provider.baseUrl
       ? this.deps.normalizeBaseUrl(this.settingsValue.provider.baseUrl)
       : undefined;
@@ -347,7 +428,69 @@ export class Coordinator implements SessionHost {
     } catch {
       granted = false;
     }
-    this.hostPermission = { origin: normalized.origin, granted };
+    if (generation === this.permissionCheckGeneration)
+      this.hostPermission = { origin: normalized.origin, granted };
+  }
+
+  private mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationTail.then(operation);
+    this.mutationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  /** 权限变化按当前实际路由核验。浏览器网络失败不能代替释放采集与播音资源。 */
+  private async onPermissionsChanged(): Promise<{ granted: boolean }> {
+    this.search.cancelAll();
+    const generation = ++this.permissionsChangeGeneration;
+    const settings = this.settingsValue;
+    const previous = this.hostPermission.granted;
+    await this.refreshHostPermission();
+    const local =
+      settings.asr.backend === 'local'
+        ? this.deps.normalizeBaseUrl(settings.asr.localUrl)
+        : undefined;
+    const localGranted = local?.ok
+      ? await this.deps.permissions.contains(local.originPattern).catch(() => false)
+      : true;
+    if (generation !== this.permissionsChangeGeneration)
+      return { granted: this.hostPermission.granted };
+    if (settings !== this.settingsValue) return this.onPermissionsChanged();
+    const providerMissing = !!settings.provider.baseUrl && !this.hostPermission.granted;
+    if (previous !== this.hostPermission.granted || providerMissing || !localGranted) {
+      this.connectionCheckAbort?.abort();
+      this.modelDiscoveryAbort?.abort();
+      this.lastConnectionReport = undefined;
+      if (providerMissing || previous !== this.hostPermission.granted)
+        this.resetProviderCapabilities();
+      if (!localGranted) delete this.capabilities.localAsr;
+      this.persistCapabilities();
+    }
+    for (const slot of this.slots.values()) {
+      const session = slot.session;
+      if (!session || session.isStopping) continue;
+      if (!localGranted && session.sourceMode === 'none' && slot.startFingerprint !== undefined) {
+        // 首次 ASR 权限查询尚未结束：中止旧查询，重建时会按当前权限重新选择来源。
+        session.abortPending('permission-changed');
+        void this.reconcile(slot);
+      }
+      if (
+        !providerMissing &&
+        !(['asr', 'asr-preload'].includes(session.sourceMode) && !localGranted)
+      )
+        continue;
+      this.onFatal(session, {
+        code: 'host-permission-revoked',
+        category: 'permission',
+        retryable: true,
+        message:
+          '服务访问权限已被撤回，翻译、捕获与配音已停止。请在设置页重新授权后点击「开始翻译」。',
+      });
+    }
+    this.publish();
+    return { granted: this.hostPermission.granted };
   }
 
   // ---------------------------------------------------------------------------
@@ -613,6 +756,7 @@ export class Coordinator implements SessionHost {
     this.uiConnections.add(conn);
     conn.onMessage((msg) => {
       void this.ready.then(async () => {
+        if (!conn.isConnected) return;
         switch (msg.type) {
           case 'subscribe':
             if (msg.protocolVersion !== UI_PROTOCOL_VERSION) return;
@@ -639,7 +783,7 @@ export class Coordinator implements SessionHost {
           }
           case 'command': {
             try {
-              const data = await this.handleCommand(msg.command);
+              const data = await this.handleCommand(msg.command, conn);
               conn.send({ type: 'result', requestId: msg.requestId, ok: true, data });
             } catch (error) {
               conn.send({
@@ -655,6 +799,7 @@ export class Coordinator implements SessionHost {
       });
     });
     conn.onDisconnect(() => {
+      this.search.cancel(conn);
       this.uiConnections.delete(conn);
     });
   }
@@ -786,18 +931,26 @@ export class Coordinator implements SessionHost {
           this.publish();
           continue;
         }
+        if (slot.desired === 'running' && session.restartRequested) {
+          await session.stop('source-config-changed');
+          if (slot.session === session) slot.session = undefined;
+          continue;
+        }
         if (slot.desired === 'paused' && session.phase === 'running') {
           await session.pause();
           continue;
         }
         if (slot.desired === 'running' && session.phase === 'paused') {
           const intentAtResume = slot.intentSeq;
+          const routeKey = this.asrRouteKey();
+          slot.captureOperationKey = routeKey;
           try {
             await session.resume({
               stillWanted: () =>
                 slot.session === session &&
                 slot.desired === 'running' &&
-                this.pageMatches(slot.tabId, session),
+                this.pageMatches(slot.tabId, session) &&
+                this.asrRouteKey() === routeKey,
             });
           } catch (error) {
             const info = toAppErrorInfo(error);
@@ -807,6 +960,8 @@ export class Coordinator implements SessionHost {
               if (slot.intentSeq === intentAtResume) slot.desired = 'paused';
             }
             this.publish();
+          } finally {
+            slot.captureOperationKey = undefined;
           }
           continue;
         }
@@ -816,12 +971,15 @@ export class Coordinator implements SessionHost {
           session.needsCaptureRefresh
         ) {
           const intentAtRefresh = slot.intentSeq;
+          const routeKey = this.asrRouteKey();
+          slot.captureOperationKey = routeKey;
           try {
             await session.refreshCapture({
               stillWanted: () =>
                 slot.session === session &&
                 slot.desired === 'running' &&
-                this.pageMatches(slot.tabId, session),
+                this.pageMatches(slot.tabId, session) &&
+                this.asrRouteKey() === routeKey,
             });
           } catch (error) {
             const info = toAppErrorInfo(error);
@@ -830,6 +988,8 @@ export class Coordinator implements SessionHost {
               if (slot.intentSeq === intentAtRefresh) slot.desired = 'paused';
             }
             this.publish();
+          } finally {
+            slot.captureOperationKey = undefined;
           }
           continue;
         }
@@ -1016,20 +1176,30 @@ export class Coordinator implements SessionHost {
   }
 
   saveDetectedProtocol(protocol: 'responses' | 'chat'): void {
-    if (this.settingsValue.provider.protocol !== 'auto') return;
-    const previous = this.settingsValue.provider.detectedProtocol;
-    if (previous === protocol) return;
-    this.settingsValue = applySettingsPatch(this.settingsValue, {
-      provider: { detectedProtocol: protocol },
-    });
-    void saveSettings(this.deps.storage.local, this.settingsValue).then((ok) => {
-      this.settingsPersisted = ok;
+    const provider = this.settingsValue.provider;
+    const revision = this.configRevisionValue;
+    const generation = this.credentialGeneration;
+    void this.mutate(async () => {
+      if (revision !== this.configRevisionValue || generation !== this.credentialGeneration) return;
+      const current = this.settingsValue.provider;
+      if (
+        current.protocol !== 'auto' ||
+        current.baseUrl !== provider.baseUrl ||
+        current.model !== provider.model
+      )
+        return;
+      const previous = current.detectedProtocol;
+      if (previous === protocol) return;
+      this.settingsValue = applySettingsPatch(this.settingsValue, {
+        provider: { detectedProtocol: protocol },
+      });
+      this.settingsPersisted = await saveSettings(this.deps.storage.local, this.settingsValue);
+      if (previous !== undefined) {
+        await this.bumpConfigRevision();
+        this.applyTranslationConfigToSessions();
+      }
       this.publish();
     });
-    if (previous !== undefined) {
-      // 实际使用的协议发生变化（不是首次探测）：译文可能不同，递增配置版本并让运行中会话按新协议重新翻译。
-      void this.bumpConfigRevision().then(() => this.applyTranslationConfigToSessions());
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1117,9 +1287,19 @@ export class Coordinator implements SessionHost {
   // 命令
   // ---------------------------------------------------------------------------
 
-  async handleCommand(command: UiCommand): Promise<unknown> {
+  async handleCommand(command: UiCommand, owner: object = this): Promise<unknown> {
     await this.ready;
     switch (command.kind) {
+      case 'search/generate':
+        if (owner instanceof UiConnection && !owner.isConnected) throw cancelledError();
+        return this.search.generate(owner, command.operationId, command.query);
+      case 'search/cancel':
+        this.search.cancel(owner, command.operationId);
+        return { cancelled: true };
+      case 'search/history':
+        return this.search.list();
+      case 'search/clear-history':
+        return this.search.clear();
       case 'session/start':
         return this.setDesired(command.tabId, 'running', true);
       case 'session/resume':
@@ -1167,48 +1347,46 @@ export class Coordinator implements SessionHost {
         return { accepted: true };
       }
       case 'settings/update':
-        return this.updateSettings(command.patch);
+        return this.mutate(() => this.updateSettings(command.patch));
       case 'settings/reset':
-        return this.replaceSettings(defaultSettings());
-      case 'credentials/set':
-        return this.setApiKey(command.apiKey, command.remember);
-      case 'credentials/clear':
-        return this.clearApiKey();
-      case 'asr/set-token': {
-        this.invalidateCredentials('asrToken');
-        const persisted = await saveSecret(
-          this.deps.storage,
-          'asrToken',
-          command.token,
-          this.settingsValue.rememberCredentials,
-        );
-        this.asrTokenState = {
-          value: command.token,
-          storage: persisted
-            ? this.settingsValue.rememberCredentials
-              ? 'local'
-              : 'session'
-            : 'none',
-        };
-        this.setCapability('localAsr', {
-          status: 'unknown',
-          configRevision: this.configRevisionValue,
-        });
-        this.afterConfigChange();
-        this.publish();
-        return { persisted } satisfies CommandHandlerResult<'asr/set-token'>;
+        return this.mutate(() => this.replaceSettings(defaultSettings()));
+      case 'credentials/set': {
+        const intent = ++this.apiKeyIntent;
+        return this.mutate(() => this.setApiKey(command.apiKey, command.remember, intent));
       }
-      case 'asr/clear-token':
-        this.invalidateCredentials('asrToken');
-        this.asrTokenState = { value: undefined, storage: 'none' };
+      case 'credentials/clear': {
+        const intent = ++this.apiKeyIntent;
+        const revocation = beginSecretRevocation(this.deps.storage, 'apiKey');
+        // 删除的物理取消不排在可能缓慢的存储操作后面。
+        this.apiKeyState = { value: undefined, storage: 'none', cleanupPending: true };
+        this.invalidateCredentials('apiKey');
+        this.resetProviderCapabilities();
+        this.applyTranslationConfigToSessions();
         this.afterConfigChange();
-        await clearSecret(this.deps.storage, 'asrToken');
         this.publish();
-        return { cleared: true };
+        return this.mutate(() => this.clearApiKey(intent, revocation));
+      }
+      case 'asr/set-token': {
+        const intent = ++this.asrTokenIntent;
+        return this.mutate(() => this.setAsrToken(command.token, intent));
+      }
+      case 'asr/clear-token': {
+        const intent = ++this.asrTokenIntent;
+        const revocation = beginSecretRevocation(this.deps.storage, 'asrToken');
+        this.invalidateCredentials('asrToken');
+        this.asrTokenState = { value: undefined, storage: 'none', cleanupPending: true };
+        this.afterConfigChange();
+        this.publish();
+        return this.mutate(async () => {
+          const cleared = await clearSecret(this.deps.storage, 'asrToken', revocation);
+          if (intent === this.asrTokenIntent) this.asrTokenState.cleanupPending = !cleared;
+          this.publish();
+          if (!cleared) throw secretCleanupError();
+          return { cleared: true };
+        });
+      }
       case 'permissions/changed':
-        await this.refreshHostPermission();
-        this.publish();
-        return { granted: this.hostPermission.granted };
+        return this.onPermissionsChanged();
       case 'connection/check':
         return this.runConnectionCheck(command.scope, command.allowBilledAudioProbe);
       case 'models/discover':
@@ -1221,10 +1399,7 @@ export class Coordinator implements SessionHost {
       case 'tts/preview':
         return this.previewVoice(command.text, command.voiceName, command.rate);
       case 'tts/stop-preview':
-        if (this.previewActive) {
-          this.deps.systemTts.stop();
-          this.previewActive = false;
-        }
+        this.cancelVoicePreview();
         return { stopped: true };
       case 'cache/clear':
         await this.deps.translationCache.clear();
@@ -1279,6 +1454,21 @@ export class Coordinator implements SessionHost {
       });
     }
     if (explicitStart || desired === 'stopped') slot.errorSnapshot = undefined;
+    const current = slot.session;
+    if (
+      explicitStart &&
+      current &&
+      (current.phase === 'running' || current.phase === 'paused') &&
+      !current.isStopping &&
+      !current.restartRequested &&
+      this.pageMatches(tabId, current) &&
+      current.snapshot().playbackBuffer?.state === 'blocked'
+    ) {
+      // The error callout sends session/start for an explicit retry. A preloader
+      // error keeps the session alive, so merely setting desired=running would
+      // otherwise never dispatch another request.
+      current.retryFailed();
+    }
     slot.desired = desired;
     slot.intentSeq++;
     void this.reconcile(slot);
@@ -1315,27 +1505,65 @@ export class Coordinator implements SessionHost {
   private async replaceSettings(next: Settings): Promise<{ persisted: boolean }> {
     const prev = this.settingsValue;
     this.settingsValue = next;
-    const persisted = await saveSettings(this.deps.storage.local, next);
-    this.settingsPersisted = persisted;
     const translationChanged = translationFingerprint(prev) !== translationFingerprint(next);
     const schedulingChanged =
       prev.prefetch !== next.prefetch ||
       prev.cacheTranslations !== next.cacheTranslations ||
       prev.provider.timeoutMs !== next.provider.timeoutMs ||
       prev.provider.streaming !== next.provider.streaming;
-    const providerChanged =
-      prev.provider.baseUrl !== next.provider.baseUrl ||
-      prev.provider.protocol !== next.provider.protocol ||
-      prev.provider.model !== next.provider.model;
+    const providerChanged = JSON.stringify(prev.provider) !== JSON.stringify(next.provider);
+    const asrChanged = JSON.stringify(prev.asr) !== JSON.stringify(next.asr);
+    const ttsChanged = JSON.stringify(prev.tts) !== JSON.stringify(next.tts);
     if (providerChanged) {
+      this.search.cancelAll();
       this.connectionCheckAbort?.abort();
       this.modelDiscoveryAbort?.abort();
       this.resetProviderCapabilities();
-      await this.refreshHostPermission();
     }
+    if (asrChanged || ttsChanged || prev.targetLanguage !== next.targetLanguage) {
+      this.connectionCheckAbort?.abort();
+      this.lastConnectionReport = undefined;
+      if (asrChanged) {
+        delete this.capabilities.asr;
+        delete this.capabilities.localAsr;
+      }
+      if (ttsChanged || prev.targetLanguage !== next.targetLanguage) {
+        delete this.capabilities.tts;
+        delete this.capabilities.systemTts;
+      }
+      this.persistCapabilities();
+    }
+    // 来源变更不会继续原来的采集；暂停中的会话到恢复时才按新来源重建。
+    if (
+      prev.sourceStrategy !== next.sourceStrategy ||
+      prev.sourceLanguage !== next.sourceLanguage ||
+      prev.playbackMode !== next.playbackMode
+    ) {
+      for (const slot of this.slots.values()) {
+        const session = slot.session;
+        if (!session || session.isStopping) continue;
+        if (
+          prev.sourceStrategy !== next.sourceStrategy ||
+          prev.playbackMode !== next.playbackMode ||
+          session.sourceMode !== 'asr'
+        ) {
+          session.restartRequested = true;
+          if (slot.desired === 'running') {
+            void session.stop('source-config-changed');
+            void this.reconcile(slot);
+          }
+        }
+      }
+    }
+    this.afterConfigChange();
+    for (const slot of this.slots.values())
+      slot.session?.onNonTranslationSettingsChanged(prev, next);
+    let persisted = await saveSettings(this.deps.storage.local, next);
+    if (providerChanged) await this.refreshHostPermission();
     if (prev.rememberCredentials !== next.rememberCredentials) {
-      await this.moveSecrets(next.rememberCredentials);
+      persisted = (await this.moveSecrets(next.rememberCredentials)) && persisted;
     }
+    this.settingsPersisted = persisted;
     if (translationChanged) {
       await this.bumpConfigRevision();
       this.applyTranslationConfigToSessions();
@@ -1345,8 +1573,6 @@ export class Coordinator implements SessionHost {
         if (slot.session && provider) slot.session.onSchedulingSettingsChanged(next, provider);
       }
     }
-    for (const slot of this.slots.values())
-      slot.session?.onNonTranslationSettingsChanged(prev, next);
     this.afterConfigChange();
     if (prev.targetLanguage !== next.targetLanguage && this.capabilities.systemTts) {
       // 系统语音能力按目标语言判定：语言变化后旧结论作废。
@@ -1463,7 +1689,9 @@ export class Coordinator implements SessionHost {
   private async setApiKey(
     apiKey: string,
     remember: boolean,
+    intent: number,
   ): Promise<UiCommandResultMap['credentials/set']> {
+    if (intent !== this.apiKeyIntent) throw cancelledError('credential superseded');
     const trimmed = apiKey.trim();
     if (!trimmed)
       throw new AppError({
@@ -1472,7 +1700,6 @@ export class Coordinator implements SessionHost {
         retryable: false,
         message: 'API Key 不能为空。',
       });
-    this.invalidateCredentials('apiKey');
     const rememberChanged = remember !== this.settingsValue.rememberCredentials;
     if (rememberChanged) {
       this.settingsValue = applySettingsPatch(this.settingsValue, {
@@ -1480,25 +1707,18 @@ export class Coordinator implements SessionHost {
       });
       this.settingsPersisted = await saveSettings(this.deps.storage.local, this.settingsValue);
     }
-    const persisted = await saveSecret(this.deps.storage, 'apiKey', trimmed, remember);
+    if (intent !== this.apiKeyIntent) throw cancelledError('credential superseded');
+    let persisted = await saveSecret(this.deps.storage, 'apiKey', trimmed, remember);
+    if (rememberChanged) persisted &&= this.settingsPersisted;
+    if (intent !== this.apiKeyIntent) throw cancelledError('credential superseded');
+    // Key 与代数在同一个同步步骤生效；持久化期间仍保持旧值/旧代数一致。
     // 即使持久化失败，也在内存中生效，并如实告知未保存。
     this.apiKeyState = {
       value: trimmed,
       storage: persisted ? (remember ? 'local' : 'session') : 'none',
+      cleanupPending: !persisted || undefined,
     };
-    if (rememberChanged && this.asrTokenState.value) {
-      const ok = await saveSecret(
-        this.deps.storage,
-        'asrToken',
-        this.asrTokenState.value,
-        remember,
-      );
-      if (ok)
-        this.asrTokenState = {
-          value: this.asrTokenState.value,
-          storage: remember ? 'local' : 'session',
-        };
-    }
+    this.invalidateCredentials('apiKey');
     this.resetProviderCapabilities();
     // Key 不改变译文内容：保留已完成译文，用新凭证的 provider 替换，旧 provider 的在途请求由调度器立即中止（T28）。
     const provider = this.providerForSessions();
@@ -1526,44 +1746,87 @@ export class Coordinator implements SessionHost {
     }
     this.afterConfigChange();
     this.publish();
-    return { persisted, storage: remember ? 'local' : 'session' };
-  }
-
-  private async clearApiKey(): Promise<{ cleared: true }> {
-    // 先同步作废内存中的 Key 并停止使用它的会话，再做存储读写：await 期间不得继续用旧 Key 发请求。
-    this.apiKeyState = { value: undefined, storage: 'none' };
-    this.invalidateCredentials('apiKey');
-    this.resetProviderCapabilities();
-    this.applyTranslationConfigToSessions();
-    this.afterConfigChange();
-    await clearSecret(this.deps.storage, 'apiKey');
-    await this.bumpConfigRevision();
-    this.publish();
-    return { cleared: true };
-  }
-
-  private async moveSecrets(remember: boolean): Promise<void> {
-    if (this.apiKeyState.value) {
-      const ok = await saveSecret(this.deps.storage, 'apiKey', this.apiKeyState.value, remember);
-      if (ok)
-        this.apiKeyState = {
-          value: this.apiKeyState.value,
-          storage: remember ? 'local' : 'session',
-        };
-    }
-    if (this.asrTokenState.value) {
+    // 新凭证已更新 provider 并取消旧启动操作，再执行不改变凭证内容的存储位置迁移。
+    if (rememberChanged && this.asrTokenState.value) {
+      const tokenIntent = this.asrTokenIntent;
       const ok = await saveSecret(
         this.deps.storage,
         'asrToken',
         this.asrTokenState.value,
         remember,
       );
-      if (ok)
+      persisted &&= ok;
+      if (tokenIntent === this.asrTokenIntent)
         this.asrTokenState = {
           value: this.asrTokenState.value,
-          storage: remember ? 'local' : 'session',
+          storage: ok ? (remember ? 'local' : 'session') : 'none',
+          cleanupPending: !ok || undefined,
         };
     }
+    if (intent !== this.apiKeyIntent) throw cancelledError('credential superseded');
+    this.publish();
+    return { persisted, storage: remember ? 'local' : 'session' };
+  }
+
+  private async clearApiKey(
+    intent: number,
+    revocation: SecretRevocation,
+  ): Promise<{ cleared: true }> {
+    const cleared = await clearSecret(this.deps.storage, 'apiKey', revocation);
+    if (intent === this.apiKeyIntent) this.apiKeyState.cleanupPending = !cleared;
+    await this.bumpConfigRevision();
+    this.publish();
+    if (!cleared) throw secretCleanupError();
+    return { cleared: true };
+  }
+
+  private async setAsrToken(token: string, intent: number): Promise<{ persisted: boolean }> {
+    if (intent !== this.asrTokenIntent) throw cancelledError('credential superseded');
+    this.invalidateCredentials('asrToken');
+    const remember = this.settingsValue.rememberCredentials;
+    const persisted = await saveSecret(this.deps.storage, 'asrToken', token, remember);
+    if (intent !== this.asrTokenIntent) throw cancelledError('credential superseded');
+    this.asrTokenState = {
+      value: token,
+      storage: persisted ? (remember ? 'local' : 'session') : 'none',
+      cleanupPending: !persisted || undefined,
+    };
+    this.setCapability('localAsr', { status: 'unknown', configRevision: this.configRevisionValue });
+    this.afterConfigChange();
+    this.publish();
+    return { persisted };
+  }
+
+  private async moveSecrets(remember: boolean): Promise<boolean> {
+    let persisted = true;
+    if (this.apiKeyState.value) {
+      const intent = this.apiKeyIntent;
+      const ok = await saveSecret(this.deps.storage, 'apiKey', this.apiKeyState.value, remember);
+      persisted &&= ok;
+      if (intent === this.apiKeyIntent)
+        this.apiKeyState = {
+          value: this.apiKeyState.value,
+          storage: ok ? (remember ? 'local' : 'session') : 'none',
+          cleanupPending: !ok || undefined,
+        };
+    }
+    if (this.asrTokenState.value) {
+      const intent = this.asrTokenIntent;
+      const ok = await saveSecret(
+        this.deps.storage,
+        'asrToken',
+        this.asrTokenState.value,
+        remember,
+      );
+      persisted &&= ok;
+      if (intent === this.asrTokenIntent)
+        this.asrTokenState = {
+          value: this.asrTokenState.value,
+          storage: ok ? (remember ? 'local' : 'session') : 'none',
+          cleanupPending: !ok || undefined,
+        };
+    }
+    return persisted;
   }
 
   private resetProviderCapabilities(): void {
@@ -1593,6 +1856,12 @@ export class Coordinator implements SessionHost {
     this.connectionCheckAbort = controller;
     const revision = this.configRevisionValue;
     const generation = this.credentialGeneration;
+    const settingsAtCheck = JSON.stringify([
+      this.settingsValue.provider,
+      this.settingsValue.asr,
+      this.settingsValue.tts,
+      this.settingsValue.targetLanguage,
+    ]);
     const checkedAt = this.deps.now();
     const items: ConnectionCheckItem[] = [];
     let detectedProtocol: 'responses' | 'chat' | undefined;
@@ -1630,7 +1899,14 @@ export class Coordinator implements SessionHost {
     if (
       controller.signal.aborted ||
       revision !== this.configRevisionValue ||
-      generation !== this.credentialGeneration
+      generation !== this.credentialGeneration ||
+      settingsAtCheck !==
+        JSON.stringify([
+          this.settingsValue.provider,
+          this.settingsValue.asr,
+          this.settingsValue.tts,
+          this.settingsValue.targetLanguage,
+        ])
     ) {
       throw new AppError({
         code: 'check-superseded',
@@ -1827,6 +2103,50 @@ export class Coordinator implements SessionHost {
     };
   }
 
+  private async searchRoute(
+    signal: AbortSignal,
+  ): Promise<Omit<SearchGenerationParams, 'query' | 'signal'>> {
+    const provider = this.settingsValue.provider;
+    const apiKey = this.apiKeyState.value;
+    const generation = this.apiKeyGeneration;
+    const intent = this.apiKeyIntent;
+    const normalized = this.deps.normalizeBaseUrl(provider.baseUrl);
+    if (!normalized.ok) throw new AppError(normalized.error);
+    if (!apiKey || !provider.model.trim())
+      throw new AppError({
+        code: 'search-config-missing',
+        category: 'config',
+        retryable: false,
+        message: '请先在设置中保存 API Key 和翻译模型。',
+      });
+    const granted = await this.deps.permissions
+      .contains(normalized.originPattern)
+      .catch(() => false);
+    if (
+      signal.aborted ||
+      generation !== this.apiKeyGeneration ||
+      intent !== this.apiKeyIntent ||
+      provider !== this.settingsValue.provider
+    )
+      throw cancelledError();
+    if (!granted)
+      throw new AppError({
+        code: 'host-permission-missing',
+        category: 'permission',
+        retryable: false,
+        message: '请先在设置中授予访问服务地址的权限。',
+      });
+    return {
+      baseUrl: normalized.baseUrl,
+      apiKey,
+      model: provider.model,
+      protocol:
+        provider.protocol === 'auto' ? (provider.detectedProtocol ?? 'auto') : provider.protocol,
+      reasoningEffort: provider.reasoningEffort,
+      timeoutMs: provider.timeoutMs,
+    };
+  }
+
   private async discoverModels(): Promise<{ models: string[] }> {
     const s = this.settingsValue.provider;
     const normalized = s.baseUrl ? this.deps.normalizeBaseUrl(s.baseUrl) : undefined;
@@ -1845,7 +2165,10 @@ export class Coordinator implements SessionHost {
         retryable: false,
         message: '请先填写 API Key。',
       });
+    const generation = this.credentialGeneration;
     await this.refreshHostPermission();
+    if (generation !== this.credentialGeneration || this.settingsValue.provider !== s)
+      throw cancelledError('discovery superseded');
     if (!this.hostPermission.granted) {
       throw new AppError({
         code: 'host-permission-missing',
@@ -1857,7 +2180,6 @@ export class Coordinator implements SessionHost {
     this.modelDiscoveryAbort?.abort();
     const controller = new AbortController();
     this.modelDiscoveryAbort = controller;
-    const generation = this.credentialGeneration;
     const timer = setTimeout(() => controller.abort(), 15_000);
     try {
       const models = await this.deps.discoverModels({
@@ -1866,8 +2188,9 @@ export class Coordinator implements SessionHost {
         signal: controller.signal,
       });
       if (
+        controller.signal.aborted ||
         generation !== this.credentialGeneration ||
-        this.settingsValue.provider.baseUrl !== s.baseUrl
+        this.settingsValue.provider !== s
       ) {
         throw new AppError({
           code: 'discovery-superseded',
@@ -1892,7 +2215,8 @@ export class Coordinator implements SessionHost {
       if (
         slot.session &&
         slot.session.outputMode === 'subtitle-voice' &&
-        slot.session.phase === 'running'
+        slot.desired === 'running' &&
+        !slot.session.isStopping
       ) {
         throw new AppError({
           code: 'dubbing-active',
@@ -1908,10 +2232,42 @@ export class Coordinator implements SessionHost {
       (s.targetLanguage.startsWith('zh')
         ? '你好，这是同听的配音试听。'
         : 'Hello, this is a Tongting voice preview.');
+    this.cancelVoicePreview();
     const utteranceId = this.deps.randomId('preview');
-    this.previewActive = true;
     await new Promise<void>((resolve, reject) => {
       let settled = false;
+      const owner = {
+        id: utteranceId,
+        timer: undefined as ReturnType<typeof setTimeout> | undefined,
+        cancel: () => {
+          if (this.preview !== owner) return;
+          release();
+          this.deps.systemTts.stop();
+          if (!settled) {
+            settled = true;
+            reject(cancelledError('preview cancelled'));
+          }
+        },
+      };
+      const release = () => {
+        clearTimeout(owner.timer);
+        if (this.preview === owner) this.preview = undefined;
+      };
+      this.preview = owner;
+      owner.timer = setTimeout(() => {
+        if (this.preview !== owner || settled) return;
+        release();
+        settled = true;
+        this.deps.systemTts.stop();
+        reject(
+          new AppError({
+            code: 'tts-start-timeout',
+            category: 'tts',
+            retryable: true,
+            message: '系统语音没有开始朗读，请检查所选声音。',
+          }),
+        );
+      }, 5_000);
       this.deps.systemTts.speak(
         {
           utteranceId,
@@ -1922,15 +2278,21 @@ export class Coordinator implements SessionHost {
           volume: s.audio.dubVolume,
         },
         (event) => {
-          if (event.type === 'start' && !settled) {
-            settled = true;
-            resolve();
-          } else if (event.type === 'error' && !settled) {
-            settled = true;
-            this.previewActive = false;
-            reject(new AppError(event.error));
+          if (this.preview !== owner) return;
+          if (event.type === 'start') {
+            clearTimeout(owner.timer);
+            if (!settled) {
+              settled = true;
+              resolve();
+            }
+          } else if (event.type === 'error') {
+            release();
+            if (!settled) {
+              settled = true;
+              reject(new AppError(event.error));
+            }
           } else if (event.type === 'end' || event.type === 'interrupted') {
-            this.previewActive = false;
+            release();
             if (!settled) {
               settled = true;
               resolve();
@@ -1938,23 +2300,13 @@ export class Coordinator implements SessionHost {
           }
         },
       );
-      setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          this.previewActive = false;
-          this.deps.systemTts.stop();
-          reject(
-            new AppError({
-              code: 'tts-start-timeout',
-              category: 'tts',
-              retryable: true,
-              message: '系统语音没有开始朗读，请检查所选声音。',
-            }),
-          );
-        }
-      }, 5_000);
     });
     return { started: true };
+  }
+
+  /** 会话获得语音引擎之前撤销试听所有权；迟到回调和停止按钮不能再停止会话。 */
+  cancelVoicePreview(): void {
+    this.preview?.cancel();
   }
 
   /** 快捷键：切换当前活动标签页的翻译。 */
@@ -1978,9 +2330,11 @@ export class Coordinator implements SessionHost {
 
   async toggleCaptions(): Promise<void> {
     await this.ready;
-    await this.updateSettings({
-      captions: { enabled: !this.settingsValue.captions.enabled },
-    }).catch(() => undefined);
+    await this.mutate(() =>
+      this.updateSettings({
+        captions: { enabled: !this.settingsValue.captions.enabled },
+      }),
+    ).catch(() => undefined);
   }
 
   // ---------------------------------------------------------------------------
@@ -2059,12 +2413,14 @@ export class Coordinator implements SessionHost {
         configured: !!this.apiKeyState.value,
         generation: this.credentialGeneration,
         storage: this.apiKeyState.storage,
+        cleanupPending: this.apiKeyState.cleanupPending,
         masked: maskSecret(this.apiKeyState.value),
       },
       asrToken: {
         configured: !!this.asrTokenState.value,
         generation: this.credentialGeneration,
         storage: this.asrTokenState.storage,
+        cleanupPending: this.asrTokenState.cleanupPending,
         masked: maskSecret(this.asrTokenState.value),
       },
       hostPermission: { origin: this.hostPermission.origin, granted: this.hostPermission.granted },
@@ -2098,6 +2454,16 @@ export class Coordinator implements SessionHost {
       await Promise.all(loops);
     }
   }
+}
+
+function secretCleanupError(): AppError {
+  return new AppError({
+    code: 'secret-cleanup-incomplete',
+    category: 'storage',
+    retryable: true,
+    message:
+      '凭证已停止使用，但本机存储副本尚未全部清除。请点击「重试清理」；清理完成前不要把它视为已彻底删除。',
+  });
 }
 
 function safeDisconnect(port: PortLike): void {

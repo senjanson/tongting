@@ -1,4 +1,5 @@
 import '@src/ui/theme/tokens.css';
+import './style.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ErrorBoundary } from '@src/ui/components/ErrorBoundary';

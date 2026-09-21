@@ -3,8 +3,8 @@
  *
  * 保存 Key 不等于连接成功；只有「检查连接」中实际请求成功的项目才显示「已验证」。
  */
-import { Eye, EyeOff, Save, Search, Trash } from 'lucide-react';
-import { useState } from 'react';
+import { Eye, EyeOff, Save, Trash } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import type { ProviderSettings, TextProtocol } from '../../domain/settings';
 import type { AppSnapshot } from '../../messaging/ui-protocol';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -18,35 +18,33 @@ import {
   SwitchRow,
   TextField,
 } from '../components/controls';
-import { Callout } from '../components/layout';
 import { useToast } from '../components/toast';
+import { ModelSelector } from '../shared/ModelSelector';
 import { GrantPermissionButton } from '../shared/GrantPermissionButton';
 import { useCommandRunner, useDraftValue, useSettingsUpdater } from '../shared/hooks';
-import { errorMessageOf } from '../state/client';
-import { useUiClient } from '../state/hooks';
 import { checkServiceUrl, sameOrigin } from '../state/permissions';
 import { credentialStorageText } from './common';
 import { CheckRunner, TEXT_CHECK_KEYS } from './CheckRunner';
 import { CapabilityStatusText, draftValue, Section, type Draft } from './common';
 import styles from './options.module.css';
 
-export const MODEL_PRESETS = [
-  { name: '均衡', model: 'gpt-5.6-terra' },
-  { name: '省资源', model: 'gpt-5.6-luna' },
-  { name: '高质量', model: 'gpt-6-astra' },
-] as const;
-
 export function ConnectionSection({ snapshot }: { snapshot: AppSnapshot }) {
   const provider = snapshot.settings.provider;
+  const [addressDirty, setAddressDirty] = useState(false);
+  const [keyDirty, setKeyDirty] = useState(false);
   return (
     <Section
       id="connection"
       title="模型连接"
       description="填写你自己的 sub2api 服务。所有能力以「检查连接」的实际请求结果为准。"
     >
-      <AddressFields snapshot={snapshot} />
-      <KeyFields snapshot={snapshot} />
-      <ProtocolAndModel snapshot={snapshot} provider={provider} />
+      <AddressFields snapshot={snapshot} onDirtyChange={setAddressDirty} />
+      <KeyFields snapshot={snapshot} onDirtyChange={setKeyDirty} />
+      <ProtocolAndModel
+        snapshot={snapshot}
+        provider={provider}
+        routeDirty={addressDirty || keyDirty}
+      />
       <div className={styles.subhead}>检查连接</div>
       <CheckRunner
         snapshot={snapshot}
@@ -65,13 +63,20 @@ export function ConnectionSection({ snapshot }: { snapshot: AppSnapshot }) {
   );
 }
 
-function AddressFields({ snapshot }: { snapshot: AppSnapshot }) {
+function AddressFields({
+  snapshot,
+  onDirtyChange,
+}: {
+  snapshot: AppSnapshot;
+  onDirtyChange(dirty: boolean): void;
+}) {
   const update = useSettingsUpdater();
   const saved = snapshot.settings.provider.baseUrl;
   const [draft, setDraft] = useState<Draft>({ value: saved, dirty: false });
   const value = draftValue(draft, saved);
   const check = value.trim() ? checkServiceUrl(value) : undefined;
   const dirty = draft.dirty && draft.value.trim() !== saved;
+  useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
   const savedCheck = saved.trim() ? checkServiceUrl(saved) : undefined;
   const permission = snapshot.hostPermission;
   const granted =
@@ -83,7 +88,7 @@ function AddressFields({ snapshot }: { snapshot: AppSnapshot }) {
     const trimmed = value.trim();
     if (trimmed && !checkServiceUrl(trimmed).ok) return;
     if (await update({ provider: { baseUrl: trimmed } }))
-      setDraft({ value: trimmed, dirty: false });
+      setDraft((current) => (current === draft ? { value: trimmed, dirty: false } : current));
   };
 
   let hint: string;
@@ -120,11 +125,19 @@ function AddressFields({ snapshot }: { snapshot: AppSnapshot }) {
   );
 }
 
-function KeyFields({ snapshot }: { snapshot: AppSnapshot }) {
+function KeyFields({
+  snapshot,
+  onDirtyChange,
+}: {
+  snapshot: AppSnapshot;
+  onDirtyChange(dirty: boolean): void;
+}) {
   const notify = useToast();
   const { run, isBusy } = useCommandRunner();
   const credential = snapshot.credential;
-  const [key, setKey] = useState('');
+  const [keyDraft, setKeyDraft] = useState({ value: '' });
+  const key = keyDraft.value;
+  useEffect(() => onDirtyChange(!!key), [key, onDirtyChange]);
   const [visible, setVisible] = useState(false);
   const [remember, setRemember] = useState<boolean | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
@@ -139,11 +152,11 @@ function KeyFields({ snapshot }: { snapshot: AppSnapshot }) {
       { errorPrefix: '保存 Key 失败' },
     );
     if (!result) return;
-    setKey('');
-    setVisible(false);
     if (!result.persisted) {
-      notify('Key 未能保存，仅本次后台运行期间有效，可能随时丢失。', 'warning');
+      notify('Key 未能完整保存，请重试保存后再重新加载扩展。', 'warning');
     } else {
+      setKeyDraft((current) => (current === keyDraft ? { value: '' } : current));
+      setVisible(false);
       notify(
         `Key 已保存（${result.storage === 'local' ? '本机扩展存储' : '仅本次浏览器会话'}）。尚未验证，请点击「检查连接」。`,
         'success',
@@ -170,16 +183,18 @@ function KeyFields({ snapshot }: { snapshot: AppSnapshot }) {
             credential.configured ? '输入新 Key 以替换当前 Key' : '在此粘贴你的 sub2api Key'
           }
           value={key}
-          onChange={setKey}
+          onChange={(value) => setKeyDraft({ value })}
           hint={
             credential.configured
               ? `当前 Key：${credential.masked ?? '（已隐藏）'}，${credentialStorageText(credential.storage)}。`
               : '尚未保存 Key。'
           }
           error={
-            credential.configured && credential.storage === 'none'
-              ? '未保存：Key 仅在本次后台运行期间有效，可能随时丢失，请重新保存。'
-              : undefined
+            credential.cleanupPending
+              ? '旧存储清理失败，请重试清理。已撤销的 Key 不会再用于请求。'
+              : credential.configured && credential.storage === 'none'
+                ? '未保存：Key 仅在本次后台运行期间有效，可能随时丢失，请重新保存。'
+                : undefined
           }
           trailing={
             <IconButton
@@ -205,19 +220,19 @@ function KeyFields({ snapshot }: { snapshot: AppSnapshot }) {
         >
           保存 Key
         </Button>
-        {credential.configured && (
+        {(credential.configured || credential.cleanupPending) && (
           <Button
             variant="danger"
             icon={<Trash size={15} aria-hidden="true" />}
             onClick={() => setConfirmClear(true)}
           >
-            删除 Key
+            {credential.cleanupPending ? '重试清理 Key' : '删除 Key'}
           </Button>
         )}
       </div>
       <Checkbox label="记住在本机" checked={rememberValue} onChange={setRemember} />
       <Hint>
-        默认只保存在浏览器会话中，关闭浏览器后需要重新输入。勾选「记住在本机」后保存在本机扩展存储，不会同步到其他设备；
+        默认勾选「记住在本机」，重新加载扩展或重启浏览器后仍保留。主动取消后仅临时保存，重新加载或关闭浏览器会清空。不会同步到其他设备；
         它不是安全保险箱，能访问这台电脑浏览器配置的人或程序可能读取。Key
         不会出现在页面、字幕消息或导出的设置中。
         {credential.configured && rememberValue !== (credential.storage === 'local')
@@ -242,52 +257,36 @@ function KeyFields({ snapshot }: { snapshot: AppSnapshot }) {
 function ProtocolAndModel({
   snapshot,
   provider,
+  routeDirty,
 }: {
   snapshot: AppSnapshot;
   provider: ProviderSettings;
+  routeDirty: boolean;
 }) {
-  const client = useUiClient();
-  const notify = useToast();
   const update = useSettingsUpdater();
+  const savingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
   const [modelDraft, setModelDraft] = useState<Draft>({ value: provider.model, dirty: false });
   const modelValue = draftValue(modelDraft, provider.model);
-  const [discovered, setDiscovered] = useState<{ models: string[] } | { error: string } | null>(
-    null,
-  );
-  const [discovering, setDiscovering] = useState(false);
   const [timeout, setTimeoutMs] = useDraftValue(
     provider.timeoutMs,
     (timeoutMs) => update({ provider: { timeoutMs } }),
     400,
   );
-  const models =
-    discovered && 'models' in discovered
-      ? discovered.models
-      : (snapshot.lastConnectionReport?.models ?? []);
-
-  const discover = async () => {
-    setDiscovering(true);
-    try {
-      const result = await client.sendCommand({ kind: 'models/discover' });
-      setDiscovered({ models: result.models });
-      notify(
-        result.models.length
-          ? `服务返回 ${result.models.length} 个模型。列表中的模型仍需实测可用。`
-          : '服务没有返回模型，可手动填写模型 ID。',
-        'info',
-      );
-    } catch (error) {
-      setDiscovered({ error: errorMessageOf(error) });
-    } finally {
-      setDiscovering(false);
-    }
-  };
-
   const saveModel = async (model: string) => {
     const trimmed = model.trim();
-    if (!trimmed) return;
-    if (await update({ provider: { model: trimmed } }))
-      setModelDraft({ value: trimmed, dirty: false });
+    if (!trimmed || savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      if (await update({ provider: { model: trimmed } }))
+        setModelDraft((current) =>
+          current === modelDraft ? { value: trimmed, dirty: false } : current,
+        );
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   };
 
   const modelCap = snapshot.capabilities.model;
@@ -326,70 +325,24 @@ function ProtocolAndModel({
       </div>
 
       <div className={styles.subhead}>翻译模型</div>
-      <div className={styles.presets} role="group" aria-label="模型预设">
-        {MODEL_PRESETS.map((preset) => (
-          <button
-            key={preset.model}
-            type="button"
-            className={styles.preset}
-            aria-pressed={provider.model === preset.model}
-            onClick={() => void saveModel(preset.model)}
-          >
-            <span className={styles.presetName}>{preset.name}</span>
-            <span className={styles.presetModel}>{preset.model}</span>
-            <span className={styles.presetNote}>候选预设 · 需实测可用</span>
-          </button>
-        ))}
-      </div>
-      <div className={styles.row}>
-        <TextField
-          className={styles.grow}
-          label="模型 ID（可手动填写）"
-          autoComplete="off"
-          spellCheck={false}
-          value={modelValue}
-          onChange={(v) => setModelDraft({ value: v, dirty: true })}
-          hint={
-            <>
-              当前使用：<span className={styles.mono}>{provider.model || '未填写'}</span> ·{' '}
-              <CapabilityStatusText status={modelCap?.status} message={modelCap?.message} />
-            </>
-          }
-        />
-        <Button
-          icon={<Save size={15} aria-hidden="true" />}
-          disabled={!modelDraft.dirty || !modelValue.trim()}
-          onClick={() => void saveModel(modelValue)}
-        >
-          保存模型
-        </Button>
-        <Button
-          icon={<Search size={15} aria-hidden="true" />}
-          busy={discovering}
-          onClick={() => void discover()}
-          disabled={client.mode === 'demo'}
-        >
-          发现模型
-        </Button>
-      </div>
-      {discovered && 'error' in discovered && (
-        <Callout tone="warning">
-          模型发现失败：{discovered.error} 仍可手动填写模型 ID 并检查连接。
-        </Callout>
-      )}
-      {models.length > 0 && (
-        <SelectField
-          label="从服务返回的模型中选择（列表存在不代表有权限，需实测）"
-          value={models.includes(provider.model) ? provider.model : ''}
-          onChange={(model) => {
-            if (model) void saveModel(model);
-          }}
-          options={[
-            { value: '', label: '— 选择模型 —' },
-            ...models.map((m) => ({ value: m, label: m })),
-          ]}
-        />
-      )}
+      <ModelSelector
+        snapshot={snapshot}
+        value={modelValue}
+        onChange={(value) => setModelDraft({ value, dirty: true })}
+        disabledReason={routeDirty ? '请先保存服务地址与 Key，再获取模型列表。' : undefined}
+      />
+      <Hint>
+        当前使用：<span className={styles.mono}>{provider.model || '未填写'}</span> ·{' '}
+        <CapabilityStatusText status={modelCap?.status} message={modelCap?.message} />
+      </Hint>
+      <Button
+        icon={<Save size={15} aria-hidden="true" />}
+        busy={saving}
+        disabled={saving || !modelDraft.dirty || !modelValue.trim()}
+        onClick={() => void saveModel(modelValue)}
+      >
+        保存模型
+      </Button>
 
       <div className={styles.grid2}>
         <SwitchRow

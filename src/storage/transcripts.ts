@@ -6,7 +6,13 @@
  * - getTranscript / loadTranscript 逐条校验 cue，丢弃无效条目（loadTranscript 返回丢弃数量）；
  * - schemaVersion 高于当前版本的记录标记为只读，UI 不应修改或删除。
  */
-import { CueSchema, SubtitleCoverageSchema, type Cue, type SubtitleCoverage } from '../domain/cue';
+import {
+  CueSchema,
+  SubtitleCoverageSchema,
+  mergeRanges,
+  type Cue,
+  type SubtitleCoverage,
+} from '../domain/cue';
 import { SourceModeSchema, type SourceMode } from '../domain/session';
 import { openTongtingDb, RECORD_SCHEMA_VERSION, type TranscriptRecord } from './db';
 
@@ -137,6 +143,140 @@ export async function putTranscript(record: TranscriptRecord): Promise<void> {
   const db = await openTongtingDb();
   const tx = db.transaction('transcripts', 'readwrite');
   await Promise.all([tx.store.put(record), tx.done]);
+}
+
+export interface TranscriptWriter {
+  save(record: TranscriptRecord): Promise<void>;
+}
+
+/** 每个会话先取得持久化代数；比较、合并和写入在同一事务中完成。 */
+export function createTranscriptWriter(): TranscriptWriter {
+  const generation = (async () => {
+    const db = await openTongtingDb();
+    const tx = db.transaction('meta', 'readwrite');
+    void tx.done.catch(() => undefined);
+    const key = 'transcript-writer-generation';
+    const previous = await tx.store.get(key);
+    const next = (typeof previous?.value === 'number' ? previous.value : 0) + 1;
+    await tx.store.put({ key, value: next });
+    await tx.done;
+    return next;
+  })();
+  // 初始化失败仍由 save 报告；没有字幕的会话也不能留下 unhandled rejection。
+  void generation.catch(() => undefined);
+  let sequence = 0;
+  return {
+    async save(input) {
+      const record = structuredClone(input);
+      const revision = ++sequence;
+      const writer = await generation;
+      const db = await openTongtingDb();
+      const tx = db.transaction(['meta', 'transcripts'], 'readwrite');
+      void tx.done.catch(() => undefined);
+      const meta = tx.objectStore('meta');
+      const store = tx.objectStore('transcripts');
+      const key = `transcript-writer:${record.recordId}`;
+      const raw = (await meta.get(key))?.value;
+      const last = raw as { writer?: number; revision?: number } | undefined;
+      if (
+        typeof last?.writer === 'number' &&
+        (last.writer > writer || (last.writer === writer && (last.revision ?? 0) >= revision))
+      ) {
+        await tx.done;
+        return;
+      }
+      const existing = normalizeTranscriptRecord(await store.get(record.recordId));
+      if (existing && existing.schemaVersion > RECORD_SCHEMA_VERSION) {
+        await tx.done;
+        return;
+      }
+      await store.put(mergeTranscriptRecord(existing, record));
+      await meta.put({ key, value: { writer, revision } });
+      await tx.done;
+    },
+  };
+}
+
+/** 完整轨道替换条目；ASR 来源的已确认历史按 ID 累积。 */
+export function mergeTranscriptRecord(
+  existing: TranscriptRecord | undefined,
+  current: TranscriptRecord,
+): TranscriptRecord {
+  const compatible = existing?.translationFingerprint === current.translationFingerprint;
+  const cues = compatible
+    ? mergeTranscriptCues(existing, current.cues, current.lastSessionId)
+    : [...current.cues];
+  if (
+    (current.sourceMode === 'asr' || current.sourceMode === 'asr-preload') &&
+    existing?.sourceKey === current.sourceKey
+  ) {
+    const ids = new Set(cues.map((cue) => cue.id));
+    cues.push(
+      ...existing.cues
+        .filter((cue) => !ids.has(cue.id))
+        .map((cue) =>
+          compatible
+            ? cue
+            : {
+                ...cue,
+                translatedText: undefined,
+                translationKey: undefined,
+                translationError: undefined,
+                translationState:
+                  cue.translationState === 'skipped' ? ('skipped' as const) : ('pending' as const),
+              },
+        ),
+    );
+  }
+  cues.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+  return {
+    ...current,
+    cues,
+    title: current.title ?? existing?.title,
+    channel: current.channel ?? existing?.channel,
+    durationMs: current.durationMs ?? existing?.durationMs,
+    createdAt: existing?.createdAt ?? current.createdAt,
+    coverage:
+      current.sourceMode === 'asr' || current.sourceMode === 'asr-preload'
+        ? {
+            ...current.coverage,
+            ranges: mergeRanges(
+              cues.map(({ startMs, endMs }) => ({ startMs, endMs })),
+              1_500,
+            ),
+          }
+        : current.coverage,
+  };
+}
+
+export function mergeTranscriptCues(
+  existing: Pick<TranscriptRecord, 'cues' | 'lastSessionId'> | undefined,
+  current: readonly Cue[],
+  sessionId: string,
+): Cue[] {
+  if (!existing?.cues.length) return [...current];
+  const currentKey = current.find(
+    (c) => c.translationState === 'done' && c.translationKey,
+  )?.translationKey;
+  const sameSession = existing.lastSessionId === sessionId;
+  const old = new Map(existing.cues.map((c) => [c.id, c]));
+  return current.map((c) => {
+    if (c.translatedText || c.translationState === 'skipped') return c;
+    const prev = old.get(c.id);
+    if (
+      !prev?.translatedText ||
+      prev.sourceText !== c.sourceText ||
+      prev.targetLanguage !== c.targetLanguage
+    )
+      return c;
+    if (currentKey ? prev.translationKey !== currentKey : !sameSession) return c;
+    return {
+      ...c,
+      translatedText: prev.translatedText,
+      translationKey: prev.translationKey,
+      translationState: 'done',
+    };
+  });
 }
 
 export async function getTranscript(recordId: string): Promise<TranscriptRecord | undefined> {

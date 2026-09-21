@@ -176,7 +176,7 @@ async function setup(
     targetLanguage: 'zh-CN',
     pauseDubWithVideo: true,
     tts: { backend: 'system' },
-    audio: { dubVolume: 0.2, duckOriginal: true, duckLevel: 0.3, rate: 1 },
+    audio: { originalMode: 'mix', dubVolume: 0.2, duckOriginal: true, duckLevel: 0.3, rate: 1 },
     ...patch,
   });
   await installTtsSpy(f.ext.serviceWorker, hideLang);

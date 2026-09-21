@@ -177,6 +177,8 @@ export const ContentRequestSchema = z.discriminatedUnion('kind', [
     videoId: VideoIdSchema,
     active: z.boolean(),
     level: z.number().min(0).max(1),
+    originalVolume: z.number().min(0).max(1).optional(),
+    release: z.boolean().optional(),
   }),
   z.object({ kind: z.literal('player/query') }),
 ]);
@@ -206,6 +208,13 @@ export const BackgroundToContentSchema = z.discriminatedUnion('type', [
         sourceMode: SourceModeSchema.optional(),
         /** 覆盖层显示的状态提示，例如「翻译中」「识别服务未配置」。 */
         statusText: z.string().max(120).optional(),
+        playbackBuffer: z
+          .object({
+            readyUntilMs: z.number().nonnegative(),
+            targetMs: z.number().positive(),
+            blocked: z.boolean(),
+          })
+          .optional(),
       })
       .nullable(),
   }),

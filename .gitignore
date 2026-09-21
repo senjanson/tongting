@@ -16,3 +16,6 @@ services/asr-local/models/
 __pycache__/
 *.pyc
 data/
+
+# 外部工具以 :memory: 为路径时误建的会话文件，冒号开头会被 git 当作 pathspec 语法
+/:memory:*

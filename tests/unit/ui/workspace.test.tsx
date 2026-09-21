@@ -225,4 +225,32 @@ describe('workspace', () => {
     expect((screen.getByLabelText('视频笔记') as HTMLTextAreaElement).value).toBe('本页修改');
     localStorage.clear();
   });
+  it('blocks editing during a focus-triggered reload instead of losing new input', async () => {
+    start();
+    await screen.findByDisplayValue('已有笔记');
+    const before = notes.getNote.mock.calls.length;
+    let release!: (value: unknown) => void;
+    notes.getNote.mockResolvedValueOnce({
+      videoId: VIDEO_ID,
+      text: '其他页面的新版本',
+      updatedAt: 2,
+    });
+    notes.getNote.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    act(() => window.dispatchEvent(new Event('focus')));
+    await waitFor(() => expect(notes.getNote.mock.calls.length).toBe(before + 2));
+    expect(screen.queryByLabelText('视频笔记')).toBeNull();
+    expect(screen.getByText('正在读取笔记…')).toBeTruthy();
+    await act(async () => release({ videoId: VIDEO_ID, text: '其他页面的新版本', updatedAt: 2 }));
+    const area = (await screen.findByLabelText('视频笔记')) as HTMLTextAreaElement;
+    fireEvent.change(area, { target: { value: '读取完成后继续编辑' } });
+    await waitFor(() =>
+      expect(notes.saveNoteChecked).toHaveBeenLastCalledWith(VIDEO_ID, '读取完成后继续编辑', 2),
+    );
+    expect(area.value).toBe('读取完成后继续编辑');
+  });
 });

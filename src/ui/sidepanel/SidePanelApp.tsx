@@ -1,19 +1,19 @@
 /**
  * A 轻巧侧栏。真实模式通过 worker 快照工作；演示模式只从明确入口开启，并持续显示演示标识。
  */
-import { AudioLines, Clock, Gauge, MonitorPlay, SlidersHorizontal, Text } from 'lucide-react';
+import {
+  AudioLines,
+  Clock,
+  Gauge,
+  MonitorPlay,
+  Search,
+  SlidersHorizontal,
+  Text,
+} from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { PageInfo } from '../../domain/session';
 import { Button, Spinner } from '../components/controls';
-import {
-  Brand,
-  DemoBanner,
-  EmptyState,
-  ReconnectBanner,
-  StatusPill,
-  TabPanel,
-  Tabs,
-} from '../components/layout';
+import { EmptyState, ReconnectBanner, StatusPill, TabPanel, Tabs } from '../components/layout';
 import { ToastProvider, useToast } from '../components/toast';
 import { createDemoRepos, DemoClient } from '../demo/demo-client';
 import { DEMO_TAB_ID } from '../demo/demo-data';
@@ -36,8 +36,9 @@ import { SettingsTab } from './SettingsTab';
 import styles from './sidepanel.module.css';
 import { TranscriptTab } from './TranscriptTab';
 import { TranslateTab } from './TranslateTab';
+import { SearchTab } from './SearchTab';
 
-type PanelTab = 'translate' | 'transcript' | 'settings';
+type PanelTab = 'translate' | 'transcript' | 'search' | 'settings';
 
 function initialDemoFlag(): boolean {
   try {
@@ -99,6 +100,7 @@ export function PanelView({
 }) {
   const { connection, snapshot } = useClientState();
   const [tab, setTab] = useState<PanelTab>('translate');
+  const [searchDraft, setSearchDraft] = useState('');
   const demo = !!onExitDemo;
   const activeTabId = activeTab.tab?.tabId;
   const hasPage = activeTabId !== undefined && !!findPageByTab(snapshot, activeTabId);
@@ -116,18 +118,28 @@ export function PanelView({
   const status = deriveStatus({ connection, snapshot, tabContext, config });
 
   return (
-    <div className={styles.app}>
+    <div className={styles.app} aria-label="同听">
       <header className={styles.header}>
-        <Brand />
+        <h1 className={styles.panelTitle}>{tab === 'search' ? '同听 · AI 搜索' : '实时翻译'}</h1>
         <div className={styles.headerRight}>
           {demo ? (
-            <StatusPill label="演示中" tone="demo" />
+            <StatusPill label="演示中" tone="accent" />
           ) : (
-            <StatusPill label={status.label} tone={status.tone} />
+            <StatusPill
+              label={
+                tab === 'search' && config.ready && connection === 'connected'
+                  ? '可搜索'
+                  : status.label
+              }
+              tone={
+                tab === 'search' && config.ready && connection === 'connected'
+                  ? 'neutral'
+                  : status.tone
+              }
+            />
           )}
         </div>
       </header>
-      {demo && <DemoBanner onExit={onExitDemo} />}
       {!demo && connection !== 'connected' && <ReconnectBanner hasSnapshot={!!snapshot} />}
 
       {!snapshot ? (
@@ -138,7 +150,6 @@ export function PanelView({
         </div>
       ) : (
         <>
-          {tabContext.kind === 'video' && <VideoCard page={tabContext.page} demo={demo} />}
           <Tabs<PanelTab>
             idPrefix="panel"
             label="同听功能"
@@ -147,6 +158,7 @@ export function PanelView({
             items={[
               { id: 'translate', label: '翻译', icon: <AudioLines size={15} aria-hidden="true" /> },
               { id: 'transcript', label: '字幕', icon: <Text size={15} aria-hidden="true" /> },
+              { id: 'search', label: '搜索', icon: <Search size={15} aria-hidden="true" /> },
               {
                 id: 'settings',
                 label: '设置',
@@ -168,6 +180,7 @@ export function PanelView({
                   tabId={tabContext.page.tabId}
                   session={tabContext.session}
                   config={config}
+                  videoDetails={<VideoCard page={tabContext.page} demo={demo} />}
                 />
               ) : (
                 <NoVideoState
@@ -202,6 +215,18 @@ export function PanelView({
             </TabPanel>
             <TabPanel
               idPrefix="panel"
+              id="search"
+              active={tab === 'search'}
+              className={styles.scroll}
+            >
+              <SearchTab
+                query={searchDraft}
+                onQueryChange={setSearchDraft}
+                onOpenSettings={() => setTab('settings')}
+              />
+            </TabPanel>
+            <TabPanel
+              idPrefix="panel"
               id="settings"
               active={tab === 'settings'}
               className={styles.scroll}
@@ -215,6 +240,14 @@ export function PanelView({
             </TabPanel>
           </div>
         </>
+      )}
+      {demo && (
+        <div className={styles.demoFooter} role="note">
+          <span>演示模式 · 示例数据，不连接视频与服务</span>
+          <button type="button" onClick={onExitDemo} aria-label="退出演示">
+            退出
+          </button>
+        </div>
       )}
     </div>
   );

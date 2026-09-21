@@ -11,7 +11,7 @@
 
 export const BRIDGE_TAG = 'tongting-bridge-v1';
 
-/** 从 vssId（".en"、"a.en"、".en.sdh"）取轨道名部分，对应 timedtext URL 的 name 参数（待真实页面核对）。 */
+/** 旧桥消息缺少 requestName 时的兼容回退。真实 vssId 后缀可能是不透明 ID，不能作为新轨道的 name 来源。 */
 export function trackNameFromVssId(vssId: string, languageCode: string): string {
   const m = /^a?\.([^.]+)(?:\.(.+))?$/.exec(vssId);
   return m && m[1] === languageCode ? (m[2] ?? '') : '';
@@ -27,6 +27,8 @@ export interface BridgeTrack {
   kind: string | null;
   name: string;
   vssId: string;
+  /** 已知字幕 URL 中解码后的 name 参数；与显示名、vssId 分离，不含签名或 URL。 */
+  requestName?: string;
 }
 
 export interface BridgePlayerResponse {
@@ -66,8 +68,28 @@ export interface BridgeCommandResult {
   fetched?: boolean;
 }
 
+/** 副作用一发生就确认，不等待字幕网络请求。owner 只用于隔离生命周期，不是认证。 */
+export interface BridgeCaptionsChanged {
+  type: 'captions-changed';
+  commandId: string;
+  ownerId: string;
+}
+
+export interface BridgeCaptionSelection {
+  type: 'caption-selection';
+  videoId: string;
+  languageCode: string;
+  kind: 'asr' | 'standard';
+  vssId: string;
+}
+
 export type BridgeToIsolated = (
-  BridgePlayerResponse | BridgePlayerResponseMissing | BridgeTimedtext | BridgeCommandResult
+  | BridgePlayerResponse
+  | BridgePlayerResponseMissing
+  | BridgeTimedtext
+  | BridgeCommandResult
+  | BridgeCaptionsChanged
+  | BridgeCaptionSelection
 ) & {
   __tongting: typeof BRIDGE_TAG;
   dir: 'to-isolated';
@@ -78,9 +100,15 @@ export interface BridgeRequestPlayerResponse {
   videoId: string | null;
 }
 
+export interface BridgeRequestCaptionSelection {
+  type: 'request-caption-selection';
+  videoId: string;
+}
+
 export interface BridgeLoadTrack {
   type: 'load-track';
   commandId: string;
+  ownerId?: string;
   videoId: string;
   languageCode: string;
   kind: 'asr' | 'standard';
@@ -96,11 +124,16 @@ export interface BridgeReplayBodies {
 export interface BridgeRestoreCaptions {
   type: 'restore-captions';
   commandId: string;
+  ownerId?: string;
   videoId: string;
 }
 
 export type IsolatedToBridge = (
-  BridgeRequestPlayerResponse | BridgeLoadTrack | BridgeRestoreCaptions | BridgeReplayBodies
+  | BridgeRequestPlayerResponse
+  | BridgeLoadTrack
+  | BridgeRestoreCaptions
+  | BridgeReplayBodies
+  | BridgeRequestCaptionSelection
 ) & {
   __tongting: typeof BRIDGE_TAG;
   dir: 'to-main';

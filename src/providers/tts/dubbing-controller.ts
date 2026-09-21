@@ -2,7 +2,7 @@
  * 配音同步控制器（worker，纯逻辑，时钟与定时器可注入）。政策见 EXECUTION_PLAN §8.6。
  *
  * - 只朗读 stability=final 且 translationState=done、目标语言与配置一致的 cue；同一 cue id 在一个播放代内只读一次（T33）。
- * - 播放点进入 cue 起点附近（leadMs）才开始；错过起点超过 maxStartLatenessMs 或整个原时段已过的句子按「过期」跳过并记录。
+ * - 完整轨道按媒体时间调度；新到达的实时译文使用有界的私有播放窗口，原始字幕时间不变。
  * - 视频暂停/缓冲（pauseWithVideo）、跳转、广告、结束：立即停播；恢复时仅在当前句剩余足够时从句首重读，不连播旧积压（T16）。
  * - invalidate/跳转：旧朗读令牌失效，迟到的引擎回调不会发声，也不会发出 speaking（T15）。
  * - 倍速：语速按播放速率有界调整（[minRateFactor, maxRateBoost] × 用户语速），迟到时小幅加速；
@@ -10,7 +10,7 @@
  * - 到期未读积压超过 maxDueBacklog 时只保留最新几句，其余记为 backlog 跳过。
  * - 目标语言没有可用声音时 state='unavailable'，并给出原因（T31）。
  * - speaking 事件只在引擎真正开始发声时发出；idle 在完成后短暂宽限（避免句间反复 ducking），
- *   在取消、暂停、跳转、错误时立即发出。worker 据此应用/恢复原声 ducking。
+ *   在取消、暂停、跳转、错误时立即发出。worker 在混音模式下据此调整原声，静音模式不在句间恢复。
  */
 import { epochNowMs } from '../../domain/clock';
 import { AppError, toAppErrorInfo, type AppErrorInfo } from '../../domain/errors';
@@ -49,6 +49,9 @@ export interface DubbingPolicy {
   skipEventWindowMs: number;
   supervisorIntervalMs: number;
   maxSpokenMemory: number;
+  /** 实时来源从原句结束到译文到达的最大允许延迟。 */
+  liveMaxLagMs: number;
+  liveQueueWaitMs: number;
 }
 
 export function defaultDubbingPolicy(engineKind: TtsEngine['kind']): DubbingPolicy {
@@ -73,6 +76,8 @@ export function defaultDubbingPolicy(engineKind: TtsEngine['kind']): DubbingPoli
     skipEventWindowMs: 30_000,
     supervisorIntervalMs: 250,
     maxSpokenMemory: 5_000,
+    liveMaxLagMs: 15_000,
+    liveQueueWaitMs: 8_000,
   };
 }
 
@@ -99,6 +104,7 @@ function isPlaying(p: PlayerState): boolean {
 }
 
 export function createDubbingController(deps: DubbingControllerDeps): DubbingController {
+  const instanceId = crypto.randomUUID();
   const engine = deps.engine;
   // 与 PlayerState.sampledAtEpochMs 同一跨文档时钟（Date.now() 基准）。
   const now = deps.now ?? (() => epochNowMs());
@@ -122,6 +128,7 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
   let epoch = -1;
   let generation = 0;
   const cues = new Map<string, Cue>();
+  const liveDeadlines = new Map<string, number>();
   const spoken = new Set<string>();
   let current: CurrentUtterance | null = null;
   let resumable: Cue | null = null;
@@ -177,6 +184,7 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
   };
 
   const rememberSpoken = (id: string) => {
+    liveDeadlines.delete(id);
     spoken.delete(id);
     spoken.add(id);
     if (spoken.size > policy.maxSpokenMemory) {
@@ -276,11 +284,15 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
   const speak = (cue: Cue, ph: number) => {
     if (!config) return;
     cues.delete(cue.id);
+    if (liveDeadlines.has(cue.id) && ph > cue.startMs) {
+      // 实时句在有界等待后开始时，朗读预算从真正发起播放处计算。
+      cue = { ...cue, startMs: ph, endMs: ph + (cue.endMs - cue.startMs) };
+    }
     const token = ++tokenCounter;
     const utterance: CurrentUtterance = {
       cue,
       token,
-      utteranceId: `dub-${generation}-${token}`,
+      utteranceId: `dub-${instanceId}-${generation}-${token}`,
       phase: 'pending',
       issuedAt: now(),
       rate: computeRate(ph, cue),
@@ -422,7 +434,10 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
       const c = resumable;
       resumable = null;
       if (!spoken.has(c.id)) {
-        if (ph <= c.endMs - policy.resumeMinRemainingMs) {
+        if (
+          ph <= c.endMs - policy.resumeMinRemainingMs &&
+          (!liveDeadlines.has(c.id) || t <= liveDeadlines.get(c.id)!)
+        ) {
           // 恢复播放且当前句剩余足够：从句首重读，不受起点迟到限制。
           cues.set(c.id, c);
           resumeCandidate = c.id;
@@ -472,7 +487,11 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
       if (c.id === resumeCandidate) {
         if (c.endMs - ph >= policy.resumeMinRemainingMs) due.push(c);
         else skip(c, 'stale', ph);
-      } else if (c.endMs <= ph || ph - c.startMs > policy.maxStartLatenessMs)
+      } else if (
+        liveDeadlines.has(c.id)
+          ? t > liveDeadlines.get(c.id)!
+          : c.endMs <= ph || ph - c.startMs > policy.maxStartLatenessMs
+      )
         skip(c, 'too-late', ph);
       else due.push(c);
     }
@@ -499,7 +518,10 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
         stopCurrent({});
         resumable = null;
         for (const [id, c] of cues)
-          if (!isSameLanguage(c.targetLanguage, next.lang)) cues.delete(id);
+          if (!isSameLanguage(c.targetLanguage, next.lang)) {
+            cues.delete(id);
+            liveDeadlines.delete(id);
+          }
       }
       if (!next.enabled) {
         stopCurrent({ markSpoken: false });
@@ -510,7 +532,7 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
       }
       tick();
     },
-    upsertCues(list) {
+    upsertCues(list, options) {
       if (disposed) return;
       for (const cue of list) {
         const eligible =
@@ -521,14 +543,34 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
         const existing = cues.get(cue.id);
         if (!eligible) {
           // 新修订尚未完成翻译：旧译文作废，不再朗读。
-          if (existing && cue.revision > existing.revision) cues.delete(cue.id);
+          if (existing && cue.revision > existing.revision) {
+            cues.delete(cue.id);
+            liveDeadlines.delete(cue.id);
+          }
           continue;
         }
         if (config && !isSameLanguage(cue.targetLanguage, config.lang)) continue;
         if (spoken.has(cue.id)) continue;
         if (current?.cue.id === cue.id || resumable?.id === cue.id) continue;
         if (existing && existing.revision > cue.revision) continue;
-        cues.set(cue.id, cue);
+        const ph = playhead();
+        if (
+          options?.live &&
+          !existing &&
+          ph !== undefined &&
+          cue.startMs <= ph &&
+          cue.endMs >= ph - policy.liveMaxLagMs
+        ) {
+          // 只给本代新到达的实时结果一次有界机会。调整的是控制器私有副本，
+          // 导出/覆盖范围中的原始媒体时间不变；恢复、跳转后的历史重灌不走此分支。
+          const startMs = Math.max(ph, cue.startMs);
+          cues.set(cue.id, {
+            ...cue,
+            startMs,
+            endMs: startMs + Math.min(8_000, Math.max(800, cue.endMs - cue.startMs)),
+          });
+          liveDeadlines.set(cue.id, now() + policy.liveQueueWaitMs);
+        } else if (!existing || !liveDeadlines.has(cue.id)) cues.set(cue.id, cue);
       }
       tick();
     },
@@ -559,6 +601,7 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
       generation++;
       stopCurrent({ skipReason: 'seek' });
       cues.clear();
+      liveDeadlines.clear();
       spoken.clear();
       resumable = null;
       resumeCandidate = null;
@@ -603,6 +646,7 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
       clearIdle();
       cues.clear();
       spoken.clear();
+      liveDeadlines.clear();
       resumable = null;
       listeners.clear();
     },

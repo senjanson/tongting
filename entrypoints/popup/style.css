@@ -1,0 +1,9 @@
+/* Chrome sizes toolbar popups from the document's intrinsic dimensions.
+ * Give the document a width independent of its initial, tiny viewport.
+ * This stylesheet is imported only by the popup entrypoint.
+ */
+html,
+body {
+  width: 340px;
+  min-width: 340px;
+}

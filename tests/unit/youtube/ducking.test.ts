@@ -6,6 +6,35 @@ function target(volume: number): VolumeTarget {
 }
 
 describe('duck controller', () => {
+  it('holds zero through utterance gaps and remembers user volume changes for release', () => {
+    const d = createDuckController();
+    const v = target(0.8);
+    d.attach(v);
+    d.configure(v, 0, 1); // 尚未开始朗读
+    expect(v.volume).toBe(0);
+    d.configure(v, 0, 0.3); // 朗读中
+    d.configure(v, 0, 1); // 句间停顿
+    expect(v.volume).toBe(0);
+    v.volume = 0.6;
+    d.onVolumeChange(v);
+    expect(v.volume).toBe(0);
+    expect(d.baseVolume).toBe(0.6);
+    d.onVolumeChange(v); // 自己重新静音发出的事件不能覆盖基准
+    d.releaseCurrent();
+    expect(v.volume).toBe(0.6);
+  });
+
+  it('switches between full silence and mixing without losing the original volume', () => {
+    const d = createDuckController();
+    const v = target(0.8);
+    d.attach(v);
+    d.configure(v, 0, 1);
+    d.configure(v, 0.5, 1);
+    expect(v.volume).toBeCloseTo(0.4);
+    d.configure(v, 0, 1);
+    d.releaseCurrent();
+    expect(v.volume).toBe(0.8);
+  });
   it('ducks relative to the user volume and restores it when nothing changed', () => {
     const d = createDuckController();
     const v = target(0.8);

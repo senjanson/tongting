@@ -2,6 +2,7 @@
  * UiCommand 结果的运行时校验与超时设置。worker 返回的数据同样视为需要校验的入站消息。
  */
 import { z } from 'zod';
+import { SEARCH_HISTORY_LIMIT, SearchRecordSchema } from '../../domain/search';
 import {
   ConnectionReportSchema,
   TtsVoiceInfoSchema,
@@ -14,6 +15,10 @@ const persisted = z.object({ persisted: z.boolean() });
 
 export const UI_COMMAND_RESULT_SCHEMAS: { [K in UiCommandKind]: z.ZodType<UiCommandResultMap[K]> } =
   {
+    'search/generate': z.object({ record: SearchRecordSchema, persisted: z.boolean() }),
+    'search/cancel': z.object({ cancelled: z.literal(true) }),
+    'search/history': z.object({ records: z.array(SearchRecordSchema).max(SEARCH_HISTORY_LIMIT) }),
+    'search/clear-history': z.object({ cleared: z.literal(true) }),
     'session/start': accepted,
     'session/pause': accepted,
     'session/resume': accepted,
@@ -40,6 +45,7 @@ export const UI_COMMAND_RESULT_SCHEMAS: { [K in UiCommandKind]: z.ZodType<UiComm
 export const DEFAULT_COMMAND_TIMEOUT_MS = 15_000;
 
 export const COMMAND_TIMEOUTS_MS: Partial<Record<UiCommandKind, number>> = {
+  'search/generate': 130_000,
   'session/start': 30_000,
   'session/stop': 20_000,
   'connection/check': 180_000,

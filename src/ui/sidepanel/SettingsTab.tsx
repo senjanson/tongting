@@ -3,17 +3,17 @@
  */
 import { ExternalLink, FlaskConical, PanelsTopLeft } from 'lucide-react';
 import type { AppSnapshot } from '../../messaging/ui-protocol';
-import { Button, Hint, Kbd, SelectField, SwitchRow } from '../components/controls';
+import { Button, Hint, Kbd, RangeField, SelectField, SwitchRow } from '../components/controls';
 import { Group } from '../components/layout';
 import { useToast } from '../components/toast';
-import { capabilityStatusLabel, formatDateTime } from '../format';
-import { GrantPermissionButton } from '../shared/GrantPermissionButton';
-import { useSettingsUpdater } from '../shared/hooks';
+import { percent } from '../format';
+import { useDraftValue, useSettingsUpdater } from '../shared/hooks';
 import { openOptionsPage, openWorkspace } from '../shared/navigation';
 import type { ServiceConfigState } from '../state/derive';
-import { credentialStorageText } from '../options/common';
 import { useUiClient } from '../state/hooks';
 import styles from './sidepanel.module.css';
+import { ConnectionControls } from './ConnectionControls';
+import { SystemVoiceSettings } from '../shared/SystemVoicePicker';
 
 export interface SettingsTabProps {
   snapshot: AppSnapshot;
@@ -22,56 +22,22 @@ export interface SettingsTabProps {
   onExitDemo?: () => void;
 }
 
-export function SettingsTab({ snapshot, config, onEnterDemo, onExitDemo }: SettingsTabProps) {
+export function SettingsTab({ snapshot, onEnterDemo, onExitDemo }: SettingsTabProps) {
   const client = useUiClient();
   const notify = useToast();
   const update = useSettingsUpdater();
   const demo = client.mode === 'demo';
-  const { settings, credential, capabilities, hostPermission } = snapshot;
-  const translationCap = capabilities.translation;
+  const { settings } = snapshot;
+  const [opacity, setOpacity] = useDraftValue(
+    settings.captions.backgroundOpacity,
+    (backgroundOpacity) => update({ captions: { backgroundOpacity } }),
+  );
 
   return (
     <div className={styles.pane}>
-      <Group title="服务连接">
-        <dl className={styles.kv}>
-          <dt>服务地址</dt>
-          <dd>{settings.provider.baseUrl || '未填写'}</dd>
-          <dt>API Key</dt>
-          <dd>
-            {credential.configured
-              ? `已配置 ${credential.masked ?? ''}（${credentialStorageText(credential.storage)}）`
-              : '未配置'}
-          </dd>
-          <dt>访问权限</dt>
-          <dd>{config.missingBaseUrl ? '—' : hostPermission.granted ? '已授予' : '未授予'}</dd>
-          <dt>翻译模型</dt>
-          <dd>{settings.provider.model || '未填写'}</dd>
-          <dt>翻译检查</dt>
-          <dd>
-            {capabilityStatusLabel(translationCap?.status)}
-            {translationCap?.checkedAt
-              ? `（${formatDateTime(Date.parse(translationCap.checkedAt))}）`
-              : ''}
-            {translationCap?.status === 'failed' && translationCap.message
-              ? `：${translationCap.message}`
-              : ''}
-          </dd>
-        </dl>
-        {config.missingPermission && (
-          <GrantPermissionButton url={settings.provider.baseUrl} block />
-        )}
-        <Hint>「已验证」只表示最近一次连接检查中实际请求成功；未检查时显示「未检测」。</Hint>
-        <Button
-          variant="primary"
-          block
-          icon={<ExternalLink size={15} aria-hidden="true" />}
-          onClick={() => openOptionsPage().catch(() => notify('无法打开设置页。', 'danger'))}
-        >
-          打开完整设置
-        </Button>
-      </Group>
+      <ConnectionControls snapshot={snapshot} />
 
-      <Group title="字幕来源与配音">
+      <Group title="PROCESSING / 识别与播放">
         <SelectField
           label="字幕来源"
           value={settings.sourceStrategy}
@@ -88,7 +54,17 @@ export function SettingsTab({ snapshot, config, onEnterDemo, onExitDemo }: Setti
           }
         />
         <SelectField
-          label="语音合成"
+          label="语音识别服务"
+          value={settings.asr.backend}
+          onChange={(backend) => void update({ asr: { backend } })}
+          options={[
+            { value: 'none', label: '不使用（未配置）' },
+            { value: 'local', label: '本地识别服务' },
+            { value: 'sub2api', label: 'sub2api 语音接口（需检测）' },
+          ]}
+        />
+        <SelectField
+          label="语音合成服务"
           value={settings.tts.backend}
           onChange={(backend) => void update({ tts: { backend } })}
           options={[
@@ -99,7 +75,9 @@ export function SettingsTab({ snapshot, config, onEnterDemo, onExitDemo }: Setti
         />
         <SwitchRow
           label="预翻译后续字幕"
-          checked={settings.prefetch}
+          description={settings.playbackMode === 'buffered' ? '同步优先会持续预读。' : undefined}
+          checked={settings.playbackMode === 'buffered' || settings.prefetch}
+          disabled={settings.playbackMode === 'buffered'}
           onChange={(prefetch) => void update({ prefetch })}
         />
         <SwitchRow
@@ -114,7 +92,26 @@ export function SettingsTab({ snapshot, config, onEnterDemo, onExitDemo }: Setti
         />
       </Group>
 
-      <Group title="更多">
+      {settings.tts.backend === 'system' && <SystemVoiceSettings snapshot={snapshot} />}
+
+      <Group title="更多设置">
+        <Button
+          block
+          variant="primary"
+          icon={<ExternalLink size={15} aria-hidden="true" />}
+          onClick={() => openOptionsPage().catch(() => notify('无法打开设置页。', 'danger'))}
+        >
+          打开完整设置
+        </Button>
+        <RangeField
+          label="背景不透明度"
+          min={0}
+          max={1}
+          step={0.05}
+          value={opacity}
+          onChange={setOpacity}
+          format={percent}
+        />
         <Button
           block
           icon={<PanelsTopLeft size={15} aria-hidden="true" />}

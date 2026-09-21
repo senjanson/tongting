@@ -148,6 +148,7 @@ class ServiceConfig:
     body_timeout_s: float = DEFAULT_BODY_TIMEOUT_S
     max_connections: int = DEFAULT_MAX_CONNECTIONS
     shutdown_grace_s: float = DEFAULT_SHUTDOWN_GRACE_S
+    youtube_preload: bool = False
 
     def __post_init__(self) -> None:
         # 即使绕过 CLI 直接构造，也不能得到非 loopback 的配置。

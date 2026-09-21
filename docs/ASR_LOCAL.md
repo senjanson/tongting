@@ -7,7 +7,7 @@
 - **用途**：没有可用的云端语音识别接口（sub2api 未开放或未验证 `/v1/audio/transcriptions`）时，在本机运行的补充识别服务。它为无字幕视频提供「音频 → 原文 + 时间轴」，之后仍用 sub2api 翻译。
 - **它不是**「只填 sub2api Key 就能翻译无字幕视频」。你需要自行安装 Python 依赖、下载模型（small 实测 464 MB）、并**在使用前手动启动服务**。
 - **扩展不能自动启动它**。Chrome 扩展没有启动本机进程的常规权限，本项目也没有实现 native messaging。服务没启动时，扩展只会显示「无法连接本地识别服务」。
-- 服务只做语音识别（转写），不做翻译、不做配音，也不接受 URL 或文件路径，只接受请求体里的 WAV 音频。
+- 服务只做语音识别（转写），不做翻译、不做配音。默认接受请求体里的 WAV 音频；启用 `--youtube-preload` 后还接受 YouTube 视频 ID 与时间范围，由服务获取公开音轨。不接受任意 URL、文件路径或浏览器登录凭证。
 - 识别质量和速度取决于硬件、模型与音频内容。第 9 节的数字**只代表那台机器上的合成语音样本**，不能外推为「所有视频实时」。
 
 ## 2. 硬件与依赖要求
@@ -21,7 +21,7 @@
 | 加速     | **macOS 上 CTranslate2 只能用 CPU，没有 Metal/GPU 加速**。`--device cuda` 仅在有 NVIDIA GPU 的机器上可能可用，未实测。                                                             |
 | 内存     | small 实测进程峰值约 1.0–1.2 GB（5 秒分段），处理 30 秒分段时约 1.5 GB；base 约 0.65–0.72 GB                                                                                       |
 | 磁盘     | small 464 MB，base 153 MB（模型缓存）                                                                                                                                              |
-| ffmpeg   | 服务运行**不需要**；只在重新生成测试样本时用到                                                                                                                                     |
+| ffmpeg   | WAV 识别不需要；YouTube 预读和重新生成测试样本需要。预读另需 Node.js 与 yt-dlp，见下文                                                                                             |
 
 ## 3. 安装
 
@@ -33,6 +33,20 @@ uv run tongting-asr --help
 ```
 
 `.venv/`、`models/`、`.pytest_cache/` 等都不入库（仓库根 `.gitignore` 与 `services/asr-local/.gitignore`）。
+
+### YouTube 同步优先模式
+
+无完整字幕的视频要在画面暂停时准备后续内容，需要额外安装预读依赖并启用服务：
+
+```sh
+cd services/asr-local
+uv sync --extra youtube
+uv run --extra youtube tongting-asr serve --offline --youtube-preload --allow-extension-id YOUR_EXTENSION_ID
+```
+
+`YOUR_EXTENSION_ID` 替换成 Chrome 扩展管理页显示的同听 ID。`ffmpeg` 和 Node.js 需在服务进程的 PATH 中；多版本 Node 可用 `TONGTING_ASR_NODE_PATH` 指定绝对路径。保留原来的 `--data-dir` 可沿用配对令牌。首次下载模型时去掉 `--offline`。
+
+`GET /health` 的 `youtubePreload: true` 表示预读依赖和开关就绪；真实网络是否可达仍以预读结果为准。`--offline` 仅禁止模型下载，视频预读仍需网络。接口、安全边界与依赖详情见 [服务说明](../services/asr-local/README.md)。
 
 ## 4. 模型下载与镜像
 
@@ -54,7 +68,7 @@ HF_ENDPOINT=https://hf-mirror.com HF_HUB_DISABLE_XET=1 uv run tongting-asr serve
 | `HF_ENDPOINT=https://hf-mirror.com` + `HF_HUB_DISABLE_XET=1` | 成功。small 下载 38.6 秒，base 下载 12.7 秒                                                                                                                        |
 
 - 下载失败时 `/health` 为 `"status": "error"`，日志说明原因与建议。修正环境变量后需要**重启服务**才会重试。
-- 模型下载完成后，可以加 `--offline` 启动，只用本地缓存、不联网。离线且缓存里没有该模型时，状态为 error，日志提示「离线模式下本地缓存没有模型」（已实测）。
+- 模型下载完成后，可以加 `--offline` 启动，只从本地缓存加载模型。启用视频预读时仍会联网读取音轨。离线且缓存里没有该模型时，状态为 error，日志提示「离线模式下本地缓存没有模型」（已实测）。
 
 ## 5. 启动与停止
 

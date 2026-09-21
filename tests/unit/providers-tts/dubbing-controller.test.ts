@@ -559,3 +559,68 @@ describe('DubbingController', () => {
     },
   );
 });
+
+describe('review #1: live dubbing arrival policy', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it.each(['system', 'sub2api'] as const)(
+    'reads a normally delayed ASR translation using %s without changing export times',
+    async (kind) => {
+      const { controller, engine } = await setup(kind);
+      controller.onPlayer(player(6_500), 'play');
+      const original = cue('live', 0, 5_000);
+      controller.upsertCues([original], { live: true });
+      expect(engine.texts()).toEqual(['译文live']);
+      engine.fire('start');
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(engine.stops).toBe(0);
+      expect(original).toMatchObject({ startMs: 0, endMs: 5_000 });
+      controller.dispose();
+    },
+  );
+
+  it('does not grant a live window to replayed history or an excessively delayed response', async () => {
+    const { controller, engine, events } = await setup();
+    controller.onPlayer(player(30_000), 'play');
+    controller.upsertCues([cue('history', 20_000, 25_000)]);
+    controller.upsertCues([cue('old-live', 0, 5_000)], { live: true });
+    expect(engine.spoken).toHaveLength(0);
+    expect(events.filter((e) => e.type === 'skipped')).toHaveLength(2);
+    controller.dispose();
+  });
+
+  it('bounds a burst, cancels on seek, and ignores the old engine completion', async () => {
+    const { controller, engine, events } = await setup();
+    controller.onPlayer(player(7_000), 'play');
+    controller.upsertCues(
+      [0, 1, 2, 3].map((i) => cue(`live${i}`, i * 1000, i * 1000 + 3000)),
+      { live: true },
+    );
+    expect(events.filter((e) => e.type === 'skipped' && e.reason === 'backlog')).toHaveLength(2);
+    expect(engine.texts()).toEqual(['译文live2']);
+    controller.invalidate(1);
+    engine.fire('start');
+    engine.fire('end');
+    expect(engine.stops).toBe(1);
+    expect(engine.spoken).toHaveLength(1);
+    expect(controller.stats().backlog).toBe(0);
+    controller.dispose();
+  });
+
+  it('expires delayed live cues while paused instead of speaking old audio on resume', async () => {
+    const { controller, engine } = await setup();
+    controller.onPlayer(player(6_500), 'play');
+    controller.upsertCues([cue('live', 0, 5_000)], { live: true });
+    engine.fire('start');
+    controller.onPlayer(player(6_500, { paused: true }), 'pause');
+    await vi.advanceTimersByTimeAsync(10_000);
+    controller.onPlayer(player(6_500), 'play');
+    expect(engine.spoken).toHaveLength(1);
+    expect(engine.stops).toBe(1);
+    controller.dispose();
+  });
+});

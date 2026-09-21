@@ -4,17 +4,21 @@
  */
 import type { AppErrorInfo } from '../domain/errors';
 import type { TranscriptRecord } from '../storage/db';
+import type { TranscriptWriter } from '../storage/transcripts';
 import type { ProviderSettings } from '../domain/settings';
 import type { OffscreenClient } from '../audio/types';
 import type { OffscreenConnectionLost } from '../audio/offscreen-client';
 import type { SessionTimings } from './session';
 import type { PortLike } from './connections';
+import type { generateSearchKeywords } from '../providers/text/search-keywords';
+import type { SearchHistoryRepo } from '../storage/search-history';
 import type {
   BuildCueUnits,
   IncrementalCaptionAssembler,
   AsrCueAssembler,
 } from '../captions/types';
 import type { AsrHealth } from '../providers/asr/types';
+import type { preloadYoutubeAudio } from '../providers/asr/youtube-preload';
 import type {
   ConnectionCheckResultItem,
   HttpTransport,
@@ -42,6 +46,8 @@ export interface KeyValueArea {
 }
 
 export interface CoordinatorDeps {
+  generateSearchKeywords?: typeof generateSearchKeywords;
+  searchHistory?: SearchHistoryRepo;
   now(): number;
   randomId(prefix?: string): string;
   /** secureLocal：扩展 origin 的 IndexedDB，用于「记住在本机」的凭证。 */
@@ -120,8 +126,10 @@ export interface CoordinatorDeps {
   }): TtsEngine;
   createDubbingController(deps: { engine: TtsEngine; now?: () => number }): DubbingController;
   checkLocalAsrHealth(baseUrl: string, signal: AbortSignal): Promise<AsrHealth>;
+  preloadYoutubeAudio?: typeof preloadYoutubeAudio;
 
   transcripts: {
+    createWriter?(): TranscriptWriter;
     putTranscript(record: TranscriptRecord): Promise<void>;
     getTranscript(recordId: string): Promise<TranscriptRecord | undefined>;
   };

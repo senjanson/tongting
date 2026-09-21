@@ -3,7 +3,14 @@
   flex-direction: column;
   height: 100vh;
   min-width: 0;
-  background: var(--tt-bg);
+  background: var(--tt-panel);
+  border: 1px solid var(--tt-line);
+  border-radius: 14px;
+  overflow: hidden;
+  --tt-control-font: 12px;
+  --tt-label-font: 11px;
+  --tt-hint-font: 11px;
+  --tt-row-height: 18px;
 }
 
 .header {
@@ -11,9 +18,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 16px 16px 13px;
   background: var(--tt-panel);
-  border-bottom: 1px solid var(--tt-line);
   min-width: 0;
 }
 
@@ -81,15 +87,12 @@
 }
 
 .pane {
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  padding: 16px;
   min-width: 0;
 }
 
 .transcriptPane {
-  padding: 12px;
+  padding: 16px;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -191,4 +194,119 @@
     margin-top: 0 !important;
     padding-top: 0 !important;
   }
+}
+
+.panelTitle {
+  font-size: 14px;
+  font-weight: 500;
+}
+.app > [role='tablist'] {
+  padding: 0 16px;
+  gap: 21px;
+}
+.app > [role='tablist'] > button {
+  padding: 10px 0;
+  font-size: 12px;
+}
+.pane > section + section {
+  margin-top: 18px;
+  padding-top: 16px;
+}
+.pane > .outputGroup {
+  margin-top: 19px;
+  padding-top: 0;
+  border-top: 0;
+}
+.pane > section > div:first-child > h3 {
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 1px;
+}
+.primaryAction {
+  margin-top: 18px;
+}
+.primaryAction > button {
+  padding: 10px;
+  font-size: 12px;
+  min-height: 40px;
+}
+.detectedLanguage {
+  font-size: 11px;
+  color: var(--tt-muted);
+  line-height: 1.65;
+}
+.audioTag {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--tt-muted);
+}
+.sessionDetails {
+  margin-top: 10px;
+  color: var(--tt-muted);
+  font-size: 11px;
+}
+.sessionDetails > summary {
+  cursor: pointer;
+  text-align: center;
+}
+.sessionDetails[open] > summary {
+  margin-bottom: 12px;
+}
+.sessionDetails > section {
+  margin-bottom: 12px;
+}
+.sessionDetails .video {
+  padding: 0 0 12px;
+  margin-bottom: 12px;
+}
+.captureStatus {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--tt-accent);
+  text-align: center;
+}
+.demoFooter {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 12px;
+  font-size: 10px;
+  color: var(--tt-muted);
+}
+.demoFooter button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: inherit;
+  color: var(--tt-accent);
+  cursor: pointer;
+}
+
+.keyField {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: end;
+  gap: 6px;
+}
+
+.app input[role='switch'] {
+  width: 30px;
+  height: 18px;
+}
+.app input[role='switch']::after {
+  width: 12px;
+  height: 12px;
+}
+.app input[role='switch']:checked::after {
+  left: 15px;
+}
+.pane input[type='range'] {
+  height: 4px;
+  margin: 8px 0 5px;
+}
+.pane label > div > select {
+  min-height: 31px;
+  font-size: 11px;
+  padding: 6px 7px;
 }

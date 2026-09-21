@@ -70,7 +70,10 @@ function textOf(v: unknown, max: number): string {
   return '';
 }
 
-export function extractPlayerResponse(raw: unknown): ExtractedResponse | null {
+export function extractPlayerResponse(
+  raw: unknown,
+  expectedOrigin = 'https://www.youtube.com',
+): ExtractedResponse | null {
   if (!isObj(raw)) return null;
   const vd = raw.videoDetails;
   if (!isObj(vd) || typeof vd.videoId !== 'string' || !isValidVideoId(vd.videoId)) return null;
@@ -99,12 +102,31 @@ export function extractPlayerResponse(raw: unknown): ExtractedResponse | null {
     )
       continue;
     indexMap.set(rawIndex, tracks.length);
+    const baseUrl = str(t.baseUrl, 4_000);
+    let requestName: string | undefined;
+    try {
+      const url = new URL(baseUrl ?? '', expectedOrigin);
+      const name = url.searchParams.get('name') ?? '';
+      if (
+        url.origin === expectedOrigin &&
+        url.pathname === '/api/timedtext' &&
+        url.searchParams.get('v') === vd.videoId &&
+        url.searchParams.get('lang') === t.languageCode &&
+        (url.searchParams.get('kind') === 'asr') === (t.kind === 'asr') &&
+        !url.searchParams.get('tlang') &&
+        name.length <= 200
+      )
+        requestName = name;
+    } catch {
+      // 无效轨道地址不作为请求身份依据，也不把其中的 URL / 签名发给内容脚本。
+    }
     tracks.push({
       languageCode: t.languageCode,
       kind: typeof t.kind === 'string' && t.kind ? t.kind.slice(0, 20) : null,
       name: textOf(t.name, 200),
       vssId: str(t.vssId, 100) ?? '',
-      baseUrl: str(t.baseUrl, 4_000),
+      baseUrl,
+      ...(requestName !== undefined ? { requestName } : {}),
     });
   }
   let defaultTrackIndex: number | undefined;
@@ -122,11 +144,12 @@ export function extractPlayerResponse(raw: unknown): ExtractedResponse | null {
       author: str(vd.author, 200),
       lengthSeconds,
       isLive: vd.isLive === true,
-      tracks: tracks.map(({ languageCode, kind, name, vssId }) => ({
+      tracks: tracks.map(({ languageCode, kind, name, vssId, requestName }) => ({
         languageCode,
         kind,
         name,
         vssId,
+        ...(requestName !== undefined ? { requestName } : {}),
       })),
       defaultTrackIndex,
     },
@@ -350,7 +373,7 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
       /* ignore */
     }
     for (const c of candidates) {
-      const extracted = extractPlayerResponse(c);
+      const extracted = extractPlayerResponse(c, origin());
       if (!extracted) continue;
       sawResponse = true;
       if (!expectedVideoId || extracted.payload.videoId === expectedVideoId) {
@@ -371,7 +394,30 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
   // -------------------------------------------------------------------------
   // 固定命令
   // -------------------------------------------------------------------------
-  let captionRestore: { videoId: string; previous: Obj | null } | undefined;
+  type CaptionOwner = { ownerId: string; videoId: string; previous: Obj | null; applied?: string };
+  let captionRestore: CaptionOwner | undefined;
+  const operations = new Map<string, { ownerId: string; abort: AbortController }>();
+  const releasedOwners = new Set<string>();
+  const ownerFor = (d: Obj) => (typeof d.ownerId === 'string' ? d.ownerId : 'legacy');
+  const validOwner = (d: Obj) =>
+    d.ownerId === undefined ||
+    (typeof d.ownerId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(d.ownerId));
+  const cancelOwner = (ownerId: string) => {
+    for (const op of operations.values()) if (op.ownerId === ownerId) op.abort.abort();
+  };
+  const rememberRelease = (ownerId: string) => {
+    // 老客户端没有 owner；仅供已有协议兼容，不封禁后续 legacy 请求。
+    if (ownerId === 'legacy') return;
+    releasedOwners.add(ownerId);
+    while (releasedOwners.size > 128) releasedOwners.delete(releasedOwners.values().next().value!);
+  };
+  const abortable = <T>(promise: Promise<T>, signal: AbortSignal): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(new DOMException('Cancelled', 'AbortError'));
+      if (signal.aborted) return onAbort();
+      signal.addEventListener('abort', onAbort, { once: true });
+      promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+    });
 
   const result = (
     commandId: string,
@@ -379,21 +425,34 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
     extra: { code?: string; changedCaptions?: boolean; fetched?: boolean } = {},
   ) => post({ type: 'command-result', commandId, ok, ...extra });
 
-  const waitForCapture = (videoId: string, track: PrivateTrack, timeoutMs: number) =>
+  const waitForCapture = (
+    videoId: string,
+    track: PrivateTrack,
+    timeoutMs: number,
+    signal: AbortSignal,
+  ) =>
     new Promise<boolean>((resolve) => {
       const listener = (info: CaptureInfo) => {
         if (info.videoId !== videoId || info.lang !== track.languageCode || info.tlang) return;
         if ((info.kind === 'asr') !== (track.kind === 'asr')) return;
-        if ((info.name ?? '') !== trackNameFromVssId(track.vssId, track.languageCode)) return;
+        if (
+          (info.name ?? '') !==
+          (track.requestName ?? trackNameFromVssId(track.vssId, track.languageCode))
+        )
+          return;
         done(true);
       };
-      const timer = win.setTimeout(() => done(false), timeoutMs);
+      const onAbort = () => done(false);
+      const timer = win.setTimeout(onAbort, timeoutMs);
       function done(v: boolean) {
         captureListeners.delete(listener);
         win.clearTimeout(timer);
+        signal.removeEventListener('abort', onAbort);
         resolve(v);
       }
       captureListeners.add(listener);
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) onAbort();
     });
 
   const readTrackOption = (api: YtPlayerApi): Obj | null => {
@@ -423,12 +482,22 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
     try {
       const list = api.getOption?.('captions', 'tracklist');
       if (Array.isArray(list)) {
-        const hit = list.find(
+        const candidates = list.filter(
           (e) =>
             isObj(e) &&
             e.languageCode === track.languageCode &&
             (e.kind === 'asr') === (track.kind === 'asr'),
         );
+        const hit =
+          candidates.find(
+            (entry) =>
+              isObj(entry) && !!track.vssId && (entry.vss_id ?? entry.vssId) === track.vssId,
+          ) ??
+          candidates.find(
+            (entry) =>
+              isObj(entry) && track.requestName !== undefined && entry.name === track.requestName,
+          ) ??
+          (candidates.length === 1 ? candidates[0] : undefined);
         if (hit) {
           const copy = { ...(hit as Obj) };
           delete copy.translationLanguage;
@@ -438,13 +507,19 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
     } catch {
       /* ignore */
     }
-    return track.kind === 'asr'
-      ? { languageCode: track.languageCode, kind: 'asr' }
-      : { languageCode: track.languageCode };
+    return {
+      languageCode: track.languageCode,
+      ...(track.kind === 'asr' ? { kind: 'asr' } : {}),
+      ...(track.requestName ? { name: track.requestName } : {}),
+    };
   };
 
-  const fallbackFetch = async (videoId: string, baseUrl: string): Promise<boolean> => {
-    if (!nativeFetch) return false;
+  const fallbackFetch = async (
+    videoId: string,
+    baseUrl: string,
+    signal: AbortSignal,
+  ): Promise<boolean> => {
+    if (!nativeFetch || signal.aborted) return false;
     let u: URL;
     try {
       u = new URL(baseUrl, win.location.href);
@@ -459,14 +534,17 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
       return false;
     u.searchParams.set('fmt', 'json3');
     try {
-      const res = (await Reflect.apply(nativeFetch, win, [
-        u.href,
-        { credentials: 'same-origin' },
-      ])) as Response;
+      const res = await abortable(
+        Reflect.apply(nativeFetch, win, [
+          u.href,
+          { credentials: 'same-origin', signal },
+        ]) as Promise<Response>,
+        signal,
+      );
       if (!res.ok) return false;
-      const body = await res.text();
+      const body = await abortable(res.text(), signal);
       // 迟到结果：视频已切换则丢弃。
-      if (parseYoutubeUrl(win.location.href).videoId !== videoId) return false;
+      if (signal.aborted || parseYoutubeUrl(win.location.href).videoId !== videoId) return false;
       if (!body || body.length > BRIDGE_MAX_BODY_CHARS) return false;
       emitTimedtext(u.href, res.status, body, 'bridge-fetch');
       return true;
@@ -480,93 +558,156 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
     const videoId = d.videoId as string;
     if (parseYoutubeUrl(win.location.href).videoId !== videoId)
       return result(commandId, false, { code: 'video-mismatch' });
-    const resp = readResponse(videoId);
-    if (typeof resp === 'string')
-      return result(commandId, false, { code: resp === 'no-player' ? 'player-unavailable' : resp });
-    const track = resp.tracks.find(
-      (t) =>
-        t.languageCode === d.languageCode &&
-        (t.kind === 'asr') === (d.kind === 'asr') &&
-        (!d.vssId || t.vssId === d.vssId),
-    );
-    if (!track) return result(commandId, false, { code: 'track-not-found' });
-    if (d.fetchOnly === true) {
-      const fetched = track.baseUrl ? await fallbackFetch(videoId, track.baseUrl) : false;
-      return result(commandId, fetched, { code: fetched ? undefined : 'no-capture', fetched });
+    const ownerId = ownerFor(d);
+    if (releasedOwners.has(ownerId) || operations.has(commandId)) return;
+    if (captionRestore && captionRestore.ownerId !== ownerId) {
+      const previousOwner = captionRestore.ownerId;
+      cancelOwner(previousOwner);
+      rememberRelease(previousOwner);
+      if (!restoreState(captionRestore))
+        return result(commandId, false, { code: 'restore-failed' });
     }
-
-    // 已缓存该轨道正文：直接重放，不再驱动播放器。
-    const trackName = trackNameFromVssId(track.vssId, track.languageCode);
-    const cached = bodyCache.find(
-      (e) =>
-        e.videoId === videoId &&
-        e.lang === track.languageCode &&
-        (e.kind === 'asr') === (track.kind === 'asr') &&
-        e.name === trackName,
-    );
-    if (cached) {
-      post({
-        type: 'timedtext',
-        url: cached.url,
-        status: cached.status,
-        body: cached.body,
-        via: 'replay',
-      });
-      return result(commandId, true, { changedCaptions: false });
-    }
-
-    const captured = waitForCapture(videoId, track, BRIDGE_PLAYER_CAPTURE_WAIT_MS);
-    let changedCaptions = false;
-    const api = findPlayerApi();
-    if (api?.setOption) {
-      try {
-        // 只保存首次改动前的用户原始状态，直到 restore 才清除（跨视频不覆盖）。
-        const current = readTrackOption(api);
-        if (!captionRestore) captionRestore = { videoId, previous: current };
-        api.loadModule?.('captions');
-        const sameTrack =
-          !!current &&
-          current.languageCode === track.languageCode &&
-          (current.kind === 'asr') === (track.kind === 'asr');
-        if (current && (sameTrack || current.translationLanguage)) {
-          // 目标轨道已激活（播放器不会重新请求）或开启了自动翻译（tlang）：先关闭再切回原文轨道。
-          api.setOption('captions', 'track', {});
-        }
-        api.setOption('captions', 'track', trackOptionFor(api, track));
-        changedCaptions = true;
-      } catch {
-        /* 播放器 API 不可用，走兜底 */
+    const abort = new AbortController();
+    const signal = abort.signal;
+    operations.set(commandId, { ownerId, abort });
+    const timeout = win.setTimeout(() => abort.abort(), 12_000);
+    try {
+      if (parseYoutubeUrl(win.location.href).videoId !== videoId)
+        return result(commandId, false, { code: 'video-mismatch' });
+      const resp = readResponse(videoId);
+      if (typeof resp === 'string')
+        return result(commandId, false, {
+          code: resp === 'no-player' ? 'player-unavailable' : resp,
+        });
+      const track = resp.tracks.find(
+        (t) =>
+          t.languageCode === d.languageCode &&
+          (t.kind === 'asr') === (d.kind === 'asr') &&
+          (!d.vssId || t.vssId === d.vssId),
+      );
+      if (!track) return result(commandId, false, { code: 'track-not-found' });
+      if (d.fetchOnly === true) {
+        const fetched = track.baseUrl ? await fallbackFetch(videoId, track.baseUrl, signal) : false;
+        return result(commandId, fetched, { code: fetched ? undefined : 'no-capture', fetched });
       }
+
+      // 已缓存该轨道正文：直接重放，不再驱动播放器。
+      const trackName = track.requestName ?? trackNameFromVssId(track.vssId, track.languageCode);
+      const cached = bodyCache.find(
+        (e) =>
+          e.videoId === videoId &&
+          e.lang === track.languageCode &&
+          (e.kind === 'asr') === (track.kind === 'asr') &&
+          e.name === trackName,
+      );
+      if (cached) {
+        post({
+          type: 'timedtext',
+          url: cached.url,
+          status: cached.status,
+          body: cached.body,
+          via: 'replay',
+        });
+        return result(commandId, true, { changedCaptions: false });
+      }
+
+      const captured = waitForCapture(videoId, track, BRIDGE_PLAYER_CAPTURE_WAIT_MS, signal);
+      let changedCaptions = false;
+      const api = findPlayerApi();
+      if (api?.setOption) {
+        try {
+          // 只保存首次改动前的用户原始状态，直到 restore 才清除（跨视频不覆盖）。
+          const current = readTrackOption(api);
+          if (!captionRestore) captionRestore = { ownerId, videoId, previous: current };
+          api.loadModule?.('captions');
+          const sameTrack =
+            !!current &&
+            current.languageCode === track.languageCode &&
+            (current.kind === 'asr') === (track.kind === 'asr');
+          if (current && (sameTrack || current.translationLanguage)) {
+            // 目标轨道已激活（播放器不会重新请求）或开启了自动翻译（tlang）：先关闭再切回原文轨道。
+            api.setOption('captions', 'track', {});
+          }
+          api.setOption('captions', 'track', trackOptionFor(api, track));
+          changedCaptions = true;
+        } catch {
+          /* 播放器 API 可能部分成功；保留所有权并仍然通知，随后走兜底。 */
+        } finally {
+          if (captionRestore?.ownerId === ownerId) {
+            captionRestore.applied = trackFingerprint(readTrackOption(api));
+            changedCaptions = true;
+            post({ type: 'captions-changed', commandId, ownerId });
+          }
+        }
+      }
+      let ok = await captured;
+      if (signal.aborted) return result(commandId, false, { code: 'cancelled' });
+      let fetched = false;
+      if (!ok && track.baseUrl) {
+        fetched = await fallbackFetch(videoId, track.baseUrl, signal);
+        ok = fetched;
+      }
+      if (signal.aborted) return result(commandId, false, { code: 'cancelled' });
+      return result(commandId, ok, {
+        code: ok ? undefined : 'no-capture',
+        changedCaptions,
+        fetched,
+      });
+    } finally {
+      win.clearTimeout(timeout);
+      if (operations.get(commandId)?.abort === abort) operations.delete(commandId);
     }
-    let ok = await captured;
-    let fetched = false;
-    if (!ok && track.baseUrl) {
-      fetched = await fallbackFetch(videoId, track.baseUrl);
-      ok = fetched;
-    }
-    return result(commandId, ok, { code: ok ? undefined : 'no-capture', changedCaptions, fetched });
   };
+
+  const trackFingerprint = (track: Obj | null): string =>
+    JSON.stringify(
+      track
+        ? [
+            track.languageCode,
+            track.kind ?? '',
+            track.vss_id ?? track.vssId ?? '',
+            track.name ?? '',
+            track.translationLanguage ?? null,
+          ]
+        : null,
+    );
+
+  function restoreState(state: CaptionOwner): boolean {
+    if (captionRestore !== state) return true;
+    const api = findPlayerApi();
+    if (!api?.setOption) return false;
+    try {
+      // 用户在扩展工作期间改过原生轨道/开关时，归还当前用户状态。
+      if (state.applied !== undefined && trackFingerprint(readTrackOption(api)) !== state.applied) {
+        captionRestore = undefined;
+        return true;
+      }
+      api.setOption('captions', 'track', state.previous ?? {});
+      if (!state.previous) api.unloadModule?.('captions');
+      captionRestore = undefined;
+      return true;
+    } catch {
+      // 保留快照供有界重试或下一位 owner 接管前重试，不能覆盖其新快照。
+      return false;
+    }
+  }
 
   const handleRestore = (d: Obj) => {
     const commandId = d.commandId as string;
-    const videoId = d.videoId as string;
-    void videoId;
+    const ownerId = ownerFor(d);
+    cancelOwner(ownerId);
+    rememberRelease(ownerId);
     const state = captionRestore;
-    if (!state) return result(commandId, true, { changedCaptions: false });
-    captionRestore = undefined;
-    // 即使页面已切到其他视频也恢复：YouTube 会把字幕开关沿用到后续视频，需要还原用户原来的开关状态。
-    const api = findPlayerApi();
-    try {
-      if (state.previous) {
-        api?.setOption?.('captions', 'track', state.previous);
-      } else {
-        api?.setOption?.('captions', 'track', {});
-        api?.unloadModule?.('captions');
-      }
-      return result(commandId, true, { changedCaptions: true });
-    } catch {
-      return result(commandId, false, { code: 'restore-failed' });
+    if (!state || state.ownerId !== ownerId)
+      return result(commandId, true, { changedCaptions: false });
+    const ok = restoreState(state);
+    if (!ok) {
+      for (const delay of [100, 500, 1_500])
+        win.setTimeout(() => {
+          if (captionRestore === state) restoreState(state);
+        }, delay);
     }
+    result(commandId, ok, { changedCaptions: ok, code: ok ? undefined : 'restore-failed' });
   };
 
   win.addEventListener('message', (ev: MessageEvent) => {
@@ -575,6 +716,35 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
     if (!isObj(d) || d.__tongting !== BRIDGE_TAG || d.dir !== 'to-main') return;
     try {
       switch (d.type) {
+        case 'request-caption-selection': {
+          if (
+            typeof d.videoId !== 'string' ||
+            parseYoutubeUrl(win.location.href).videoId !== d.videoId
+          )
+            break;
+          const api = findPlayerApi();
+          const selected = api && readTrackOption(api);
+          const resp = readResponse(d.videoId);
+          if (!selected || selected.translationLanguage || typeof resp === 'string') break;
+          const vssId = selected.vss_id ?? selected.vssId;
+          const candidates = resp.tracks.filter(
+            (t) =>
+              t.languageCode === selected.languageCode &&
+              (t.kind === 'asr') === (selected.kind === 'asr') &&
+              (!vssId || t.vssId === vssId),
+          );
+          if (candidates.length === 1) {
+            const t = candidates[0]!;
+            post({
+              type: 'caption-selection',
+              videoId: d.videoId,
+              languageCode: t.languageCode,
+              kind: t.kind === 'asr' ? 'asr' : 'standard',
+              vssId: t.vssId,
+            });
+          }
+          break;
+        }
         case 'request-player-response':
           publishResponse();
           break;
@@ -582,6 +752,7 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
           if (
             typeof d.commandId === 'string' &&
             COMMAND_ID_RE.test(d.commandId) &&
+            validOwner(d) &&
             typeof d.videoId === 'string' &&
             isValidVideoId(d.videoId) &&
             typeof d.languageCode === 'string' &&
@@ -612,6 +783,7 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
           if (
             typeof d.commandId === 'string' &&
             COMMAND_ID_RE.test(d.commandId) &&
+            validOwner(d) &&
             typeof d.videoId === 'string' &&
             isValidVideoId(d.videoId)
           ) {

@@ -48,6 +48,38 @@ afterEach(() => {
 });
 
 describe('side panel states', () => {
+  it('shows continuous original silence by default and reveals mixing controls only when explicitly selected', async () => {
+    const snapshot = makeSnapshot({ pages: [makePage()] }, { outputMode: 'subtitle-voice' });
+    const client = new StaticClient(connected(snapshot), {
+      'tts/voices': () => ({ voices: [{ voiceName: 'Tingting', lang: 'zh-CN' }] }),
+      'settings/update': () => ({ persisted: true }),
+    });
+    renderPanel(client);
+    expect(screen.getByRole('button', { name: '全程静音' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    expect(screen.queryByLabelText('原声音量')).toBeNull();
+    expect(screen.queryByText('配音时自动降低原声')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '保留原声' }));
+    await waitFor(() =>
+      expect(client.sent).toContainEqual({
+        kind: 'settings/update',
+        patch: { audio: { originalMode: 'mix' } },
+      }),
+    );
+    act(() =>
+      client.setState(
+        connected(
+          makeSnapshot(
+            { pages: [makePage()] },
+            { outputMode: 'subtitle-voice', audio: { originalMode: 'mix' } },
+          ),
+        ),
+      ),
+    );
+    expect(screen.getByLabelText('原声音量')).toBeTruthy();
+    expect(screen.getByText('配音时自动降低原声')).toBeTruthy();
+  });
   it('shows a connecting state before the first snapshot', () => {
     renderPanel(
       new StaticClient({ connection: 'connecting', snapshot: null, reconnectAttempts: 0 }),
@@ -91,6 +123,8 @@ describe('side panel states', () => {
     const snapshot = makeSnapshot({ pages: [makePage()], sessions: [session] });
     const client = new StaticClient(connected(snapshot));
     renderPanel(client);
+
+    fireEvent.click(screen.getByText('播放与翻译详情'));
 
     expect(screen.getByText('真实视频标题')).toBeTruthy();
     expect(screen.getAllByText('运行中').length).toBeGreaterThan(0);
@@ -178,7 +212,12 @@ describe('side panel states', () => {
   it('supports tablist keyboard navigation', () => {
     renderPanel(new StaticClient(connected(makeSnapshot({ pages: [makePage()] }))));
     const tabs = screen.getAllByRole('tab');
-    expect(tabs.map((t) => t.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false']);
+    expect(tabs.map((t) => t.getAttribute('aria-selected'))).toEqual([
+      'true',
+      'false',
+      'false',
+      'false',
+    ]);
     fireEvent.keyDown(tabs[0]!, { key: 'ArrowRight' });
     expect(screen.getByRole('tab', { name: '字幕' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(
@@ -186,6 +225,38 @@ describe('side panel states', () => {
     );
     fireEvent.keyDown(screen.getByRole('tab', { name: '字幕' }), { key: 'End' });
     expect(screen.getByRole('tab', { name: '设置' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('keeps prefetch enabled for buffered playback and restores the saved continuous-mode choice', async () => {
+    const client = new StaticClient(
+      connected(
+        makeSnapshot({ pages: [makePage()] }, { playbackMode: 'buffered', prefetch: false }),
+      ),
+      { 'settings/update': () => ({ persisted: true }) },
+    );
+    renderPanel(client);
+    fireEvent.click(screen.getByRole('tab', { name: '设置' }));
+    const prefetch = screen.getByRole('switch', { name: '预翻译后续字幕' }) as HTMLInputElement;
+    expect(prefetch.checked).toBe(true);
+    expect(prefetch.disabled).toBe(true);
+    expect(client.sent).toEqual([{ kind: 'tts/voices' }]);
+
+    act(() =>
+      client.setState(
+        connected(
+          makeSnapshot({ pages: [makePage()] }, { playbackMode: 'continuous', prefetch: false }),
+        ),
+      ),
+    );
+    expect(prefetch.checked).toBe(false);
+    expect(prefetch.disabled).toBe(false);
+    fireEvent.click(prefetch);
+    await waitFor(() =>
+      expect(client.sent).toEqual([
+        { kind: 'tts/voices' },
+        { kind: 'settings/update', patch: { prefetch: true } },
+      ]),
+    );
   });
 });
 
@@ -418,3 +489,54 @@ function NotifyButton() {
     </button>
   );
 }
+
+it('saves the prototype connection form and preserves edits made during the request', async () => {
+  let resolveSave!: (value: unknown) => void;
+  const client = new StaticClient(connected(makeSnapshot({ pages: [makePage()] })), {
+    'settings/update': () =>
+      new Promise((resolve) => {
+        resolveSave = resolve;
+      }),
+    'credentials/set': () => ({ persisted: false, storage: 'none' }),
+  });
+  renderPanel(client);
+  fireEvent.click(screen.getByRole('tab', { name: '设置' }));
+  const address = screen.getByLabelText('sub2api 服务地址') as HTMLInputElement;
+  const key = screen.getByLabelText('API Key') as HTMLInputElement;
+  fireEvent.change(address, { target: { value: 'https://first.example.com/v1' } });
+  fireEvent.change(key, { target: { value: 'sk-first' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存连接设置' }));
+  expect((screen.getByRole('button', { name: '保存连接设置' }) as HTMLButtonElement).disabled).toBe(
+    true,
+  );
+  fireEvent.change(address, { target: { value: 'https://next.example.com/v1' } });
+  fireEvent.change(key, { target: { value: 'sk-next' } });
+  await act(async () => resolveSave({ persisted: true }));
+  expect(address.value).toBe('https://next.example.com/v1');
+  expect(key.value).toBe('sk-next');
+  expect(client.sent).toEqual([
+    { kind: 'tts/voices' },
+    { kind: 'settings/update', patch: { provider: { baseUrl: 'https://first.example.com/v1' } } },
+    { kind: 'credentials/set', apiKey: 'sk-first', remember: true },
+  ]);
+  expect(await screen.findByText('Key 未能完整保存，请重试保存后再重新加载扩展。')).toBeTruthy();
+});
+
+it('retains the submitted key after a persistence failure and lets the user retry', async () => {
+  let persisted = false;
+  const client = new StaticClient(connected(makeSnapshot()), {
+    'credentials/set': () => ({ persisted, storage: 'local' }),
+  });
+  renderPanel(client);
+  fireEvent.click(screen.getByRole('tab', { name: '设置' }));
+  const key = screen.getByLabelText('API Key') as HTMLInputElement;
+  fireEvent.change(key, { target: { value: 'sk-retry-fake' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存连接设置' }));
+  await screen.findByText('Key 未能完整保存，请重试保存后再重新加载扩展。');
+  expect(key.value).toBe('sk-retry-fake');
+  persisted = true;
+  fireEvent.click(screen.getByRole('button', { name: '保存连接设置' }));
+  await screen.findByText('Key 已保存在本机，重新加载扩展或重启浏览器后仍可使用。');
+  expect(key.value).toBe('');
+  expect(client.sent.filter((command) => command.kind === 'credentials/set')).toHaveLength(2);
+});

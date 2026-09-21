@@ -35,6 +35,8 @@ export function createSub2apiTtsEngine(params: {
   getRoute: () => Sub2apiTtsRoute | null;
   getOwner: () => MediaOwner | null;
 }): TtsEngine {
+  // 物理操作身份跨控制器、会话和 worker 实例唯一；一次 speak 的重发仍沿用此 ID。
+  const instanceId = crypto.randomUUID();
   let token = 0;
   let current: {
     token: number;
@@ -129,7 +131,7 @@ export function createSub2apiTtsEngine(params: {
       }
       ensureSubscribed();
       const tok = ++token;
-      const remoteId = `${utterance.utteranceId.slice(0, 100)}~${tok}`;
+      const remoteId = `tts-${instanceId}-${tok}`;
       current = { token: tok, utteranceId: utterance.utteranceId, remoteId, listener };
       const failLater = (error: AppErrorInfo) =>
         queueMicrotask(() =>

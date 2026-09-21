@@ -342,11 +342,11 @@ export function createOffscreenHost(deps: OffscreenHostDeps): OffscreenHost {
     // 应用待启动期间到达的锚点与设置。
     for (const a of pending.anchors) session.addAnchor(a);
     if (pending.epoch !== undefined) session.setEpoch(pending.epoch);
+    if (pending.gain) session.setOriginalGain(pending.gain.gain, pending.gain.rampMs);
     scheduleLeaseCheck();
     try {
       const r = await session.start();
       if (pending.recognition === false) session.setRecognition(false);
-      if (pending.gain) session.setOriginalGain(pending.gain.gain, pending.gain.rampMs);
       return r;
     } catch (error) {
       await session.stop('error');
@@ -430,15 +430,7 @@ export function createOffscreenHost(deps: OffscreenHostDeps): OffscreenHost {
       }
       case 'audio/original-gain': {
         const t = target(request.leaseId);
-        if (t.session && t.session.state === 'active')
-          t.session.setOriginalGain(request.gain, request.rampMs);
-        else if (t.session)
-          throw new AppError({
-            code: 'capture-not-active',
-            category: 'capture',
-            retryable: false,
-            message: '音频捕获未在运行',
-          });
+        if (t.session) t.session.setOriginalGain(request.gain, request.rampMs);
         else t.pending!.gain = { gain: request.gain, rampMs: request.rampMs };
         return { gain: request.gain };
       }

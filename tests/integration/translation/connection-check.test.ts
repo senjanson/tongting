@@ -115,7 +115,9 @@ describe('runTextConnectionCheck', () => {
 
   it('T05: model 403 is reported on the model item without claiming success', async () => {
     const s = await server({ allowedModels: ['gpt-5.6-luna'] });
-    const { result, byKey } = await check(s, { overrides: { protocol: 'responses' } });
+    const { result, byKey } = await check(s, {
+      overrides: { protocol: 'responses', model: 'gpt-5.6-terra' },
+    });
     // 模型列表 200 只说明列表接口接受了 Key；翻译没有成功，不能标记为 verified
     expect(byKey.auth!.status).toBe('unknown');
     expect(byKey.auth!.message).toContain('模型列表接口接受');

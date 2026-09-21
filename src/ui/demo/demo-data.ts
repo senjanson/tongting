@@ -154,7 +154,9 @@ export function demoSnapshot(version: number): AppSnapshot {
   const player = demoPlayer(16_000);
   const cues = demoCues();
   const settings = applySettingsPatch(defaultSettings(), {
-    provider: { baseUrl: 'https://sub2api.example.invalid', model: '示例模型（演示）' },
+    provider: { baseUrl: 'https://sub2api.example.invalid' },
+    captions: { fontSizePx: 21 },
+    audio: { originalVolume: 0.7 },
   });
   return {
     snapshotVersion: version,

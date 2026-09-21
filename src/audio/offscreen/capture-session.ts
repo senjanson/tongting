@@ -166,6 +166,7 @@ export class CaptureSession {
   private ctx: AudioContext | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   private gainNode: GainNode | null = null;
+  private originalGain: number;
   private tap: AudioWorkletNode | null = null;
   private clock: ContextClock | null = null;
   private resampler: StreamingResampler | null = null;
@@ -200,6 +201,7 @@ export class CaptureSession {
 
   constructor(req: CaptureStartRequest, deps: CaptureSessionDeps) {
     this.req = req;
+    this.originalGain = req.originalVolume;
     this.leaseId = req.leaseId;
     this.ownerValue = { ...req.owner };
     this.deps = deps;
@@ -326,7 +328,7 @@ export class CaptureSession {
       const source = ctx.createMediaStreamSource(stream);
       this.source = source;
       const gain = ctx.createGain();
-      gain.gain.value = this.req.originalVolume;
+      gain.gain.value = this.originalGain;
       this.gainNode = gain;
       source.connect(gain);
       gain.connect(ctx.destination);
@@ -730,6 +732,11 @@ export class CaptureSession {
   }
 
   setOriginalGain(gain: number, rampMs: number): void {
+    const target = Math.min(1, Math.max(0, gain));
+    if (this.stateValue === 'requesting' && !this.isStopping) {
+      this.originalGain = target;
+      return;
+    }
     if (!this.ctx || !this.gainNode || this.stateValue !== 'active') {
       throw new AppError({
         code: 'capture-not-active',
@@ -740,7 +747,7 @@ export class CaptureSession {
     }
     const param = this.gainNode.gain;
     const t = this.ctx.currentTime;
-    const target = Math.min(1, Math.max(0, gain));
+    this.originalGain = target;
     param.cancelScheduledValues(t);
     param.setValueAtTime(param.value, t);
     if (rampMs > 0) param.linearRampToValueAtTime(target, t + rampMs / 1000);

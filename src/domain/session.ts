@@ -80,8 +80,22 @@ export const PlayerStateSchema = z.object({
 });
 export type PlayerState = z.infer<typeof PlayerStateSchema>;
 
-export const SourceModeSchema = z.enum(['none', 'full-track', 'incremental-captions', 'asr']);
+export const SourceModeSchema = z.enum([
+  'none',
+  'full-track',
+  'incremental-captions',
+  'asr',
+  'asr-preload',
+]);
 export type SourceMode = z.infer<typeof SourceModeSchema>;
+
+export const PlaybackBufferSchema = z.object({
+  state: z.enum(['preparing', 'ready', 'blocked', 'unavailable']),
+  readyAheadMs: z.number().nonnegative(),
+  targetMs: z.number().positive(),
+  message: z.string().max(300).optional(),
+});
+export type PlaybackBuffer = z.infer<typeof PlaybackBufferSchema>;
 
 export const CaptionTrackInfoSchema = z.object({
   /** 适配器内部 key，不含 URL。 */
@@ -153,6 +167,7 @@ export const SessionSnapshotSchema = z.object({
   recordId: z.string().max(300).optional(),
   /** 全片补译是否开启（仅完整字幕轨道来源可用，用于导出完整译文）。 */
   backfill: z.boolean().optional(),
+  playbackBuffer: PlaybackBufferSchema.optional(),
   startedAt: z.number(),
   updatedAt: z.number(),
 });

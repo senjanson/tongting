@@ -1,0 +1,113 @@
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.current {
+  margin: 0;
+  color: var(--tt-muted);
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.current strong {
+  color: var(--tt-text);
+  font-weight: 500;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.actions > button {
+  flex: 1;
+}
+
+.details {
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--tt-muted);
+}
+
+.details summary {
+  cursor: pointer;
+  color: var(--tt-accent);
+  padding: 4px 0;
+}
+
+.details p {
+  margin: 6px 0;
+}
+
+.details a {
+  color: var(--tt-accent);
+}
+
+.list {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 248px;
+  overflow-y: auto;
+  border: 1px solid var(--tt-line);
+  border-radius: var(--tt-radius-sm);
+}
+
+.voice {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 6px 3px 0;
+}
+
+.voice + .voice {
+  border-top: 1px solid var(--tt-line);
+}
+
+.voice[data-selected] {
+  background: var(--tt-tint);
+}
+
+.choose {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 22px 8px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--tt-radius-sm);
+  text-align: left;
+  cursor: pointer;
+  color: var(--tt-text);
+}
+
+.choose:hover {
+  background: var(--tt-soft);
+}
+
+.name {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--tt-muted);
+}
+
+.check {
+  position: absolute;
+  right: 4px;
+  top: 12px;
+  color: var(--tt-accent);
+}

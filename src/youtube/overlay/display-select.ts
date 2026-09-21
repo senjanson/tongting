@@ -3,7 +3,7 @@
  * 保留上一条已显示过译文的字幕，直到出现新的已译字幕或超过其结束时间 holdMs。
  * 用于增量字幕：句子通常在显示后才确定并翻译，若不保留，译文往往刚返回就被下一句替换。
  *
- * late 模式（语音识别来源）：字幕在该句说完、识别并翻译之后才到达，此时播放位置通常已越过其区间，
+ * late 模式（增量字幕与语音识别）：字幕在该句确定、识别并翻译之后才到达，播放位置可能已越过其区间，
  * 甚至越过下一句的开始。因此显示「开始时间不晚于当前时间、结束后未超过 lateHoldMs 的最新已译字幕」，
  * 直到更新的已译字幕到达或超出窗口。
  */
@@ -21,7 +21,7 @@ export interface DisplaySelector {
     cues: readonly DisplayCue[],
     timeMs: number,
     getById: (id: string) => DisplayCue | undefined,
-    opts?: { late?: boolean },
+    opts?: { late?: boolean; lateAfterMs?: number },
   ): DisplaySelection | undefined;
   reset(): void;
 }
@@ -37,6 +37,7 @@ function findLatestTranslated(
   cues: readonly DisplayCue[],
   timeMs: number,
   holdMs: number,
+  afterMs = -Infinity,
 ): DisplayCue | undefined {
   let lo = 0;
   let hi = cues.length - 1;
@@ -52,7 +53,7 @@ function findLatestTranslated(
   }
   for (let i = candidate; i >= 0 && i > candidate - LATE_LOOKBACK; i--) {
     const c = cues[i]!;
-    if (c.translatedText?.trim() && timeMs <= c.endMs + holdMs) return c;
+    if (c.translatedText?.trim() && c.endMs > afterMs && timeMs <= c.endMs + holdMs) return c;
   }
   return undefined;
 }
@@ -70,7 +71,7 @@ export function createDisplaySelector(
         return { cue: active, held: false };
       }
       if (opts?.late) {
-        const latest = findLatestTranslated(cues, timeMs, lateHoldMs);
+        const latest = findLatestTranslated(cues, timeMs, lateHoldMs, opts.lateAfterMs);
         if (latest) {
           lastId = latest.id;
           // 当前正在说的句子还没有译文时，标记为保留显示。

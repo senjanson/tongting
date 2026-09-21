@@ -574,11 +574,12 @@ export function sampleRaw(): RawCaptionCue[] {
   ];
 }
 
-export async function configure(h: Harness, overrides: { asr?: boolean } = {}) {
+export async function configure(h: Harness, overrides: { asr?: boolean; buffered?: boolean } = {}) {
   const ui = h.ui();
   await ui.command({
     kind: 'settings/update',
     patch: {
+      playbackMode: overrides.buffered ? 'buffered' : 'continuous',
       provider: {
         baseUrl: 'https://api.example.com/v1',
         protocol: 'responses',

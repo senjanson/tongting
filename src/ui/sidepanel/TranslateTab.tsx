@@ -12,9 +12,8 @@ import {
   Settings,
   Speech,
   Square,
-  Volume2,
 } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { SOURCE_LANGUAGES, TARGET_LANGUAGES } from '../../domain/languages';
 import type { SessionSnapshot } from '../../domain/session';
 import type { Settings as AppSettings, TranslationStyle } from '../../domain/settings';
@@ -30,7 +29,7 @@ import {
 } from '../components/controls';
 import { Callout, Group, Stat, StatGrid } from '../components/layout';
 import { useToast } from '../components/toast';
-import { formatLatency, percent } from '../format';
+import { formatLatency, languageLabel, percent } from '../format';
 import { useCommandRunner, useDraftValue, useSettingsUpdater, useVoiceList } from '../shared/hooks';
 import { openOptionsPage, reloadTab } from '../shared/navigation';
 import type { ConnectionStatus } from '../state/client';
@@ -49,6 +48,8 @@ import {
 } from '../state/derive';
 import { useUiClient } from '../state/hooks';
 import { SessionProblemCallout } from '../shared/SessionProblemCallout';
+import { PlaybackControls } from '../shared/PlaybackControls';
+import { hasActiveDubbing, SystemVoicePicker } from '../shared/SystemVoicePicker';
 import styles from './sidepanel.module.css';
 
 const STYLE_OPTIONS: { value: TranslationStyle; label: string }[] = [
@@ -64,9 +65,17 @@ export interface TranslateTabProps {
   tabId: number;
   session: SessionSnapshot | undefined;
   config: ServiceConfigState;
+  videoDetails?: ReactNode;
 }
 
-export function TranslateTab({ snapshot, connection, tabId, session, config }: TranslateTabProps) {
+export function TranslateTab({
+  snapshot,
+  connection,
+  tabId,
+  session,
+  config,
+  videoDetails,
+}: TranslateTabProps) {
   const client = useUiClient();
   const notify = useToast();
   const { run, isBusy } = useCommandRunner();
@@ -181,7 +190,19 @@ export function TranslateTab({ snapshot, connection, tabId, session, config }: T
         </Callout>
       )}
 
-      <div className={styles.stack}>
+      <LanguageGroup settings={settings} session={session} />
+      <OutputGroup settings={settings} availability={availability} />
+      <Group title="PLAYBACK / 播放">
+        <PlaybackControls settings={settings} session={session} />
+      </Group>
+      <CaptionGroup settings={settings} />
+      <AudioGroup
+        settings={settings}
+        availability={availability}
+        reloadVoices={voices.reload}
+        dubbingActive={hasActiveDubbing(snapshot)}
+      />
+      <div className={styles.primaryAction}>
         <Button
           variant="primary"
           block
@@ -193,49 +214,57 @@ export function TranslateTab({ snapshot, connection, tabId, session, config }: T
           {action.label}
         </Button>
         {action.disabledReason && action.kind !== 'busy' && <Hint>{action.disabledReason}</Hint>}
-        {(canStop(session) || canRetryFailed(session)) && (
-          <div className={styles.actionsRow}>
-            {canStop(session) && (
-              <Button
-                icon={<Square size={14} aria-hidden="true" />}
-                busy={isBusy('session/stop')}
-                disabled={disabledCommands}
-                onClick={() =>
-                  void run({ kind: 'session/stop', tabId, sessionId }, { errorPrefix: '停止失败' })
-                }
-              >
-                停止并释放音频
-              </Button>
-            )}
-            {session && canRetryFailed(session) && (
-              <Button
-                icon={<RefreshCw size={14} aria-hidden="true" />}
-                busy={isBusy('session/retry-failed')}
-                disabled={disabledCommands}
-                onClick={async () => {
-                  const result = await run(
-                    { kind: 'session/retry-failed', tabId, sessionId },
-                    { errorPrefix: '重试失败' },
-                  );
-                  if (result) notify(`已重新排队 ${result.retried} 条失败的字幕。`, 'success');
-                }}
-              >
-                重试失败的 {session.translation.failed} 条
-              </Button>
-            )}
-          </div>
-        )}
-        {session?.phase === 'stopping' && (
-          <Hint>正在停止：会中止请求、停止配音并释放音频采集，完成后状态才会更新。</Hint>
-        )}
       </div>
-
-      {session && <SessionStatus session={session} />}
-
-      <LanguageGroup settings={settings} session={session} />
-      <OutputGroup settings={settings} availability={availability} />
-      <CaptionGroup settings={settings} />
-      <AudioGroup settings={settings} availability={availability} reloadVoices={voices.reload} />
+      {session?.resources.capture === 'active' && (
+        <p className={styles.captureStatus} role="status">
+          正在采集本标签页音频
+        </p>
+      )}
+      {(session || videoDetails) && (
+        <details className={styles.sessionDetails}>
+          <summary>播放与翻译详情</summary>
+          {videoDetails}
+          {session && <SessionStatus session={session} />}
+          {(canStop(session) || canRetryFailed(session)) && (
+            <div className={styles.actionsRow}>
+              {canStop(session) && (
+                <Button
+                  icon={<Square size={14} aria-hidden="true" />}
+                  busy={isBusy('session/stop')}
+                  disabled={disabledCommands}
+                  onClick={() =>
+                    void run(
+                      { kind: 'session/stop', tabId, sessionId },
+                      { errorPrefix: '停止失败' },
+                    )
+                  }
+                >
+                  停止并释放音频
+                </Button>
+              )}
+              {session && canRetryFailed(session) && (
+                <Button
+                  icon={<RefreshCw size={14} aria-hidden="true" />}
+                  busy={isBusy('session/retry-failed')}
+                  disabled={disabledCommands}
+                  onClick={async () => {
+                    const result = await run(
+                      { kind: 'session/retry-failed', tabId, sessionId },
+                      { errorPrefix: '重试失败' },
+                    );
+                    if (result) notify(`已重新排队 ${result.retried} 条失败的字幕。`, 'success');
+                  }}
+                >
+                  重试失败的 {session.translation.failed} 条
+                </Button>
+              )}
+            </div>
+          )}
+          {session?.phase === 'stopping' && (
+            <Hint>正在停止：会中止请求、停止配音并释放音频采集，完成后状态才会更新。</Hint>
+          )}
+        </details>
+      )}
     </div>
   );
 }
@@ -304,7 +333,7 @@ function LanguageGroup({
   }, [settings.targetLanguage]);
 
   return (
-    <Group title="语言">
+    <Group title="LANGUAGE / 语言">
       <div className={styles.languages}>
         <SelectField
           label="视频语言"
@@ -322,9 +351,16 @@ function LanguageGroup({
           onChange={(targetLanguage) => void update({ targetLanguage })}
         />
       </div>
-      <Hint>
-        你的选择：{sourceInfo.selected} · 实际：{sourceInfo.actual}
-      </Hint>
+      <div
+        className={styles.detectedLanguage}
+        title={`你的选择：${sourceInfo.selected} · 实际：${sourceInfo.actual}`}
+      >
+        {session?.detectedSourceLanguage
+          ? `已识别为${languageLabel(session.detectedSourceLanguage)}`
+          : session?.sourceTrack
+            ? `字幕语言：${languageLabel(session.sourceTrack.languageCode)}`
+            : '等待识别视频语言'}
+      </div>
       {session && session.targetLanguage !== settings.targetLanguage && (
         <Hint>目标语言已修改，当前会话仍在使用旧语言，worker 切换完成后会更新。</Hint>
       )}
@@ -343,7 +379,7 @@ function OutputGroup({
   const voiceEnabled = settings.outputMode === 'subtitle-voice';
 
   return (
-    <Group title="翻译方式">
+    <Group title="翻译方式" className={styles.outputGroup}>
       <Segmented
         label="输出方式"
         value={settings.outputMode}
@@ -368,7 +404,6 @@ function OutputGroup({
         value={settings.style}
         options={STYLE_OPTIONS}
         onChange={(style) => void update({ style })}
-        hint="风格只影响译文的表达方式，不能提高原文字幕或语音识别的准确率。"
       />
     </Group>
   );
@@ -376,7 +411,7 @@ function OutputGroup({
 
 function formatOffset(ms: number): string {
   const s = ms / 1000;
-  return `${s > 0 ? '+' : ''}${s.toFixed(1)} 秒`;
+  return `${s > 0 ? '+' : ''}${s.toFixed(1)} s`;
 }
 
 function CaptionGroup({ settings }: { settings: AppSettings }) {
@@ -385,24 +420,21 @@ function CaptionGroup({ settings }: { settings: AppSettings }) {
   const [fontSize, setFontSize] = useDraftValue(captions.fontSizePx, (fontSizePx) =>
     update({ captions: { fontSizePx } }),
   );
-  const [opacity, setOpacity] = useDraftValue(captions.backgroundOpacity, (backgroundOpacity) =>
-    update({ captions: { backgroundOpacity } }),
-  );
   const [offset, setOffset] = useDraftValue(captions.offsetMs, (offsetMs) =>
     update({ captions: { offsetMs } }),
   );
 
   return (
-    <Group title="字幕显示">
+    <Group title="CAPTIONS / 字幕">
       <SwitchRow
-        label="在视频上显示翻译字幕"
-        checked={captions.enabled}
-        onChange={(enabled) => void update({ captions: { enabled } })}
-      />
-      <SwitchRow
-        label="双语字幕（译文 + 原文）"
+        label="显示双语字幕"
         checked={captions.bilingual}
         onChange={(bilingual) => void update({ captions: { bilingual } })}
+      />
+      <SwitchRow
+        label="显示翻译字幕"
+        checked={captions.enabled}
+        onChange={(enabled) => void update({ captions: { enabled } })}
       />
       <SelectField
         inline
@@ -411,27 +443,18 @@ function CaptionGroup({ settings }: { settings: AppSettings }) {
         onChange={(position) => void update({ captions: { position } })}
         options={[
           { value: 'bottom', label: '画面底部' },
-          { value: 'middle', label: '画面中间' },
+          { value: 'middle', label: '画面居中' },
           { value: 'top', label: '画面上方' },
         ]}
       />
       <RangeField
-        label="字号"
+        label="字幕大小"
         min={12}
         max={48}
         step={1}
         value={fontSize}
         onChange={setFontSize}
         format={(v) => `${v} px`}
-      />
-      <RangeField
-        label="背景不透明度"
-        min={0}
-        max={1}
-        step={0.05}
-        value={opacity}
-        onChange={setOpacity}
-        format={percent}
       />
       <RangeField
         label="字幕时间微调"
@@ -441,7 +464,6 @@ function CaptionGroup({ settings }: { settings: AppSettings }) {
         value={offset}
         onChange={setOffset}
         format={formatOffset}
-        hint="正数表示字幕延后显示。"
       />
     </Group>
   );
@@ -451,15 +473,14 @@ function AudioGroup({
   settings,
   availability,
   reloadVoices,
+  dubbingActive,
 }: {
   settings: AppSettings;
   availability: VoiceAvailability;
   reloadVoices(): void;
+  dubbingActive: boolean;
 }) {
-  const client = useUiClient();
-  const notify = useToast();
   const update = useSettingsUpdater();
-  const { run, isBusy } = useCommandRunner();
   const audio = settings.audio;
   const voiceEnabled = settings.outputMode === 'subtitle-voice';
 
@@ -474,34 +495,9 @@ function AudioGroup({
     update({ audio: { duckLevel: v } }),
   );
 
-  const voiceOptions = useMemo(() => {
-    const options = [{ value: '', label: '自动（按目标语言选择可用声音）' }];
-    for (const voice of availability.voices) {
-      options.push({
-        value: voice.voiceName,
-        label: voice.lang ? `${voice.voiceName}（${voice.lang}）` : voice.voiceName,
-      });
-    }
-    if (audio.voiceName && !availability.voices.some((v) => v.voiceName === audio.voiceName)) {
-      options.push({
-        value: audio.voiceName,
-        label: `${audio.voiceName}（不适用于当前语言或已不可用）`,
-      });
-    }
-    return options;
-  }, [availability.voices, audio.voiceName]);
-
-  const preview = async () => {
-    const result = await run(
-      { kind: 'tts/preview', voiceName: audio.voiceName || undefined, rate: audio.rate },
-      { key: 'preview', errorPrefix: '试听失败' },
-    );
-    if (result && client.mode === 'demo') notify('演示模式不会播放声音。', 'info');
-  };
-
   return (
     <Group
-      title="声音"
+      title="AUDIO / 声音"
       aside={
         voiceEnabled && settings.tts.backend === 'system' ? (
           <Button
@@ -512,19 +508,33 @@ function AudioGroup({
           >
             刷新声音
           </Button>
-        ) : undefined
+        ) : (
+          <span className={styles.audioTag}>{voiceEnabled ? '配音播放' : '原声播放'}</span>
+        )
       }
     >
-      <RangeField
-        label="原声音量"
-        min={0}
-        max={1}
-        step={0.05}
-        value={originalVolume}
-        onChange={setOriginalVolume}
-        format={percent}
-        hint="仅在配音或语音识别时由同听调整；纯字幕模式不改变原声。"
-      />
+      {voiceEnabled && (
+        <Segmented
+          label="原声处理"
+          value={audio.originalMode}
+          options={[
+            { value: 'mute', label: '全程静音' },
+            { value: 'mix', label: '保留原声' },
+          ]}
+          onChange={(originalMode) => void update({ audio: { originalMode } })}
+        />
+      )}
+      {(!voiceEnabled || audio.originalMode === 'mix') && (
+        <RangeField
+          label="原声音量"
+          min={0}
+          max={1}
+          step={0.05}
+          value={originalVolume}
+          onChange={setOriginalVolume}
+          format={percent}
+        />
+      )}
       {voiceEnabled ? (
         <>
           <RangeField
@@ -537,17 +547,11 @@ function AudioGroup({
             format={percent}
           />
           {settings.tts.backend === 'system' ? (
-            <SelectField
-              label="配音声音"
-              value={audio.voiceName}
-              options={voiceOptions}
-              disabled={availability.state === 'unavailable'}
-              onChange={(voiceName) => void update({ audio: { voiceName } })}
-              hint={
-                availability.state === 'available'
-                  ? `系统提供 ${availability.voices.length} 个适用于当前目标语言的声音。`
-                  : availability.reason
-              }
+            <SystemVoicePicker
+              settings={settings}
+              availability={availability}
+              dubbingActive={dubbingActive}
+              rate={rate}
             />
           ) : (
             <Hint>
@@ -565,12 +569,7 @@ function AudioGroup({
             onChange={setRate}
             format={(v) => `${v.toFixed(2)}×`}
           />
-          <SwitchRow
-            label="配音时降低原声"
-            checked={audio.duckOriginal}
-            onChange={(duckOriginal) => void update({ audio: { duckOriginal } })}
-          />
-          {audio.duckOriginal && (
+          {audio.originalMode === 'mix' && audio.duckOriginal && (
             <RangeField
               label="配音时原声降至"
               min={0}
@@ -581,28 +580,22 @@ function AudioGroup({
               format={percent}
             />
           )}
-          <div className={styles.actionsRow}>
-            <Button
-              icon={<Volume2 size={14} aria-hidden="true" />}
-              busy={isBusy('preview')}
-              disabled={availability.state === 'unavailable'}
-              onClick={() => void preview()}
-            >
-              试听
-            </Button>
-            <Button
-              icon={<Square size={13} aria-hidden="true" />}
-              onClick={() =>
-                void run({ kind: 'tts/stop-preview' }, { errorPrefix: '停止试听失败' })
-              }
-            >
-              停止试听
-            </Button>
-          </div>
         </>
-      ) : (
-        <Hint>选择「字幕 + 配音」后可设置配音声音、音量与语速。</Hint>
+      ) : null}
+      {voiceEnabled && audio.originalMode === 'mix' && (
+        <SwitchRow
+          label="配音时自动降低原声"
+          checked={audio.duckOriginal}
+          onChange={(duckOriginal) => void update({ audio: { duckOriginal } })}
+        />
       )}
+      <Hint>
+        {voiceEnabled
+          ? audio.originalMode === 'mute'
+            ? '同声传译期间全程静音原声，配音停顿时也不恢复；暂停或停止翻译后恢复。不影响语音识别。'
+            : '原声音量只影响收听，不影响语音识别。'
+          : '开启配音后，可选择声音并调整音量。'}
+      </Hint>
     </Group>
   );
 }

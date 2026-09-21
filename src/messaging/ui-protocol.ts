@@ -16,6 +16,7 @@ import {
 import { CueSchema } from '../domain/cue';
 import { PageInfoSchema, SessionSnapshotSchema } from '../domain/session';
 import { SettingsPatchSchema, SettingsSchema } from '../domain/settings';
+import { SearchInputSchema, type SearchRecord } from '../domain/search';
 
 export const UI_PROTOCOL_VERSION = 1;
 
@@ -54,6 +55,14 @@ export const ConnectionReportSchema = z.object({
 export type ConnectionReport = z.infer<typeof ConnectionReportSchema>;
 
 export const UiCommandSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('search/generate'),
+    operationId: RequestId,
+    query: SearchInputSchema,
+  }),
+  z.object({ kind: z.literal('search/cancel'), operationId: RequestId }),
+  z.object({ kind: z.literal('search/history') }),
+  z.object({ kind: z.literal('search/clear-history') }),
   z.object({ kind: z.literal('session/start'), tabId: TabId }),
   /**
    * 以下会话命令可带 sessionId：若与该标签页当前会话不一致，worker 返回 stale-session 错误并附最新快照，
@@ -125,6 +134,8 @@ export const CredentialStateSchema = z.object({
   /** 凭证代数：每次保存或删除递增（API Key 与本地识别令牌共用），用于判断检查结果是否过期。 */
   generation: z.number().int().nonnegative(),
   storage: z.enum(['none', 'session', 'local']),
+  /** 存储副本清理未完成；即使 configured=false 也应保留重试清理入口。 */
+  cleanupPending: z.boolean().optional(),
   /** 仅末 4 位，例如「••••abcd」。 */
   masked: z.string().max(20).optional(),
 });
@@ -186,6 +197,10 @@ export type BackgroundToUi = z.infer<typeof BackgroundToUiSchema>;
 
 /** 各命令成功时的返回数据类型。 */
 export interface UiCommandResultMap {
+  'search/generate': { record: SearchRecord; persisted: boolean };
+  'search/cancel': { cancelled: true };
+  'search/history': { records: SearchRecord[] };
+  'search/clear-history': { cleared: true };
   'session/start': { accepted: true };
   'session/pause': { accepted: true };
   'session/resume': { accepted: true };

@@ -3,6 +3,8 @@
  * 不连接 service worker、不发送 UiCommand、不访问网络。
  */
 import { AppError } from '../../domain/errors';
+import type { SearchRecord } from '../../domain/search';
+import { demoSearchSuggestions } from './search-data';
 import { applySettingsPatch, defaultSettings } from '../../domain/settings';
 import type { UiCommand } from '../../messaging/ui-protocol';
 import type { FavoriteRecord } from '../../storage/db';
@@ -30,6 +32,7 @@ function demoUnavailable(): AppError {
 }
 
 export class DemoClient implements UiClient {
+  private searchRecords: SearchRecord[] = [];
   readonly mode = 'demo' as const;
   private version = 1;
   private state: ClientState;
@@ -99,6 +102,27 @@ export class DemoClient implements UiClient {
     const snapshot = this.state.snapshot!;
     const session = snapshot.sessions[0];
     switch (command.kind) {
+      case 'search/generate': {
+        const record: SearchRecord = {
+          id: `demo-search-${Date.now()}`,
+          query: command.query,
+          items: demoSearchSuggestions.map((item) => ({ ...item })),
+          model: 'gpt-5.6-luna',
+          createdAt: Date.now(),
+        };
+        this.searchRecords = [
+          record,
+          ...this.searchRecords.filter((item) => item.query !== record.query),
+        ].slice(0, 20);
+        return { record, persisted: true };
+      }
+      case 'search/history':
+        return { records: this.searchRecords };
+      case 'search/cancel':
+        return { cancelled: true };
+      case 'search/clear-history':
+        this.searchRecords = [];
+        return { cleared: true };
       case 'session/start':
       case 'session/resume':
         if (session)

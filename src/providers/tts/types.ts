@@ -68,8 +68,8 @@ export interface DubbingStats {
 
 export interface DubbingController {
   setConfig(config: DubbingConfig): void;
-  /** 只接受 final 且翻译 done 的 cue；同一 cue id+revision 只朗读一次。 */
-  upsertCues(cues: readonly Cue[]): void;
+  /** 只接受 final 且翻译 done 的 cue。live 仅用于本代新到达的实时结果，历史重灌不可设置。 */
+  upsertCues(cues: readonly Cue[], options?: { live?: boolean }): void;
   /** 播放器状态：暂停/跳转/倍速/广告/结束。 */
   onPlayer(state: PlayerState, reason: string): void;
   /** 使旧播放代失效：立刻停播并清空队列，旧回调不得发声。 */

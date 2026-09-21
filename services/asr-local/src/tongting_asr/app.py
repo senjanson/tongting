@@ -26,6 +26,7 @@ from .model_manager import ModelManager
 from .security import SecurityMiddleware, TokenVerifier
 from .transcriber import TranscriptionResult
 from .wav import WAV_MIME_TYPES, PcmAudio, parse_wav
+from .youtube import YoutubePreloader, parse_window, unavailable
 
 logger = get_logger("http")
 
@@ -55,7 +56,8 @@ def parse_language(values: list[str]) -> str | None:
 
 
 def _too_large(max_bytes: int) -> ApiError:
-    return ApiError(413, "payload_too_large", f"请求体超过上限 {max_bytes // (1024 * 1024)} MB。", headers=_CLOSE)
+    limit = f"{max_bytes // (1024 * 1024)} MB" if max_bytes >= 1024 * 1024 else f"{max_bytes} 字节"
+    return ApiError(413, "payload_too_large", f"请求体超过上限 {limit}。", headers=_CLOSE)
 
 
 async def read_body_limited(request: Request, max_bytes: int, timeout_s: float) -> bytes:
@@ -147,6 +149,7 @@ def create_app(
 ) -> FastAPI:
     gate = InferenceGate(config.queue_size)
     shutdown = ShutdownState()
+    youtube = YoutubePreloader(enabled=config.youtube_preload)
     throttle = log_throttle or LogThrottle(get_logger("security"))
 
     def begin_shutdown() -> None:
@@ -155,6 +158,7 @@ def create_app(
             return
         shutdown.deadline = time.monotonic() + config.shutdown_grace_s
         shutdown.event.set()
+        youtube.close()
         gate.close()
         manager.begin_shutdown(shutdown.deadline)
         running = manager.active_inferences
@@ -187,6 +191,7 @@ def create_app(
     app.state.begin_shutdown = begin_shutdown
     app.state.log_throttle = throttle
     app.state.service_config = config
+    app.state.youtube = youtube
 
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError) -> JSONResponse:
@@ -219,6 +224,7 @@ def create_app(
                 "device": snapshot.device,
                 "computeType": snapshot.compute_type,
                 "version": __version__,
+                "youtubePreload": youtube.available,
             }
         )
 
@@ -231,6 +237,50 @@ def create_app(
 
     def stopping_error() -> ApiError:
         return ApiError(503, "model_unavailable", "服务正在停止，不再接受新的识别请求。", headers=_CLOSE)
+
+    @app.post("/v1/youtube/transcribe")
+    async def transcribe_youtube(request: Request) -> Response:
+        if shutdown.stopping:
+            raise stopping_error()
+        if not youtube.available:
+            raise unavailable()
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            raise ApiError(415, "unsupported_media_type", "Content-Type 必须是 application/json。")
+        try:
+            body = await read_body_limited(request, 4096, config.body_timeout_s)
+        except ClientGone as exc:
+            return client_closed(exc.stage)
+        window = parse_window(body)
+        language = parse_language([window.language])
+        transcriber = manager.require_ready()
+        if language is not None and language not in transcriber.supported_languages:
+            raise ApiError(400, "unsupported_language", "当前模型不支持该语言代码。")
+        try:
+            # Fetching and inference share the same bounded queue. Rapid seeks cannot
+            # launch unlimited downloaders, and live capture never races a second model call.
+            async with gate.slot(request.is_disconnected):
+                if await request.is_disconnected():
+                    raise ClientDisconnected()
+                audio = await _await_prefetch(youtube.fetch(window), request, shutdown)
+                if await request.is_disconnected():
+                    raise ClientDisconnected()
+                if shutdown.stopping:
+                    raise GateClosed()
+                started = time.perf_counter()
+                result = await _await_inference(manager, audio.to_float32(), language, shutdown)
+                if result is None:
+                    raise stopping_error()
+                processing_ms = round((time.perf_counter() - started) * 1000)
+                gate.record_processing_ms(processing_ms)
+        except BusyError as exc:
+            raise ApiError(429, "busy", "识别服务繁忙，请稍后重试。", headers={"Retry-After": str(exc.retry_after_s)}) from None
+        except GateClosed:
+            raise stopping_error() from None
+        except ClientDisconnected:
+            return client_closed("queue")
+        payload = transcription_payload(result, audio, processing_ms)
+        payload["startMs"] = window.start_ms
+        return JSONResponse(payload)
 
     @app.post("/v1/transcribe")
     async def transcribe(request: Request) -> Response:
@@ -300,6 +350,39 @@ def create_app(
         log_throttle=throttle,
     )
     return app
+
+
+async def _await_prefetch(fetch, request: Request, shutdown: ShutdownState) -> PcmAudio:
+    """Abort network/decoder processes promptly on disconnect, shutdown or route cancellation."""
+    monitoring = True
+
+    async def disconnected() -> None:
+        # Starlette's nonblocking receive uses an AnyIO cancellation scope. An
+        # external cancellation arriving inside that scope can be consumed there;
+        # an explicit stop condition keeps successful fetches from waiting forever.
+        while monitoring and not await request.is_disconnected():
+            if not monitoring:
+                return
+            await asyncio.sleep(0.1)
+
+    work = asyncio.create_task(fetch)
+    closed = asyncio.create_task(disconnected())
+    stopped = asyncio.create_task(shutdown.event.wait())
+    tasks = {work, closed, stopped}
+    try:
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        if stopped in done:
+            raise GateClosed()
+        if closed in done:
+            raise ClientDisconnected()
+        return work.result()
+    finally:
+        monitoring = False
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        # Wait for child termination and pipe cleanup before releasing the inference slot.
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _await_inference(

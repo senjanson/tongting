@@ -158,7 +158,17 @@ export function sessionPhaseStatus(session: SessionSnapshot): StatusInfo | undef
     case 'starting':
       return problem ? { label: '启动受阻', tone: 'danger' } : { label: '启动中', tone: 'busy' };
     case 'running':
-      return problem ? { label: '翻译受阻', tone: 'danger' } : { label: '运行中', tone: 'accent' };
+      if (problem) return { label: '翻译受阻', tone: 'danger' };
+      switch (session.playbackBuffer?.state) {
+        case 'preparing':
+          return { label: '缓冲中', tone: 'busy' };
+        case 'blocked':
+          return { label: '缓冲受阻', tone: 'warning' };
+        case 'unavailable':
+          return { label: '无法预读', tone: 'warning' };
+        default:
+          return { label: '运行中', tone: 'accent' };
+      }
     case 'pausing':
       return { label: '正在暂停', tone: 'busy' };
     case 'paused':
@@ -360,6 +370,8 @@ export function sourceModeShortLabel(mode: SessionSnapshot['sourceMode'] | undef
       return '增量字幕';
     case 'asr':
       return '语音识别';
+    case 'asr-preload':
+      return '音频预读';
     case 'none':
       return '暂无来源';
     default:

@@ -28,7 +28,7 @@ export function GlossarySection({ glossary }: { glossary: readonly GlossaryEntry
     setShowErrors(true);
     if (!validation.ok) return;
     if (await update({ glossary: validation.entries })) {
-      setDraft(null);
+      setDraft((current) => (current === draft ? null : current));
       setShowErrors(false);
     }
   };

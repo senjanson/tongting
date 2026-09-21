@@ -17,8 +17,12 @@ import type {
   SessionPhase,
   SessionSnapshot,
   SourceMode,
+  PlaybackBuffer,
 } from '../domain/session';
-import type { Settings } from '../domain/settings';
+import { createAudioPreloader, type AudioPreloader } from '../translation/audio-preloader';
+import { translatedUntil } from '../translation/playback-buffer';
+import type { YoutubePreloadResult } from '../providers/asr/youtube-preload';
+import { translationFingerprint, type Settings } from '../domain/settings';
 import type { AsrCueAssembler, IncrementalCaptionAssembler } from '../captions/types';
 import type { DisplayCue } from '../messaging/content-protocol';
 import type { z } from 'zod';
@@ -37,6 +41,11 @@ import type {
 } from '../translation/types';
 import type { CoordinatorDeps } from './deps';
 import type { PageState } from './pages';
+import { mergeTranscriptRecord, type TranscriptWriter } from '../storage/transcripts';
+export { mergeTranscriptCues } from '../storage/transcripts';
+
+// 简单内存仓库（测试/嵌入）也按仓库串行保存，避免停会话超时导致写入逆序。
+const fallbackWrites = new WeakMap<object, Promise<void>>();
 
 type TrackData = z.infer<typeof ContentCaptionTrackDataSchema>;
 type VisibleCaption = z.infer<typeof ContentVisibleCaptionSchema>;
@@ -70,9 +79,6 @@ export const DEFAULT_SESSION_TIMINGS: SessionTimings = {
 };
 
 const CONTENT_PATCH_DELAY_MS = 80;
-/** 运行中接受页面主动推送轨道切换的上限与最小间隔。 */
-const MAX_UNSOLICITED_TRACK_SWITCHES = 3;
-const MIN_UNSOLICITED_SWITCH_INTERVAL_MS = 5_000;
 const SEEK_JUMP_THRESHOLD_MS = 2_500;
 const NOTICE_MAX = 300;
 
@@ -128,6 +134,7 @@ export interface SessionHost {
   persistRecords(): void;
   /** 识别路由指纹（后端、地址、模型、凭证代数），变化时需重新获取捕获。 */
   asrRouteKey(): string;
+  cancelVoicePreview?(): void;
 }
 
 export interface StartControl {
@@ -167,6 +174,8 @@ export class TranslationSession {
   private readonly cues = new Map<string, Cue>();
   private sortedCache: Cue[] | null = null;
   private scheduler?: TranslationScheduler;
+  private preloader?: AudioPreloader;
+  private bufferTimer?: ReturnType<typeof setInterval>;
   private dubbing?: DubbingController;
   private dubbingUnsub?: () => void;
   private schedulerUnsub?: () => void;
@@ -190,14 +199,17 @@ export class TranslationSession {
   private discontinuityId = 0;
   private duckActive = false;
   private duckSeq = 0;
-  private unsolicitedSwitches = 0;
-  private lastUnsolicitedSwitchAt = -Infinity;
+  private originalVolumeKey?: string;
+  private dubbingSpeaking = false;
   private endedPaused = false;
   private contentPatch = new Map<string, DisplayCue>();
   private contentPatchTimer?: ReturnType<typeof setTimeout>;
   private transcriptTimer?: ReturnType<typeof setTimeout>;
   private transcriptWrite: Promise<void> = Promise.resolve();
   private recordId: string;
+  private readonly transcriptWriter?: TranscriptWriter;
+  private transcriptFingerprint: string;
+  private pageMetadata: { title?: string; channel?: string; durationMs?: number } = {};
   private asrBacklogNotified = false;
   private stopping = false;
   /** 当前可中止的启动/恢复/刷新操作。 */
@@ -239,6 +251,9 @@ export class TranslationSession {
     this.startedAt = host.deps.now();
     this.updatedAt = this.startedAt;
     this.recordId = transcriptRecordId(init.videoId, this.targetLanguage, this.sourceKey);
+    this.transcriptWriter = host.deps.transcripts.createWriter?.();
+    this.transcriptFingerprint = translationFingerprint(settings);
+    this.refreshPageMetadata();
   }
 
   get isStopped(): boolean {
@@ -338,6 +353,15 @@ export class TranslationSession {
       this.applyTranslationUpdates(updates),
     );
     if (settings.outputMode === 'subtitle-voice') this.setupDubbing(settings);
+    if (settings.playbackMode === 'buffered') {
+      // Publish a hold immediately; failed setup must never masquerade as ready.
+      this.bufferTimer = setInterval(() => {
+        if (this.isStopping) return;
+        this.pushSessionState();
+        this.host.publish();
+      }, 1_000);
+      this.pushSessionState();
+    }
 
     const page = this.host.page(this.identity.tabId);
     if (!page) throw cancelledError('page gone');
@@ -350,6 +374,28 @@ export class TranslationSession {
       sourceReady = await this.tryCaptionSource(settings, check, signal);
     }
     check();
+    if (settings.playbackMode === 'buffered' && this.sourceMode === 'incremental-captions') {
+      await page.conn
+        .request(
+          { kind: 'captions/observe-visible', videoId: this.identity.videoId, enable: false },
+          3_000,
+          this.navigationId,
+        )
+        .catch(() => undefined);
+      check();
+      this.incremental = undefined;
+      if (this.notice?.code === 'incremental-captions') this.notice = undefined;
+      sourceReady = false;
+      if (settings.sourceStrategy === 'captions-only' || settings.asr.backend === 'none') {
+        throw new AppError({
+          code: 'buffered-captions-incomplete',
+          category: 'config',
+          retryable: false,
+          message:
+            '无法读取完整字幕轨道，当前只能读取部分字幕。请在设置中将播放模式切换为「连续播放」，即可使用增量字幕翻译；如需「同步优先」，请将字幕来源改为「缺失时识别语音」，并配置支持音频预读的本地识别服务。',
+        });
+      }
+    }
     if (!sourceReady) {
       // 等待上限内页面仍未确认字幕可用性：不能断言「视频没有字幕」，也不在无识别服务时误报。
       const captionsOnly = settings.sourceStrategy === 'captions-only';
@@ -376,11 +422,18 @@ export class TranslationSession {
             '此视频没有可读取的字幕。可在设置中把字幕来源改为「缺失时识别语音」并配置语音识别服务。',
         });
       }
-      await this.startAsrSource(settings, check, signal, control.recovery?.leaseId);
+      if (settings.playbackMode === 'buffered')
+        await this.startPreloadedAsr(settings, check, signal);
+      else await this.startAsrSource(settings, check, signal, control.recovery?.leaseId);
     }
     check();
     this.opAbort = undefined;
     this.phase = 'running';
+    const initialPlayer = this.lastPlayer ?? this.host.page(this.identity.tabId)?.player;
+    if (initialPlayer) this.feedPlayer(initialPlayer, 'tick');
+    this.updatePreloader();
+    this.refeedDubbing();
+    this.setDuck(false);
     this.touch();
   }
 
@@ -459,7 +512,7 @@ export class TranslationSession {
       targetLanguage: settings.targetLanguage,
       style: settings.style,
       glossary: settings.glossary,
-      prefetch: settings.prefetch,
+      prefetch: settings.playbackMode === 'buffered' || settings.prefetch,
       useCache: settings.cacheTranslations,
       timeoutMs: settings.provider.timeoutMs,
     };
@@ -599,7 +652,43 @@ export class TranslationSession {
       idPrefix: `${this.identity.videoId}:asr:${this.identity.sessionId}`,
       targetLanguage: this.targetLanguage,
     });
-    this.scheduler?.setCues([], this.schedulerIdentity());
+    const saved = await this.abortable(
+      signal,
+      withTimeout(
+        deps.transcripts.getTranscript(this.recordId),
+        this.timings.stopStepTimeoutMs,
+        'transcript-restore',
+      ).catch(() => undefined),
+    );
+    check();
+    if (
+      saved?.lastSessionId === this.identity.sessionId &&
+      saved.recordId === this.recordId &&
+      saved.videoId === this.identity.videoId &&
+      saved.sourceKey === this.sourceKey &&
+      saved.sourceMode === 'asr' &&
+      saved.targetLanguage === this.targetLanguage
+    ) {
+      for (const cue of saved.cues) {
+        const compatible = saved.translationFingerprint === this.transcriptFingerprint;
+        this.cues.set(
+          cue.id,
+          this.markSameLanguage({
+            ...cue,
+            translatedText: compatible ? cue.translatedText : undefined,
+            translationKey: compatible ? cue.translationKey : undefined,
+            translationError: compatible ? cue.translationError : undefined,
+            translationState:
+              compatible && cue.translationState !== 'running' ? cue.translationState : 'pending',
+          }),
+        );
+      }
+      this.sortedCache = null;
+      this.cueVersion++;
+      this.detectedSourceLanguage = saved.sourceLanguage;
+      this.pushFullCues();
+    }
+    this.scheduler?.setCues(this.sortedCues(), this.schedulerIdentity());
 
     if (recoveryLeaseId) {
       const status = await this.abortable(
@@ -614,6 +703,7 @@ export class TranslationSession {
         this.capture = { leaseId: recoveryLeaseId, state: 'active' };
         this.resources.capture = 'active';
         this.captureRouteKey = this.host.asrRouteKey();
+        this.setDuck(false);
         await this.abortable(
           signal,
           deps.offscreen.request({
@@ -637,6 +727,142 @@ export class TranslationSession {
     }
 
     await this.acquireCapture(settings, route, check, signal);
+  }
+
+  private async startPreloadedAsr(
+    settings: Settings,
+    check: () => void,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const route = await this.resolveAsrRoute(settings, check, signal);
+    check();
+    const load = this.host.deps.preloadYoutubeAudio;
+    if (route.backend !== 'local' || !load)
+      throw new AppError({
+        code: 'preload-local-required',
+        category: 'config',
+        retryable: false,
+        message: '无完整字幕时，同步优先需要启用音频预读的本地识别服务。也可切换为「连续播放」。',
+      });
+    // 截断轨道可能已有字幕/译文；在异步路由检查结束后冻结旧来源，再切换到预读记录。
+    this.queueTranscriptWrite();
+    this.sourceMode = 'asr-preload';
+    this.sourceTrack = undefined;
+    this.sourceKey = `preload:${this.identity.sessionId}`;
+    this.recordId = transcriptRecordId(this.identity.videoId, this.targetLanguage, this.sourceKey);
+    this.captureRouteKey = this.host.asrRouteKey();
+    this.notice = undefined;
+    this.resources.asr = 'loading';
+    if (this.cues.size > 0) {
+      this.cues.clear();
+      this.sortedCache = null;
+      this.cueVersion++;
+      this.pushFullCues();
+      this.dubbing?.invalidate(this.identity.epoch);
+    }
+    this.scheduler?.setCues([], this.schedulerIdentity());
+    this.preloader = createAudioPreloader({
+      load: (startMs, durationMs, requestSignal) =>
+        load({
+          baseUrl: route.baseUrl,
+          token: route.token,
+          videoId: this.identity.videoId,
+          startMs,
+          durationMs,
+          language: settings.sourceLanguage,
+          signal: requestSignal,
+        }),
+      onResult: (result) => this.applyPreloadedAudio(result),
+      onChange: () => {
+        if (this.isStopping) return;
+        this.resources.asr = this.preloader?.error() ? 'error' : 'running';
+        this.touch();
+      },
+    });
+  }
+
+  private applyPreloadedAudio(result: YoutubePreloadResult): void {
+    if (this.isStopping || this.phase !== 'running') return;
+    this.detectedSourceLanguage = result.language ?? this.detectedSourceLanguage;
+    const cues: Cue[] = result.segments.flatMap((segment, index) => {
+      const sourceText = segment.text.trim();
+      if (!sourceText) return [];
+      const startMs = Math.round(result.startMs + segment.startMs);
+      const endMs = Math.round(result.startMs + Math.min(segment.endMs, result.durationMs));
+      if (endMs <= startMs || endMs > MAX_MEDIA_TIME_MS) return [];
+      return [
+        this.markSameLanguage({
+          id: `preload:${this.identity.sessionId}:${result.startMs}:${index}`,
+          revision: 0,
+          startMs,
+          endMs,
+          sourceText,
+          sourceLanguage: result.language ?? 'und',
+          targetLanguage: this.targetLanguage,
+          source: 'asr',
+          stability: 'final',
+          translationState: 'pending',
+        }),
+      ];
+    });
+    this.upsertCues(cues, []);
+  }
+
+  private updatePreloader(seek = false): void {
+    if (!this.preloader || this.phase !== 'running' || this.isStopping) return;
+    const player = this.lastPlayer ?? this.host.page(this.identity.tabId)?.player;
+    if (!player || player.ad || player.seeking || player.ended) {
+      this.preloader.pause();
+      return;
+    }
+    this.preloader.update(
+      player.currentTimeMs,
+      player.durationMs ?? this.pageMetadata.durationMs ?? 0,
+      seek,
+    );
+    this.preloader.resume();
+  }
+
+  private bufferState(): { snapshot: PlaybackBuffer; readyUntilMs: number } | undefined {
+    const settings = this.host.settings();
+    if (settings.playbackMode !== 'buffered') return undefined;
+    const player = this.lastPlayer ?? this.host.page(this.identity.tabId)?.player;
+    const position = player?.currentTimeMs ?? 0;
+    const targetMs = settings.bufferSeconds * 1_000;
+    const duration =
+      player?.durationMs ?? this.pageMetadata.durationMs ?? this.sortedCues().at(-1)?.endMs ?? 0;
+    const supported = this.sourceMode === 'full-track' || this.sourceMode === 'asr-preload';
+    const ranges =
+      this.sourceMode === 'full-track'
+        ? [{ startMs: 0, endMs: duration }]
+        : (this.preloader?.ranges() ?? []);
+    const readyUntilMs = translatedUntil(position, ranges, this.sortedCues());
+    const readyAheadMs = Math.max(0, readyUntilMs - position);
+    const failure = this.preloader?.error() ?? this.error ?? this.scheduler?.stats().blockedError;
+    const failedCue = this.sortedCues().some(
+      (c) =>
+        c.endMs > position && c.startMs < position + targetMs && c.translationState === 'failed',
+    );
+    let state: PlaybackBuffer['state'] = 'preparing';
+    let message = '正在准备翻译，缓冲完成后按视频时间播放。';
+    if (failure || failedCue) {
+      state = 'blocked';
+      message = failure?.message ?? '当前片段翻译失败，请重试失败项或切换连续播放。';
+    } else if (!supported && this.phase !== 'starting') {
+      state = 'unavailable';
+      message = '此来源无法提前读取，请配置音频预读或切换连续播放。';
+    } else if (
+      readyAheadMs >= targetMs ||
+      (player && !player.paused && readyAheadMs > 500) ||
+      (duration > 0 && readyUntilMs >= duration - 100)
+    ) {
+      state = 'ready';
+      message = '翻译已缓冲，播放期间继续准备后续内容。';
+    }
+    return {
+      readyUntilMs,
+      snapshot: { state, readyAheadMs, targetMs, message: clip(message, 300) },
+    };
   }
 
   /** 获取标签页音频捕获并在 offscreen 启动识别；停止/暂停后恢复时也走这里。 */
@@ -691,7 +917,7 @@ export class TranslationSession {
           asr: route,
           language: settings.sourceLanguage,
           segmentMs: settings.asr.segmentMs,
-          originalVolume: settings.audio.originalVolume,
+          originalVolume: this.originalAudioVolume(this.host.settings()),
           anchor: this.currentAnchor(),
         },
         20_000,
@@ -701,13 +927,8 @@ export class TranslationSession {
     this.capture.state = 'active';
     this.resources.capture = 'active';
     this.startLeaseRenewal();
-    // 获取期间用户调整了原声音量：按最新值补发一次。
-    const latest = this.host.settings().audio;
-    if (latest.originalVolume !== settings.audio.originalVolume) {
-      deps.offscreen
-        .request({ kind: 'audio/original-gain', leaseId, gain: latest.originalVolume, rampMs: 100 })
-        .catch(() => undefined);
-    }
+    // 捕获建立期间可能切换收听方式，立即应用最新策略；只调整收听增益，不静音识别输入。
+    this.setDuck(this.dubbingSpeaking);
   }
 
   /** 等待结束后页面仍未确认字幕可用性（播放器数据未就绪），不能断言「视频没有字幕」。 */
@@ -815,6 +1036,7 @@ export class TranslationSession {
   }
 
   private setupDubbing(settings: Settings): void {
+    this.host.cancelVoicePreview?.();
     const { deps } = this.host;
     let engine: TtsEngine | undefined;
     if (settings.tts.backend === 'system') engine = deps.systemTts;
@@ -844,6 +1066,8 @@ export class TranslationSession {
       };
       return;
     }
+    if (this.notice?.code === 'tts-disabled' || this.notice?.code === 'tts-error')
+      this.notice = undefined;
     this.dubbing = deps.createDubbingController({ engine, now: deps.now });
     this.dubbing.setConfig(this.dubbingConfig(settings));
     this.dubbingUnsub = this.dubbing.onEvent((event) => {
@@ -865,7 +1089,11 @@ export class TranslationSession {
   private dubbingConfig(settings: Settings) {
     const lang = findTargetLanguage(settings.targetLanguage)?.code ?? settings.targetLanguage;
     return {
-      enabled: settings.outputMode === 'subtitle-voice',
+      enabled:
+        settings.outputMode === 'subtitle-voice' &&
+        settings.tts.backend !== 'none' &&
+        this.phase !== 'paused' &&
+        this.phase !== 'pausing',
       lang,
       voiceName: settings.audio.voiceName || undefined,
       rate: settings.audio.rate,
@@ -874,41 +1102,89 @@ export class TranslationSession {
     };
   }
 
-  private setDuck(active: boolean): void {
+  private setDuck(active: boolean, release = false): void {
     const settings = this.host.settings();
-    const want = active && settings.audio.duckOriginal;
-    if (this.capture?.state === 'active') {
-      const gain = settings.audio.originalVolume * (want ? settings.audio.duckLevel : 1);
+    this.dubbingSpeaking = active;
+    release ||=
+      this.isStopping ||
+      this.phase === 'paused' ||
+      this.phase === 'pausing' ||
+      this.endedPaused ||
+      this.outputMode !== 'subtitle-voice' ||
+      !this.dubbing;
+    const originalVolume = release
+      ? settings.audio.originalVolume
+      : this.originalAudioVolume(settings);
+    const want = !release && active && settings.audio.duckOriginal;
+    if (this.capture && this.capture.state !== 'stopping') {
+      const gain = originalVolume * (want ? settings.audio.duckLevel : 1);
       this.host.deps.offscreen
-        .request({ kind: 'audio/original-gain', leaseId: this.capture.leaseId, gain, rampMs: 150 })
+        .request({
+          kind: 'audio/original-gain',
+          leaseId: this.capture.leaseId,
+          gain,
+          rampMs: gain === 0 ? 0 : 150,
+        })
         .catch(() => undefined);
       this.duckActive = want;
       return;
     }
-    if (this.duckActive === want) return;
+    // 捕获前不能把 video.volume 设为 0，否则捕获到的识别输入也是静音。
+    release ||= this.sourceMode === 'asr';
+    const key = release ? 'release' : `${want}|${originalVolume}|${settings.audio.duckLevel}`;
+    if (this.originalVolumeKey === key) return;
+    this.originalVolumeKey = key;
     this.duckActive = want;
     const seq = ++this.duckSeq;
     const page = this.host.page(this.identity.tabId);
-    if (!page || page.documentId !== this.identity.documentId) return;
+    if (
+      !page ||
+      page.documentId !== this.identity.documentId ||
+      page.navigationId !== this.navigationId ||
+      page.videoId !== this.identity.videoId
+    )
+      return;
     page.conn
       .request(
         {
           kind: 'player/duck',
           videoId: this.identity.videoId,
-          active: want,
+          active: !release && want,
           level: settings.audio.duckLevel,
+          originalVolume,
+          release,
         },
         3_000,
         this.navigationId,
       )
       .then((reply) => {
-        // 页面判定用户已手动调整音量（或未能应用）：同步为未降低，之后的朗读会重新请求 ducking（T17）。
-        const r = reply as { applied?: boolean } | undefined;
-        if (seq === this.duckSeq && r?.applied === false) this.duckActive = false;
+        if (
+          seq === this.duckSeq &&
+          (reply as { applied?: boolean } | undefined)?.applied === false
+        ) {
+          this.originalVolumeKey = undefined;
+          this.duckActive = false;
+        }
       })
       .catch(() => {
-        if (seq === this.duckSeq) this.duckActive = false;
+        if (seq === this.duckSeq) {
+          this.originalVolumeKey = undefined;
+          this.duckActive = false;
+        }
       });
+  }
+
+  private originalAudioVolume(settings: Settings): number {
+    const interpreting =
+      !this.isStopping &&
+      this.phase !== 'paused' &&
+      this.phase !== 'pausing' &&
+      !this.endedPaused &&
+      this.outputMode === 'subtitle-voice' &&
+      !!this.dubbing;
+    return interpreting && settings.audio.originalMode === 'mute'
+      ? 0
+      : settings.audio.originalVolume;
   }
 
   // ---------------------------------------------------------------------------
@@ -923,6 +1199,7 @@ export class TranslationSession {
     if (this.phase !== 'running') return;
     this.phase = 'pausing';
     this.scheduler?.pause();
+    this.preloader?.pause();
     this.bumpEpoch();
     this.setDuck(false);
     this.touch();
@@ -959,8 +1236,12 @@ export class TranslationSession {
     this.opAbort = undefined;
     this.needsCaptureRefresh = false;
     this.phase = 'running';
+    if (this.dubbing) this.host.cancelVoicePreview?.();
+    this.dubbing?.setConfig(this.dubbingConfig(this.host.settings()));
+    this.setDuck(false);
     this.error = undefined;
     this.scheduler?.resume();
+    this.updatePreloader();
     if (this.lastPlayer) this.feedPlayer(this.lastPlayer, 'tick');
     this.refeedDubbing();
     this.touch();
@@ -1039,6 +1320,9 @@ export class TranslationSession {
     const { deps } = this.host;
     const prevPhase = this.phase;
     this.phase = 'stopping';
+    if (this.bufferTimer) clearInterval(this.bufferTimer);
+    this.bufferTimer = undefined;
+    this.preloader?.dispose();
     const safe = (label: string, fn: () => void) => {
       try {
         fn();
@@ -1134,21 +1418,12 @@ export class TranslationSession {
     }
     if (this.phase === 'starting') return;
     // 运行中轨道变化（用户在播放器切换了字幕语言等）：旧来源任务失效，切换到新轨道（T34）。
-    if (this.sourceMode === 'asr') return;
+    if (this.sourceMode === 'asr' || this.sourceMode === 'asr-preload') return;
     if (this.sourceTrack?.trackKey === data.track.trackKey && this.sourceMode === 'full-track')
       return;
-    // 页面主动推送的轨道必须属于该视频已上报的轨道列表，并限制切换频率，避免被页面反复触发重新翻译（计费）。
+    // 内容端合并高频切换；worker 仍验证轨道归属，不能用永久次数限制丢掉最终选择。
     const tracks = this.host.page(this.identity.tabId)?.tracks ?? [];
     if (!tracks.some((t) => t.trackKey === data.track.trackKey)) return;
-    const now = this.host.deps.now();
-    if (
-      this.unsolicitedSwitches >= MAX_UNSOLICITED_TRACK_SWITCHES ||
-      now - this.lastUnsolicitedSwitchAt < MIN_UNSOLICITED_SWITCH_INTERVAL_MS
-    ) {
-      return;
-    }
-    this.unsolicitedSwitches++;
-    this.lastUnsolicitedSwitchAt = now;
     if (this.incremental) {
       const page = this.host.page(this.identity.tabId);
       page?.conn
@@ -1166,6 +1441,7 @@ export class TranslationSession {
   }
 
   private async applyTrack(data: TrackData): Promise<void> {
+    this.queueTranscriptWrite();
     const units = this.host.deps.buildCueUnits(data.cues, {
       sourceLanguage: data.track.languageCode || 'und',
       targetLanguage: this.targetLanguage,
@@ -1190,6 +1466,7 @@ export class TranslationSession {
     this.scheduler?.setBackfill(this.backfill);
     if (this.lastPlayer) this.feedPlayer(this.lastPlayer, 'tick');
     this.refeedDubbing();
+    this.scheduleTranscriptSave();
     this.touch();
   }
 
@@ -1309,8 +1586,27 @@ export class TranslationSession {
     if (upserts.length === 0 && removedIds.length === 0) return;
     const changed: Cue[] = [];
     for (const raw of upserts) {
-      const prev = this.cues.get(raw.id);
       let cue = this.markSameLanguage({ ...raw, targetLanguage: this.targetLanguage });
+      // 恢复/跳转会重建 assembler；同一已确认音频区间再次识别时复用历史 ID。
+      if (cue.source === 'asr' && !this.cues.has(cue.id)) {
+        const duplicate = Array.from(this.cues.values()).find(
+          (old) =>
+            old.source === 'asr' &&
+            old.stability === 'final' &&
+            old.sourceText === cue.sourceText &&
+            Math.min(old.endMs, cue.endMs) - Math.max(old.startMs, cue.startMs) >=
+              0.8 * Math.max(old.endMs - old.startMs, cue.endMs - cue.startMs),
+        );
+        if (duplicate)
+          cue = {
+            ...cue,
+            id: duplicate.id,
+            revision: duplicate.revision,
+            startMs: duplicate.startMs,
+            endMs: duplicate.endMs,
+          };
+      }
+      const prev = this.cues.get(cue.id);
       // 同一修订、同一原文（例如增量来源只延长结束时间或由 interim 转为 final）：保留翻译状态与译文，
       // 包括进行中与失败状态，避免界面回退为「待翻译」或重复翻译。
       if (prev && prev.revision === cue.revision && prev.sourceText === cue.sourceText) {
@@ -1340,7 +1636,10 @@ export class TranslationSession {
     // 已有译文的字幕后转为 final（或 final 字幕仅调整时间）时，也交给配音控制器。
     if (this.dubbing && this.phase === 'running' && !this.endedPaused) {
       const ready = changed.filter((c) => c.stability === 'final' && c.translationState === 'done');
-      if (ready.length) this.dubbing.upsertCues(ready);
+      if (ready.length)
+        this.dubbing.upsertCues(ready, {
+          live: this.sourceMode === 'asr' || this.sourceMode === 'incremental-captions',
+        });
     }
     this.scheduleTranscriptSave();
     this.touch();
@@ -1350,11 +1649,16 @@ export class TranslationSession {
     const prev = this.lastPlayer;
     this.lastPlayer = state;
     if (this.isStopping) return;
+    if (reason === 'video-replaced') this.originalVolumeKey = undefined;
     let seek = reason === 'seeked';
     // 时间轴断点只由媒体时间的变化决定；调音量、全屏等事件不切断识别片段。
     let discontinuity = seek || reason === 'seeking' || reason === 'video-replaced';
     if (prev) {
-      if (!seek) {
+      // Native seek events are queued: an earlier pause/volumechange callback can
+      // already sample the destination while `seeking` is true. Let seeked own
+      // that epoch change so one drag cannot revoke the buffer's resume intent
+      // twice. Dubbing and the preloader still stop immediately while seeking.
+      if (!seek && !state.seeking && !prev.seeking) {
         const elapsed = Math.max(0, state.sampledAtEpochMs - prev.sampledAtEpochMs);
         const expected =
           prev.paused || prev.buffering || prev.ad
@@ -1422,6 +1726,10 @@ export class TranslationSession {
     }
     this.feedPlayer(state, reason);
     if (refeed) this.refeedDubbing();
+    if (reason === 'video-replaced') this.setDuck(this.dubbingSpeaking);
+    // 重播后重新执行会话级静音，即使下一句中文尚未开始。
+    if (prev?.ended && !state.ended) this.setDuck(this.dubbingSpeaking);
+    this.updatePreloader(seek);
   }
 
   /**
@@ -1480,6 +1788,8 @@ export class TranslationSession {
     provider: TextProvider,
   ): void {
     if (this.isStopping) return;
+    this.queueTranscriptWrite();
+    this.transcriptFingerprint = translationFingerprint(settings);
     this.identity.configRevision = configRevision;
     const targetChanged = settings.targetLanguage !== this.targetLanguage;
     this.targetLanguage = settings.targetLanguage;
@@ -1519,42 +1829,41 @@ export class TranslationSession {
     if (this.phase === 'paused') this.scheduler?.pause();
     this.refeedDubbing();
     this.pushFullCues();
+    this.scheduleTranscriptSave();
     this.touch();
   }
 
   onNonTranslationSettingsChanged(prev: Settings, next: Settings): void {
     if (this.isStopping) return;
-    if (this.dubbing) this.dubbing.setConfig(this.dubbingConfig(next));
-    if (
-      this.capture?.state === 'active' &&
-      (prev.audio.originalVolume !== next.audio.originalVolume ||
-        prev.audio.duckOriginal !== next.audio.duckOriginal)
-    ) {
-      const gain =
-        next.audio.originalVolume *
-        (this.duckActive && next.audio.duckOriginal ? next.audio.duckLevel : 1);
-      this.host.deps.offscreen
-        .request({ kind: 'audio/original-gain', leaseId: this.capture.leaseId, gain, rampMs: 100 })
-        .catch(() => undefined);
+    this.outputMode = next.outputMode;
+    const routeChanged =
+      prev.tts.backend !== next.tts.backend ||
+      prev.tts.sub2apiModel !== next.tts.sub2apiModel ||
+      prev.tts.sub2apiVoice !== next.tts.sub2apiVoice ||
+      prev.audio.voiceName !== next.audio.voiceName;
+    if (this.dubbing && (routeChanged || next.outputMode !== 'subtitle-voice')) {
+      this.dubbingUnsub?.();
+      this.dubbing.dispose();
+      this.dubbing = undefined;
+      this.dubbingUnsub = undefined;
+      this.dubbingSpeaking = false;
     }
-    if (prev.outputMode !== next.outputMode) {
-      this.outputMode = next.outputMode;
+    try {
       if (next.outputMode === 'subtitle-voice' && !this.dubbing) {
         this.setupDubbing(next);
-        const created = this.dubbing as DubbingController | undefined;
         if (this.lastPlayer && this.phase === 'running' && !this.endedPaused)
-          created?.onPlayer(this.lastPlayer, 'tick');
+          (this.dubbing as DubbingController | undefined)?.onPlayer(this.lastPlayer, 'tick');
         this.refeedDubbing();
-      } else if (next.outputMode === 'subtitle' && this.dubbing) {
-        this.dubbingUnsub?.();
-        this.dubbing.dispose();
-        this.dubbing = undefined;
-        this.dubbingUnsub = undefined;
-        this.setDuck(false);
-        if (this.notice?.code === 'tts-disabled' || this.notice?.code === 'tts-error')
-          this.notice = undefined;
-      }
+      } else this.dubbing?.setConfig(this.dubbingConfig(next));
+    } finally {
+      // 切换声音时保持静音；关闭配音或设置失败时在这里归还原声音量。
+      this.setDuck(this.dubbingSpeaking);
     }
+    if (
+      next.outputMode === 'subtitle' &&
+      (this.notice?.code === 'tts-disabled' || this.notice?.code === 'tts-error')
+    )
+      this.notice = undefined;
     this.touch();
   }
 
@@ -1570,6 +1879,7 @@ export class TranslationSession {
   }
 
   retryFailed(): number {
+    this.preloader?.retry();
     return this.scheduler?.retryFailed() ?? 0;
   }
 
@@ -1649,7 +1959,9 @@ export class TranslationSession {
     });
     const ready = changed.filter((c) => c.translationState === 'done' && c.stability === 'final');
     if (ready.length && this.phase === 'running' && !this.endedPaused)
-      this.dubbing?.upsertCues(ready);
+      this.dubbing?.upsertCues(ready, {
+        live: this.sourceMode === 'asr' || this.sourceMode === 'incremental-captions',
+      });
     this.scheduleTranscriptSave();
     this.touch();
   }
@@ -1714,6 +2026,7 @@ export class TranslationSession {
   }
 
   pushSessionState(): void {
+    const buffer = this.bufferState();
     this.sendToContent({
       type: 'session/state',
       session: {
@@ -1724,6 +2037,11 @@ export class TranslationSession {
         outputMode: this.outputMode,
         sourceMode: this.sourceMode,
         statusText: this.statusText(),
+        playbackBuffer: buffer && {
+          readyUntilMs: buffer.readyUntilMs,
+          targetMs: buffer.snapshot.targetMs,
+          blocked: buffer.snapshot.state === 'blocked' || buffer.snapshot.state === 'unavailable',
+        },
       },
     });
   }
@@ -1731,6 +2049,11 @@ export class TranslationSession {
   /** 覆盖层状态文字；「同听 · 」前缀由覆盖层添加。 */
   private statusText(): string | undefined {
     if (this.error) return clip(this.error.message, 40);
+    const buffer = this.bufferState()?.snapshot;
+    if (this.phase === 'running' && buffer && buffer.state !== 'ready')
+      return buffer.state === 'preparing'
+        ? `正在缓冲翻译 · ${(buffer.readyAheadMs / 1000).toFixed(0)} 秒`
+        : '缓冲暂停，详见侧栏';
     switch (this.phase) {
       case 'starting':
         return '正在准备';
@@ -1789,8 +2112,42 @@ export class TranslationSession {
     page.conn.send(message);
   }
 
+  private refreshPageMetadata(): void {
+    const page = this.host.page(this.identity.tabId);
+    if (
+      page?.documentId === this.identity.documentId &&
+      page.navigationId === this.navigationId &&
+      page.videoId === this.identity.videoId
+    )
+      this.pageMetadata = { title: page.title, channel: page.channel, durationMs: page.durationMs };
+  }
+
+  private transcriptSnapshot(): TranscriptRecord | undefined {
+    if (this.sourceMode === 'none' || this.cues.size === 0) return;
+    this.refreshPageMetadata();
+    const now = this.host.deps.now();
+    return structuredClone({
+      schemaVersion: RECORD_SCHEMA_VERSION,
+      recordId: this.recordId,
+      videoId: this.identity.videoId,
+      ...this.pageMetadata,
+      targetLanguage: this.targetLanguage,
+      sourceLanguage: this.detectedSourceLanguage ?? 'und',
+      sourceMode: this.sourceMode,
+      sourceKey: this.sourceKey,
+      sourceLabel: this.sourceTrack?.label,
+      lastSessionId: this.identity.sessionId,
+      translationFingerprint: this.transcriptFingerprint,
+      cues: this.sortedCues(),
+      coverage: this.coverage(),
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
   private scheduleTranscriptSave(): void {
-    if (this.transcriptTimer || this.isStopping) return;
+    if (this.isStopping) return;
+    if (this.transcriptTimer) return;
     this.transcriptTimer = setTimeout(() => {
       this.transcriptTimer = undefined;
       this.queueTranscriptWrite();
@@ -1798,63 +2155,42 @@ export class TranslationSession {
   }
 
   private queueTranscriptWrite(): void {
-    if (this.sourceMode === 'none' || this.cues.size === 0) return;
-    const recordId = this.recordId;
-    const cues = this.sortedCues();
-    const page = this.host.page(this.identity.tabId);
-    const snapshot = {
-      coverage: this.coverage(),
-      sourceMode: this.sourceMode,
-      sourceKey: this.sourceKey,
-      sourceLabel: this.sourceTrack?.label,
-      sourceLanguage: this.detectedSourceLanguage ?? 'und',
-      title: page?.title,
-      channel: page?.channel,
-      durationMs: page?.durationMs,
-    };
+    // 只在实际写入时冻结整份记录；换轨道/语言前及停止时也会同步走这里，保留旧身份与最终更新。
+    if (this.transcriptTimer) clearTimeout(this.transcriptTimer);
+    this.transcriptTimer = undefined;
+    const record = this.transcriptSnapshot();
+    if (!record) return;
     const { deps } = this.host;
-    this.transcriptWrite = this.transcriptWrite
-      .then(async () => {
-        const existing = await deps.transcripts.getTranscript(recordId).catch(() => undefined);
-        const now = deps.now();
-        const merged = mergeTranscriptCues(existing, cues, this.identity.sessionId);
-        const record: TranscriptRecord = {
-          schemaVersion: RECORD_SCHEMA_VERSION,
-          recordId,
-          videoId: this.identity.videoId,
-          title: snapshot.title ?? existing?.title,
-          channel: snapshot.channel ?? existing?.channel,
-          targetLanguage: this.targetLanguage,
-          sourceLanguage: snapshot.sourceLanguage,
-          sourceMode: snapshot.sourceMode,
-          sourceKey: snapshot.sourceKey,
-          sourceLabel: snapshot.sourceLabel,
-          lastSessionId: this.identity.sessionId,
-          cues: merged,
-          coverage: snapshot.coverage,
-          durationMs: snapshot.durationMs ?? existing?.durationMs,
-          createdAt: existing?.createdAt ?? now,
-          updatedAt: now,
-        };
-        await deps.transcripts.putTranscript(record);
-      })
-      .catch((error: unknown) => {
-        deps.logger.warn(
-          '[tongting] transcript save failed',
-          error instanceof Error ? error.name : 'unknown',
-        );
-        this.notice = {
-          code: 'transcript-save-failed',
-          message: '字幕记录保存失败，本次字幕仅保留在内存中。',
-          level: 'warning',
-        };
-        this.host.publish();
-      });
+    let write: Promise<void>;
+    if (this.transcriptWriter) write = this.transcriptWriter.save(record);
+    else {
+      write = (fallbackWrites.get(deps.transcripts) ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(async () => {
+          const existing = await deps.transcripts.getTranscript(record.recordId);
+          await deps.transcripts.putTranscript(mergeTranscriptRecord(existing, record));
+        });
+      fallbackWrites.set(deps.transcripts, write);
+    }
+    this.transcriptWrite = write.catch((error: unknown) => {
+      deps.logger.warn(
+        '[tongting] transcript save failed',
+        error instanceof Error ? error.name : 'unknown',
+      );
+      if (this.isStopping) return;
+      this.notice = {
+        code: 'transcript-save-failed',
+        message: '字幕记录保存失败，本次字幕仅保留在内存中。',
+        level: 'warning',
+      };
+      this.host.publish();
+    });
   }
 
   coverage(): SubtitleCoverage {
     const cues = this.sortedCues();
-    const durationMs = this.host.page(this.identity.tabId)?.durationMs;
+    this.refreshPageMetadata();
+    const durationMs = this.pageMetadata.durationMs;
     if (this.sourceMode === 'full-track') {
       const first = cues[0];
       const last = cues[cues.length - 1];
@@ -1894,7 +2230,8 @@ export class TranslationSession {
       tts: dub ? mapDubState(dub.state) : this.resources.tts,
       dubBacklog: dub?.backlog,
     };
-    let notice = this.notice ?? (this.phase === 'running' ? this.translationNotice() : undefined);
+    // 故障恢复后仍展示来源说明；持续存在的来源说明不能遮住限流或翻译阻断。
+    let notice = (this.phase === 'running' ? this.translationNotice() : undefined) ?? this.notice;
     if (!notice && dub?.state === 'unavailable') {
       notice = {
         code: 'tts-unavailable',
@@ -1919,7 +2256,12 @@ export class TranslationSession {
       notice: notice
         ? { ...notice, code: clip(notice.code, 80), message: clip(notice.message, NOTICE_MAX) }
         : undefined,
-      error: this.error ? clipError(this.error) : undefined,
+      error: this.preloader?.error()
+        ? clipError(this.preloader.error()!)
+        : this.error
+          ? clipError(this.error)
+          : undefined,
+      playbackBuffer: this.bufferState()?.snapshot,
       cueVersion: this.cueVersion,
       recordId: this.sourceMode === 'none' ? undefined : this.recordId,
       backfill: this.backfill || undefined,
@@ -2038,42 +2380,6 @@ export function chooseTrack(
     return s;
   };
   return [...usable].sort((a, b) => score(b) - score(a))[0];
-}
-
-/**
- * 写入字幕记录时合并：当前会话尚未翻译的条目，若旧记录中同 id、同原文、同目标语言已有译文，
- * 且该译文的翻译配置指纹与当前会话一致（或来自同一会话，例如 worker 重启后恢复），则保留旧译文。
- * 模型、风格、术语等变化后的旧译文不会被标成当前结果。
- */
-export function mergeTranscriptCues(
-  existing: Pick<TranscriptRecord, 'cues' | 'lastSessionId'> | undefined,
-  current: readonly Cue[],
-  sessionId: string,
-): Cue[] {
-  if (!existing?.cues.length) return [...current];
-  const currentKey = current.find(
-    (c) => c.translationState === 'done' && c.translationKey,
-  )?.translationKey;
-  const sameSession = existing.lastSessionId === sessionId;
-  const old = new Map(existing.cues.map((c) => [c.id, c]));
-  return current.map((c) => {
-    if (c.translatedText || c.translationState === 'skipped') return c;
-    const prev = old.get(c.id);
-    if (
-      !prev?.translatedText ||
-      prev.sourceText !== c.sourceText ||
-      prev.targetLanguage !== c.targetLanguage
-    )
-      return c;
-    const keyMatches = currentKey ? prev.translationKey === currentKey : sameSession;
-    if (!keyMatches) return c;
-    return {
-      ...c,
-      translatedText: prev.translatedText,
-      translationKey: prev.translationKey,
-      translationState: 'done',
-    };
-  });
 }
 
 /** 页面（内容脚本）带回的错误一律视为字幕读取失败；是否被新意图取代只由协调器判定。 */

@@ -24,11 +24,14 @@ export interface RecordedRequest {
   authorization: string | undefined;
   body: unknown;
   receivedAt: number;
+  /** 服务端开始/结束事件共用的严格递增序号，不受毫秒时间戳碰撞影响。 */
+  startedOrder: number;
   /** 客户端在响应完成前关闭了连接（取消 / 超时）。 */
   aborted: boolean;
   completed: boolean;
   /** 响应完成或连接关闭的时间。 */
   finishedAt?: number;
+  finishedOrder?: number;
 }
 
 export interface TranslationPair {
@@ -151,6 +154,7 @@ export async function startMockSub2api(options: MockSub2apiOptions = {}): Promis
   const requests: RecordedRequest[] = [];
   const queues: Record<Endpoint, MockReply[]> = { models: [], responses: [], chat: [] };
   let seq = 0;
+  let eventOrder = 0;
   let current = 0;
   let peak = 0;
   const sockets = new Set<Socket>();
@@ -382,6 +386,7 @@ export async function startMockSub2api(options: MockSub2apiOptions = {}): Promis
       authorization: req.headers.authorization,
       body: undefined,
       receivedAt: Date.now(),
+      startedOrder: ++eventOrder,
       aborted: false,
       completed: false,
     };
@@ -393,6 +398,7 @@ export async function startMockSub2api(options: MockSub2apiOptions = {}): Promis
       if (settled) return;
       settled = true;
       record.finishedAt = Date.now();
+      record.finishedOrder = ++eventOrder;
       current--;
     };
     res.on('finish', () => {

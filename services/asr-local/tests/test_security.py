@@ -6,7 +6,7 @@ import pytest
 
 from conftest import EXTENSION_ID, EXTENSION_ORIGIN, make_wav, running_app
 
-HEALTH_KEYS = {"status", "ready", "model", "device", "computeType", "version"}
+HEALTH_KEYS = {"status", "ready", "model", "device", "computeType", "version", "youtubePreload"}
 
 
 def assert_error(response, status: int, code: str) -> None:
@@ -35,6 +35,7 @@ def test_health_requires_no_token_and_has_exact_contract_keys(harness):
     assert body["model"] == "fake-small"
     assert body["device"] == "cpu"
     assert body["computeType"] == "int8"
+    assert body["youtubePreload"] is False
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert_no_cors(response)

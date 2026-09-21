@@ -40,30 +40,52 @@ export interface LaunchOptions {
 export async function launchExtension(options: LaunchOptions = {}): Promise<LaunchedExtension> {
   const extensionDir = options.extensionDir ?? EXTENSION_DIR;
   const userDataDir = await mkdtemp(join(tmpdir(), 'tongting-e2e-'));
-  const context = await chromium.launchPersistentContext(userDataDir, {
-    channel: 'chromium',
-    headless: options.headless ?? true,
-    ignoreDefaultArgs: options.unmute ? ['--mute-audio'] : [],
-    args: [
-      `--disable-extensions-except=${extensionDir}`,
-      `--load-extension=${extensionDir}`,
-      '--autoplay-policy=no-user-gesture-required',
-      ...(options.extraArgs ?? []),
-    ],
-  });
-  let [serviceWorker] = context.serviceWorkers();
-  if (!serviceWorker) serviceWorker = await context.waitForEvent('serviceworker');
-  const extensionId = new URL(serviceWorker.url()).host;
-  return {
-    context,
-    extensionId,
-    serviceWorker,
-    userDataDir,
-    async close() {
-      await context.close().catch(() => undefined);
-      await rm(userDataDir, { recursive: true, force: true });
-    },
-  };
+  let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(userDataDir, {
+      channel: 'chromium',
+      headless: options.headless ?? true,
+      ignoreDefaultArgs: options.unmute ? ['--mute-audio'] : [],
+      args: [
+        `--disable-extensions-except=${extensionDir}`,
+        `--load-extension=${extensionDir}`,
+        '--autoplay-policy=no-user-gesture-required',
+        ...(options.extraArgs ?? []),
+      ],
+    });
+    let [serviceWorker] = context.serviceWorkers();
+    if (!serviceWorker)
+      serviceWorker = await context.waitForEvent('serviceworker', { timeout: 30_000 });
+    const extensionId = new URL(serviceWorker.url()).host;
+    const launchedContext = context;
+    return {
+      context,
+      extensionId,
+      serviceWorker,
+      userDataDir,
+      async close() {
+        const results = await Promise.allSettled([launchedContext.close()]);
+        // Profile deletion must still run if browser shutdown fails.
+        results.push(
+          await rm(userDataDir, { recursive: true, force: true }).then(
+            (): PromiseFulfilledResult<void> => ({ status: 'fulfilled', value: undefined }),
+            (reason: unknown): PromiseRejectedResult => ({ status: 'rejected', reason }),
+          ),
+        );
+        const failures = results.filter((result) => result.status === 'rejected');
+        if (failures.length)
+          throw new AggregateError(
+            failures.map((result) => result.reason),
+            'Extension cleanup failed',
+          );
+      },
+    };
+  } catch (error) {
+    // Failure before returning the handle must not strand Chromium or its temporary profile.
+    await context?.close().catch(() => undefined);
+    await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 /**

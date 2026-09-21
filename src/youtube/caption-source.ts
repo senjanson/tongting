@@ -16,13 +16,14 @@ import {
   inspectTimedtextUrl,
   toPlayerMetadata,
   type BridgeClient,
+  type BridgeCaptionsChangedMsg,
+  type BridgeCaptionSelectionMsg,
   type BridgeCommandResultMsg,
   type BridgeMissingMsg,
   type BridgePlayerResponseMsg,
   type BridgeTimedtextMsg,
   type PlayerMetadata,
 } from './bridge-client';
-import { trackNameFromVssId } from './bridge/protocol';
 import { youtubeError } from './errors';
 
 export interface CaptionNavigation {
@@ -71,6 +72,8 @@ export interface CaptionSource {
   handlePlayerResponseMissing(msg: BridgeMissingMsg): void;
   handleTimedtext(msg: BridgeTimedtextMsg): void;
   handleCommandResult(msg: BridgeCommandResultMsg): void;
+  handleCaptionsChanged(msg: BridgeCaptionsChangedMsg): void;
+  handleCaptionSelection(msg: BridgeCaptionSelectionMsg): void;
   readonly metadata: PlayerMetadata | null;
   readonly availability: CaptionsAvailability;
   selectTrack(req: { trackKey?: string; preferredLanguage?: string }): CaptionTrackInfo | null;
@@ -137,6 +140,11 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
 
   let nav: CaptionNavigation = { navigationId: 0, videoId: null };
   let navAbort = new AbortController();
+  const ownerPrefix = crypto.randomUUID();
+  let ownerSequence = 0;
+  let ownerId = `${ownerPrefix}_${ownerSequence}`;
+  let ownerAbort = new AbortController();
+  let ownerVideoId: string | null = null;
   let metadata: PlayerMetadata | null = null;
   let availability: CaptionsAvailability = 'unknown';
   let metadataSignature = '';
@@ -145,15 +153,19 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
   let inflight = new Map<string, Promise<LoadedTrack>>();
   const changeListeners = new Set<() => void>();
   const commandListeners = new Map<string, (msg: BridgeCommandResultMsg) => void>();
-  /** 已发出的桥命令 → videoId；导航后迟到的结果仍用于记录「原生字幕被打开过」。 */
-  const issuedCommands = new Map<string, { videoId: string; navigationId: number }>();
+  /** 已发出的桥命令及生命周期；只有当前 owner 的副作用确认可改变本地状态。 */
+  const issuedCommands = new Map<
+    string,
+    { videoId: string; navigationId: number; ownerId: string; trackKey: string }
+  >();
   /** 正在等待正文的 body key：只有这些 key 允许被新正文覆盖。 */
-  const pendingKeys = new Set<string>();
+  const pendingKeys = new Map<string, Set<string>>();
   /** 等待期间收到无法解析正文的 key。 */
   const failedKeys = new Set<string>();
   /** 与当前导航视频不符、可能属于即将提交的导航的正文（有界）。 */
   let foreignBodies: Array<{ msg: BridgeTimedtextMsg; videoId: string; at: number }> = [];
   let changedCaptionsVideoId: string | null = null;
+  let observedNativeTrack: string | undefined;
   let droppedBodies = 0;
   let disposed = false;
 
@@ -176,11 +188,13 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
     onTimeout: () => Error,
   ): Promise<T> {
     const navSignal = navAbort.signal;
+    const ownerSignal = ownerAbort.signal;
     return new Promise<T>((resolve, reject) => {
       const immediate = check();
       if (immediate !== undefined) return resolve(immediate);
       if (navSignal.aborted) return reject(youtubeError('navigation-changed'));
       if (signal?.aborted) return reject(cancelledError());
+      if (ownerSignal.aborted) return reject(cancelledError());
       let settled = false;
       const cleanup = () => {
         settled = true;
@@ -188,6 +202,7 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
         deps.clearTimeout(timer);
         navSignal.removeEventListener('abort', onNavAbort);
         signal?.removeEventListener('abort', onAbort);
+        ownerSignal.removeEventListener('abort', onAbort);
       };
       const onChange = () => {
         if (settled) return;
@@ -220,6 +235,7 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
       changeListeners.add(onChange);
       navSignal.addEventListener('abort', onNavAbort, { once: true });
       signal?.addEventListener('abort', onAbort, { once: true });
+      ownerSignal.addEventListener('abort', onAbort, { once: true });
     });
   }
 
@@ -227,13 +243,15 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
     track: CaptionTrackInfo,
     forNav: CaptionNavigation,
     meta: PlayerMetadata,
+    forOwner: string,
+    ownerSignal: AbortSignal,
   ): Promise<LoadedTrack> {
     const bridgeTrack = meta.bridgeTracks.get(track.trackKey);
     if (!bridgeTrack || !forNav.videoId) throw youtubeError('captions-track-not-found');
     const key = bodyKey(
       bridgeTrack.languageCode,
       bridgeTrack.kind === 'asr',
-      trackNameFromVssId(bridgeTrack.vssId, bridgeTrack.languageCode),
+      bridgeTrack.requestName,
     );
     const videoId = forNav.videoId;
 
@@ -243,14 +261,24 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
       let graceTimer: unknown;
       let fetchRetried = false;
       failedKeys.delete(key);
-      pendingKeys.add(key);
+      const pending = pendingKeys.get(key) ?? new Set<string>();
+      pending.add(commandId);
+      pendingKeys.set(key, pending);
       const commandIds: string[] = [];
       const sendCommand = (id: string, fetchOnly: boolean) => {
         commandIds.push(id);
         commandListeners.set(id, onResult);
-        issuedCommands.set(id, { videoId, navigationId: forNav.navigationId });
+        if (ownerSignal.aborted) return;
+        ownerVideoId = videoId;
+        issuedCommands.set(id, {
+          videoId,
+          navigationId: forNav.navigationId,
+          ownerId: forOwner,
+          trackKey: track.trackKey,
+        });
         deps.bridge.loadTrack({
           commandId: id,
+          ownerId: forOwner,
           videoId,
           languageCode: bridgeTrack.languageCode,
           kind: bridgeTrack.kind,
@@ -298,16 +326,18 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
             return undefined;
           },
           loadTimeoutMs,
-          undefined,
+          ownerSignal,
           () =>
             youtubeError(failedKeys.has(key) ? 'captions-parse-failed' : 'captions-load-timeout'),
         );
       } finally {
         for (const id of commandIds) commandListeners.delete(id);
-        pendingKeys.delete(key);
+        pending.delete(commandId);
+        if (!pending.size && pendingKeys.get(key) === pending) pendingKeys.delete(key);
         if (graceTimer !== undefined) deps.clearTimeout(graceTimer);
       }
       if (nav.navigationId !== forNav.navigationId) throw youtubeError('navigation-changed');
+      if (ownerSignal.aborted) throw cancelledError();
     }
 
     const parsed = bodies.get(key);
@@ -344,6 +374,7 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
     setNavigation(next) {
       if (disposed) return;
       navAbort.abort();
+      source.restoreNativeCaptions();
       navAbort = new AbortController();
       nav = { ...next };
       bodies = new Map();
@@ -354,6 +385,7 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
       failedKeys.clear();
       metadata = null;
       metadataSignature = '';
+      observedNativeTrack = undefined;
       availability = 'unknown';
       deps.onMetadata?.(null, 'unknown');
       if (!nav.videoId) return;
@@ -370,7 +402,14 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
       if (disposed || !nav.videoId || msg.videoId !== nav.videoId) return;
       const m = toPlayerMetadata(msg);
       // 桥会在多个时机重复推送同一份数据：内容未变化时不重复通知（避免无意义地唤醒 worker）。
-      const signature = JSON.stringify([m.title, m.channel, m.durationMs, m.isLive, m.tracks]);
+      const signature = JSON.stringify([
+        m.title,
+        m.channel,
+        m.durationMs,
+        m.isLive,
+        m.tracks,
+        [...m.bridgeTracks],
+      ]);
       if (metadata && signature === metadataSignature) return;
       metadataSignature = signature;
       setMetadata(m, m.tracks.length ? 'available' : 'unavailable');
@@ -415,25 +454,27 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
       // 已成功解析的正文：不被失败正文覆盖；没有加载在等待时也不被被动正文覆盖（页面脚本可伪造）。
       if (existing?.ok && (!parsed.ok || !pendingKeys.has(key))) {
         droppedBodies++;
-        return;
+        if (!parsed.ok) return;
+      } else {
+        if (!parsed.ok && pendingKeys.has(key)) failedKeys.add(key);
+        bodies.delete(key);
+        bodies.set(key, parsed);
+        while (bodies.size > MAX_CACHED_BODIES) {
+          const first = bodies.keys().next().value;
+          if (first === undefined) break;
+          bodies.delete(first);
+        }
+        notifyChange();
       }
-      if (!parsed.ok && pendingKeys.has(key)) failedKeys.add(key);
-      bodies.delete(key);
-      bodies.set(key, parsed);
-      while (bodies.size > MAX_CACHED_BODIES) {
-        const first = bodies.keys().next().value;
-        if (first === undefined) break;
-        bodies.delete(first);
-      }
-      notifyChange();
-      if (parsed.ok && msg.via !== 'bridge-fetch') {
+      // 正文复用与选择通知分离；重放/兜底不表示用户改了轨道。
+      if (parsed.ok && !pendingKeys.has(key) && (msg.via === 'fetch' || msg.via === 'xhr')) {
         const asr = info.kind === 'asr';
         let trackKey: string | undefined;
         for (const [k, t] of metadata?.bridgeTracks ?? []) {
           if (
             t.languageCode === info.lang &&
             (t.kind === 'asr') === asr &&
-            trackNameFromVssId(t.vssId, t.languageCode) === name
+            t.requestName === name
           ) {
             trackKey = k;
             break;
@@ -445,7 +486,7 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
 
     handleCommandResult(msg) {
       const issued = issuedCommands.get(msg.commandId);
-      if (issued === undefined) return; // 不是本脚本发出的命令
+      if (issued === undefined || issued.ownerId !== ownerId || disposed) return;
       issuedCommands.delete(msg.commandId);
       if (msg.changedCaptions) {
         changedCaptionsVideoId = issued.videoId;
@@ -460,6 +501,29 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
       commandListeners.get(msg.commandId)?.(msg);
     },
 
+    handleCaptionsChanged(msg) {
+      const issued = issuedCommands.get(msg.commandId);
+      if (!issued || issued.ownerId !== ownerId || msg.ownerId !== ownerId || disposed) return;
+      changedCaptionsVideoId = issued.videoId;
+      // 桥自身驱动的切换是选择基线，不是新的用户切轨意图。
+      observedNativeTrack = issued.trackKey;
+      if (deps.shouldKeepNativeCaptions?.() === false) source.restoreNativeCaptions();
+    },
+
+    handleCaptionSelection(msg) {
+      if (disposed || msg.videoId !== nav.videoId) return;
+      for (const [trackKey, t] of metadata?.bridgeTracks ?? []) {
+        if (t.languageCode === msg.languageCode && t.kind === msg.kind && t.vssId === msg.vssId) {
+          // 首次只记基线；持续相同的原生轨道不能推翻用户在扩展中明确选择的来源语言。
+          const previous = observedNativeTrack;
+          observedNativeTrack = trackKey;
+          if (previous !== undefined && previous !== trackKey)
+            deps.onPassiveBody?.({ trackKey, languageCode: t.languageCode, asr: t.kind === 'asr' });
+          break;
+        }
+      }
+    },
+
     selectTrack(req) {
       return metadata ? selectCaptionTrack(metadata.tracks, req) : null;
     },
@@ -467,16 +531,15 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
     hasBodyFor(trackKey) {
       const t = metadata?.bridgeTracks.get(trackKey);
       return (
-        !!t &&
-        bodies.get(
-          bodyKey(t.languageCode, t.kind === 'asr', trackNameFromVssId(t.vssId, t.languageCode)),
-        )?.ok === true
+        !!t && bodies.get(bodyKey(t.languageCode, t.kind === 'asr', t.requestName))?.ok === true
       );
     },
 
     async loadTrack(req, signal) {
       if (disposed) throw youtubeError('navigation-changed');
       const forNav = { ...nav };
+      const forOwner = ownerId;
+      const ownerSignal = ownerAbort.signal;
       if (!forNav.videoId) throw youtubeError('player-unavailable');
       if (!metadata) deps.bridge.requestPlayerResponse(forNav.videoId);
       const meta = await waitFor(
@@ -486,19 +549,27 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
         () => youtubeError('captions-bridge-unavailable'),
       );
       if (nav.navigationId !== forNav.navigationId) throw youtubeError('navigation-changed');
+      if (ownerSignal.aborted || signal?.aborted) throw cancelledError();
       if (!meta.tracks.length) throw youtubeError('captions-no-tracks');
       const track = selectCaptionTrack(meta.tracks, req);
       if (!track) throw youtubeError('captions-track-not-found');
-      const cacheKey = track.trackKey;
+      const identity = meta.bridgeTracks.get(track.trackKey)!;
+      const cacheKey = JSON.stringify([
+        track.trackKey,
+        identity.languageCode,
+        identity.kind,
+        identity.requestName,
+      ]);
       const cached = loaded.get(cacheKey);
       if (cached) return cached;
       let p = inflight.get(cacheKey);
       if (!p) {
         const inflightMap = inflight;
         const loadedMap = loaded;
-        p = doLoad(track, forNav, meta).then(
+        p = doLoad(track, forNav, meta, forOwner, ownerSignal).then(
           (r) => {
-            if (nav.navigationId === forNav.navigationId) loadedMap.set(cacheKey, r);
+            if (nav.navigationId === forNav.navigationId && !ownerSignal.aborted)
+              loadedMap.set(cacheKey, r);
             inflightMap.delete(cacheKey);
             return r;
           },
@@ -527,18 +598,29 @@ export function createCaptionSource(deps: CaptionSourceDeps): CaptionSource {
         );
       });
       if (nav.navigationId !== forNav.navigationId) throw youtubeError('navigation-changed');
+      if (ownerSignal.aborted) throw cancelledError();
       return result;
     },
 
     restoreNativeCaptions() {
-      if (changedCaptionsVideoId === null) return;
-      const videoId = changedCaptionsVideoId;
+      const videoId = ownerVideoId ?? changedCaptionsVideoId;
+      const releasedOwner = ownerId;
+      ownerAbort.abort();
+      ownerAbort = new AbortController();
+      ownerId = `${ownerPrefix}_${++ownerSequence}`;
+      ownerVideoId = null;
       changedCaptionsVideoId = null;
-      deps.bridge.restoreCaptions({ commandId: deps.newId(), videoId });
+      observedNativeTrack = undefined;
+      inflight = new Map();
+      commandListeners.clear();
+      issuedCommands.clear();
+      if (videoId)
+        deps.bridge.restoreCaptions({ commandId: deps.newId(), videoId, ownerId: releasedOwner });
     },
 
     dispose() {
       if (disposed) return;
+      source.restoreNativeCaptions();
       disposed = true;
       navAbort.abort();
       changeListeners.clear();

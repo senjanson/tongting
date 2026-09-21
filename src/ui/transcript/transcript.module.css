@@ -6,6 +6,35 @@
   height: 100%;
 }
 
+.displayOptions > summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--tt-muted);
+  margin-bottom: 10px;
+}
+.compact .row {
+  grid-template-columns: 38px minmax(0, 1fr) 25px;
+  gap: 7px;
+  padding: 11px 7px;
+}
+.compact .primaryText {
+  font-size: 12px;
+  line-height: 1.7;
+}
+.compact .secondaryText {
+  font-size: 11px;
+  line-height: 1.6;
+}
+.compact .time,
+.compact .meta,
+.compact .coverage {
+  font-size: 11px;
+}
+.compact .actions button {
+  width: 25px;
+  height: 25px;
+}
+
 .toolbar {
   display: flex;
   align-items: center;

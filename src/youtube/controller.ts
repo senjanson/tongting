@@ -8,7 +8,7 @@
  * - worker 请求在 await 之后重新核对 navigationId / videoId / 连接代际，迟到结果不写入新视频、不在新连接上回复；
  * - 扩展上下文失效（ctx.onInvalidated 或 runtime.id 消失）时释放全部监听器、observer、定时器、覆盖层与样式，可重复调用。
  */
-import { toAppErrorInfo, type AppErrorInfo } from '../domain/errors';
+import { cancelledError, toAppErrorInfo, type AppErrorInfo } from '../domain/errors';
 import type { CaptionSettings } from '../domain/settings';
 import type { PlayerState } from '../domain/session';
 import {
@@ -21,6 +21,7 @@ import { randomId } from '../messaging/ports';
 import { createBridgeClient } from './bridge-client';
 import { createCaptionSource } from './caption-source';
 import { createDuckController } from './ducking';
+import { createPlaybackBufferController } from './playback-buffer';
 import { youtubeError, youtubeErrorInfo } from './errors';
 import { createNativeCaptionHider } from './native-captions';
 import { createNavigationTracker, watchNavigation, type NavigationState } from './navigation';
@@ -62,6 +63,7 @@ export interface ControllerTimings {
   welcomeSessionTimeoutMs: number;
   /** 会话存在时检查覆盖层是否被页面重绘移除的间隔。 */
   overlayCheckMs: number;
+  passiveTrackThrottleMs: number;
   playerPollMs: number;
   navigationPollMs: number;
   /**
@@ -76,6 +78,7 @@ const DEFAULT_TIMINGS: ControllerTimings = {
   metadataRequestSchedule: [0, 300, 1_000, 2_500, 5_000, 10_000],
   welcomeSessionTimeoutMs: 5_000,
   overlayCheckMs: 1_000,
+  passiveTrackThrottleMs: 10_000,
   playerPollMs: 500,
   navigationPollMs: 500,
   startingMetadataPollMs: 500,
@@ -120,24 +123,30 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
   let nextMetadataRequestAt = 0;
   let startingPollTimer: number | undefined;
   let startingPolls = 0;
-  /** 本导航内主动发送 track-data 的次数与时间（限频）。 */
-  let passiveSends = 0;
+  /** 主动切轨限频；窗口内保留最后一个选择。 */
   let lastPassiveSendAt = -Infinity;
+  let pendingPassiveTrack: string | undefined;
+  let passiveTimer: number | undefined;
+  let passiveRevision = 0;
+  let passiveLoading = false;
   let lastResyncAt = -Infinity;
   let resyncTimer: number | undefined;
   /** 本导航内最近一次发给 worker 的轨道 key，以及仍在进行的 load-track 请求数。 */
   let lastSentTrackKey: string | undefined;
   let loadsInFlight = 0;
+  let loadRevision = 0;
 
   const duck = createDuckController();
   const hider = createNativeCaptionHider(doc);
   const overlay = createCaptionOverlay({ doc, win });
+  const playbackBuffer = createPlaybackBufferController({ getVideo: () => adapter?.video ?? null });
 
   const captions = createCaptionSource({
     bridge: {
       loadTrack: (cmd) => bridge.loadTrack(cmd),
       restoreCaptions: (cmd) => bridge.restoreCaptions(cmd),
       requestPlayerResponse: (videoId) => bridge.requestPlayerResponse(videoId),
+      requestReplay: (videoId) => bridge.requestReplay(videoId),
     },
     origin: win.location.origin,
     newId: () => randomId('cmd'),
@@ -148,6 +157,7 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
       if (meta) {
         clearMetadataTimers();
         updateStartingPoll();
+        bridge.requestCaptionSelection(meta.videoId);
         send(buildVideoMessage(), hasSession());
       }
       sendTracks();
@@ -157,6 +167,11 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
   });
 
   const bridge = createBridgeClient(win, {
+    onCaptionSelection: (m) => captions.handleCaptionSelection(m),
+    onCaptionsChanged: (m) => {
+      captions.handleCaptionsChanged(m);
+      updateNativeHiding();
+    },
     onPlayerResponse: (m) => captions.handlePlayerResponse(m),
     onPlayerResponseMissing: (m) => captions.handlePlayerResponseMissing(m),
     onTimedtext: (m) => captions.handleTimedtext(m),
@@ -288,10 +303,8 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
 
   function updateNativeHiding() {
     if (disposed) return;
-    const shouldHide =
-      sessionActive() &&
-      (settings?.enabled ?? true) &&
-      (captions.changedNativeCaptions || visible.enabled);
+    // 是否接管显示与是否曾切换 YouTube 的开关是两件事：缓存命中也必须避免两层字幕重叠。
+    const shouldHide = sessionActive() && (settings?.enabled ?? true);
     hider.set(adapter?.root ?? null, shouldHide);
   }
 
@@ -319,13 +332,31 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
   });
 
   function applySession(next: OverlaySession | null) {
+    const changedSession = !!session && session.sessionId !== next?.sessionId;
     session = next;
     overlay.setSession(next);
-    if (!next) {
+    playbackBuffer.update(
+      next?.playbackBuffer && next.videoId === nav.videoId
+        ? {
+            sessionId: next.sessionId,
+            epoch: next.epoch,
+            videoId: next.videoId,
+            enabled: true,
+            active: next.phase === 'starting' || next.phase === 'running',
+            ...next.playbackBuffer,
+          }
+        : null,
+    );
+    if (!next || changedSession) {
+      loadRevision++;
+      clearPassiveIntent();
+      lastSentTrackKey = undefined;
+      lastPassiveSendAt = -Infinity;
       visible.disable();
       duck.releaseCurrent();
       captions.restoreNativeCaptions();
     }
+    if (next?.videoId === nav.videoId && nav.videoId) bridge.requestCaptionSelection(nav.videoId);
     updateNativeHiding();
     updateStartingPoll();
   }
@@ -399,6 +430,7 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
   function onNavigate(next: NavigationState, initial = false) {
     if (disposed) return;
     const hadSession = session !== null;
+    loadRevision++;
     nav = next;
     navAbort.abort();
     navAbort = new AbortController();
@@ -410,7 +442,7 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
       if (session) applySession(null);
     }
     lastSentTrackKey = undefined;
-    passiveSends = 0;
+    clearPassiveIntent();
     lastPassiveSendAt = -Infinity;
     metadataBackoffMs = 1_000;
     nextMetadataRequestAt = 0;
@@ -464,12 +496,41 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
    * 主动发送该轨道数据，由 worker 决定是否切换。同听自己发起的加载进行中时不触发。
    */
   function onPassiveBody(trackKey: string | undefined) {
-    if (disposed || !trackKey || !nav.videoId || loadsInFlight > 0 || !sessionActive()) return;
+    if (disposed || !trackKey || !nav.videoId || !sessionActive()) return;
     if (lastSentTrackKey === undefined && !visible.enabled) return;
-    if (trackKey === lastSentTrackKey) return;
-    // 限频：每导航最多 3 次、间隔至少 10 秒（页面脚本可伪造正文，不能无限触发切换）。
-    if (passiveSends >= 3 || Date.now() - lastPassiveSendAt < 10_000) return;
-    passiveSends++;
+    if (pendingPassiveTrack !== trackKey) {
+      pendingPassiveTrack = trackKey;
+      passiveRevision++;
+    }
+    sendPassiveIntent();
+  }
+
+  function clearPassiveIntent() {
+    if (passiveTimer !== undefined) win.clearTimeout(passiveTimer);
+    passiveTimer = undefined;
+    pendingPassiveTrack = undefined;
+    passiveRevision++;
+  }
+
+  function sendPassiveIntent() {
+    if (disposed || !sessionActive() || !nav.videoId || !pendingPassiveTrack) return;
+    if (loadsInFlight > 0 || passiveLoading) return;
+    if (pendingPassiveTrack === lastSentTrackKey) {
+      clearPassiveIntent();
+      return;
+    }
+    const wait = lastPassiveSendAt + timings.passiveTrackThrottleMs - Date.now();
+    if (wait > 0) {
+      if (passiveTimer === undefined)
+        passiveTimer = win.setTimeout(() => {
+          passiveTimer = undefined;
+          sendPassiveIntent();
+        }, wait);
+      return;
+    }
+    const trackKey = pendingPassiveTrack;
+    passiveLoading = true;
+    const revision = passiveRevision;
     lastPassiveSendAt = Date.now();
     const navigationId = nav.navigationId;
     const signal = navAbort.signal;
@@ -478,6 +539,8 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
       .then((loaded) => {
         if (
           disposed ||
+          revision !== passiveRevision ||
+          !sessionActive() ||
           signal.aborted ||
           nav.navigationId !== navigationId ||
           loaded.videoId !== nav.videoId
@@ -499,8 +562,14 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
           { wake: true, keepLatest: true },
         );
         lastSentTrackKey = loaded.track.trackKey;
+        if (revision === passiveRevision) pendingPassiveTrack = undefined;
       })
-      .catch(() => undefined);
+      // 暂时取不到正文也保留选择；下一限频窗口重试，停止/新意图会清除它。
+      .catch(() => undefined)
+      .finally(() => {
+        passiveLoading = false;
+        sendPassiveIntent();
+      });
   }
 
   // ---------------------------------------------------------------------------
@@ -511,6 +580,7 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
     if (disposed) return;
     switch (msg.type) {
       case 'welcome': {
+        playbackBuffer.reset();
         // worker 可能重启过：字幕版本基线重建，会话以随后到达的 session/state 为准。
         overlay.resetVersionBaseline();
         sessionConfirmed = false;
@@ -586,6 +656,7 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
           let t = req.timeMs / 1000;
           if (Number.isFinite(v.duration) && v.duration > 0)
             t = Math.min(t, Math.max(0, v.duration - 0.05));
+          playbackBuffer.userIntent('seek');
           v.currentTime = t;
           reply({ ok: true, data: { timeMs: Math.round(t * 1000) } });
           return;
@@ -594,7 +665,13 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
           if (req.videoId !== nav.videoId) throw youtubeError('stale-video');
           const v = adapter?.video;
           if (!v) throw youtubeError('player-unavailable');
-          const outcome = req.active ? duck.duck(v, req.level) : duck.release(v);
+          const outcome = req.release
+            ? duck.release(v)
+            : req.originalVolume !== undefined
+              ? duck.configure(v, req.originalVolume, req.active ? req.level : 1)
+              : req.active
+                ? duck.duck(v, req.level)
+                : duck.release(v);
           if (!outcome.applied && outcome.reason === 'error') throw youtubeError('duck-failed');
           reply({ ok: true, data: outcome });
           return;
@@ -612,6 +689,8 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
         }
         case 'captions/load-track': {
           if (req.videoId !== nav.videoId) throw youtubeError('stale-video');
+          clearPassiveIntent(); // 后到的明确来源选择优先于之前等待中的原生轨道通知。
+          const revision = ++loadRevision;
           const navigationId = nav.navigationId;
           loadsInFlight++;
           let loaded;
@@ -627,8 +706,11 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
             );
           } finally {
             loadsInFlight--;
+            // 本请求先提交 lastSentTrackKey；随后再合并等待期间的最后选择。
+            queueMicrotask(sendPassiveIntent);
           }
           if (disposed) return;
+          if (revision !== loadRevision) throw cancelledError('caption selection superseded');
           if (
             signal.aborted ||
             nav.navigationId !== navigationId ||
@@ -687,6 +769,7 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
     onChromeChange: () => overlay.updateLayout(),
     onEvent: (e) => {
       if (disposed) return;
+      playbackBuffer.onMediaEvent(e.reason);
       if (e.reason === 'video-replaced' || e.reason === 'play' || e.domEvent === 'loadedmetadata') {
         requestMetadataSoon();
       }
@@ -729,9 +812,26 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
       return;
     }
     if (session && !overlay.mounted) overlay.render();
+    // YouTube 可从自己的缓存切轨而不再请求 timedtext；读取选择不触发网络或切换开关。
+    if (sessionActive() && nav.videoId && loadsInFlight === 0 && !passiveLoading)
+      bridge.requestCaptionSelection(nav.videoId);
   }, timings.overlayCheckMs);
 
   const lifecycleAbort = new AbortController();
+  // Record native toggle intent before its handler changes the video. This also
+  // invalidates an in-flight automatic play when the user explicitly pauses.
+  const playerIntent = (event: Event) => {
+    const target = event.target as Element | null;
+    if (!event.isTrusted || !adapter?.video || !target) return;
+    if (target.closest?.('input, textarea, [contenteditable="true"]')) return;
+    const keyboard = event instanceof KeyboardEvent;
+    if (keyboard && ![' ', 'k', 'K'].includes(event.key)) return;
+    if (!keyboard && !target.closest?.('.ytp-play-button, video')) return;
+    if (keyboard && !adapter.root?.contains(target) && target !== doc.body) return;
+    playbackBuffer.userIntent(adapter.video.paused ? 'play' : 'pause');
+  };
+  doc.addEventListener('click', playerIntent, { capture: true, signal: lifecycleAbort.signal });
+  doc.addEventListener('keydown', playerIntent, { capture: true, signal: lifecycleAbort.signal });
   doc.addEventListener(
     'visibilitychange',
     () => {
@@ -757,8 +857,10 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
     }
     disposed = true;
     const releases: Array<() => void> = [
+      () => playbackBuffer.dispose(),
       () => navAbort.abort(),
       () => clearMetadataTimers(),
+      () => clearPassiveIntent(),
       () => updateStartingPoll(),
       () => {
         if (welcomeTimer !== undefined) win.clearTimeout(welcomeTimer);

@@ -28,6 +28,8 @@ export interface TranscriptRecord {
   sourceLabel?: string;
   /** 最近一次写入该记录的会话。 */
   lastSessionId: string;
+  /** 保存时的非敏感翻译配置，用于恢复时判断已有译文能否继续使用。 */
+  translationFingerprint?: string;
   cues: Cue[];
   coverage: SubtitleCoverage;
   durationMs?: number;

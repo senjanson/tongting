@@ -2,56 +2,61 @@
 
 状态含义：`unknown` 未验证；`verified` 已实际调用验证；`unsupported` 实测不支持；`failed` 实测失败；`mock-only` 仅在模拟环境验证，真实服务待验收。
 
-最后更新：2026-09-16（P0 初版，随阶段推进更新）。
+最后更新：2026-09-17。修复与本轮验证见 [FIXES.md](reviews/2026-09-17/FIXES.md)。
+
+新增同步优先缓冲：完整字幕预翻译和无字幕公开录播音轨预读已接入。真实 YouTube 音轨 → 本地 Whisper → Luna 中文译文已通过短片段实测；暂停/恢复/快速跳转由隔离浏览器测试验证，真实站点长期播放仍未验收。缓冲表示译文就绪，不包含提前合成完整配音音轨。范围和耗时见 [BUFFERED_PLAYBACK.md](reviews/2026-09-17/BUFFERED_PLAYBACK.md)。
 
 ## 1. sub2api 服务（用户实例）
 
-尚未提供 Base URL 与 Key，以下全部为 `unknown`。不因模型名称存在而推断支持。
+已使用用户提供的服务与 Key 实测，默认型号为 `gpt-5.6-luna`。能力仅限本次账号、模型与日期；详细结果见 [LIVE_TEST.md](reviews/2026-09-17/LIVE_TEST.md)。
 
-| 能力                                | 状态    | 验证方式                                                                                         | 备注                                                                |
-| ----------------------------------- | ------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
-| 服务可达 / host 权限                | unknown | 设置页「检查连接」或 `pnpm smoke:sub2api`                                                        |                                                                     |
-| Key 有效                            | unknown | 对选定模型的小规模调用                                                                           | `/models` 成功不代表模型有权限                                      |
-| 模型列表 `/v1/models`               | unknown | 同上                                                                                             | 失败时仍允许手动模型 ID                                             |
-| Responses 文本翻译                  | unknown | 冒烟测试                                                                                         | 首选评测 gpt-5.6-terra                                              |
-| Chat Completions 文本翻译           | unknown | 冒烟测试                                                                                         |                                                                     |
-| 结构化输出（json_schema）           | unknown | 冒烟测试                                                                                         | 不支持时降级为 JSON 提示词 + 严格校验                               |
-| 流式返回（SSE）                     | unknown | 冒烟测试                                                                                         |                                                                     |
-| reasoning 参数（none/low）          | unknown | 冒烟测试                                                                                         | 默认不发送                                                          |
-| 语音识别 `/v1/audio/transcriptions` | unknown | 设置页勾选「允许实际调用」后检查；或 `.env.local` 配置 SUB2API_ASR_MODEL 后 `pnpm smoke:sub2api` | 设置页检查用 1 秒测试音，只验证接口与认证；冒烟测试识别英文语音样本 |
-| 语音合成 `/v1/audio/speech`         | unknown | 同上（SUB2API_TTS_MODEL / SUB2API_TTS_VOICE）                                                    | 通过只说明返回了音频，音质需人耳确认                                |
-| 专用实时翻译 gpt-realtime-translate | unknown | 未实现探测                                                                                       | 可选增强，不阻塞默认链路                                            |
+| 能力                                    | 状态     | 证据与范围                                                |
+| --------------------------------------- | -------- | --------------------------------------------------------- |
+| 服务可达 / Key 有效                     | verified | 真实 Responses 翻译接受凭证；隔离扩展连接检查通过         |
+| 模型列表 `/v1/models`                   | verified | 返回 24 个 ID；界面只显示其中 6 个 GPT-5.6 及以上文本候选 |
+| Responses 文本翻译                      | verified | Luna 英/日/韩短句 → 中文；扩展字幕与本地识别结果实际翻译  |
+| 结构化输出（json_schema）               | verified | 严格格式通过，无需格式修复                                |
+| 流式返回（SSE）                         | verified | Luna 正常收到流式字幕与结束事件                           |
+| Chat Completions                        | unknown  | 本轮未调用，默认使用已验证的 Responses                    |
+| reasoning 参数（none/low）              | unknown  | 本轮默认不发送                                            |
+| 云端语音识别 `/v1/audio/transcriptions` | unknown  | 本轮使用本地 Whisper，未验证云端识别接口                  |
+| 云端语音合成 `/v1/audio/speech`         | unknown  | 本轮使用系统中文声音，未验证云端合成接口                  |
+| 专用实时翻译模型                        | unknown  | 本轮未调用                                                |
+
+`gpt-5.4-mini` 曾被服务列出，但实际请求返回 429（账号池受限），因此没有选为默认；按用户要求，低于 GPT-5.6 的型号也不出现在下拉候选中。
 
 ## 2. 浏览器 / 系统
 
-| 能力                                | 状态     | 证据                           | 备注                                                |
-| ----------------------------------- | -------- | ------------------------------ | --------------------------------------------------- |
-| MV3 扩展加载（Playwright Chromium） | verified | tests/e2e/load.spec.ts         | 四个扩展页面可打开                                  |
-| 真实 Chrome 152 加载 unpacked       | unknown  | 待人工                         |                                                     |
-| tabCapture → offscreen → 原声回放   | unknown  | 见 docs/validation/p0-audio.md | P0 实验进行中                                       |
-| popup / 侧栏点击的用户手势链路      | unknown  | 待人工                         | 自动化无法模拟工具栏点击                            |
-| chrome.tts 中文声音                 | unknown  | 见 docs/validation/p0-audio.md | macOS 系统有 zh_CN 声音（say -v '?'），扩展内待验证 |
-| AudioWorklet 在扩展 CSP 下可用      | unknown  | 同上                           |                                                     |
+| 能力                                | 状态     | 证据                                         | 备注                                                      |
+| ----------------------------------- | -------- | -------------------------------------------- | --------------------------------------------------------- |
+| MV3 扩展加载（Playwright Chromium） | verified | tests/e2e/load.spec.ts                       | 四个扩展页面可打开                                        |
+| 真实 Chrome 152 加载 unpacked       | unknown  | 待人工                                       |                                                           |
+| tabCapture → offscreen → 原声回放   | verified | `audio-p0.spec.ts`、`full-chain-asr.spec.ts` | 本机 Chromium；allowlist 替代用户手势，输入为合成测试音频 |
+| popup / 侧栏点击的用户手势链路      | unknown  | 待人工                                       | 自动化无法模拟工具栏点击                                  |
+| chrome.tts 中文声音                 | verified | 同上及 `full-chain-dubbing.spec.ts`          | 扩展内实际朗读与开始／停止事件；包含 ASR 迟到译文配音     |
+| AudioWorklet 在扩展 CSP 下可用      | verified | `audio-p0.spec.ts`                           | 本机 Chromium 实际采集、分段验证                          |
 
 ## 3. YouTube
 
-本机当前无法访问 youtube.com，以下均无法实测。
+代理开启后可访问真实 YouTube。MIT 45 分钟课程与 freeCodeCamp 长课程在隔离 Chromium 内约 40～50 秒后报播放错误；有／无扩展及有／无界面浏览器对照均复现。此环境下不能认证连续观看能力。
 
-| 能力                          | 状态    | 备注                               |
-| ----------------------------- | ------- | ---------------------------------- |
-| 播放器时间/暂停/跳转读取      | unknown | 本地夹具页验证中（非真实 YouTube） |
-| SPA 视频身份变化              | unknown | 同上                               |
-| 完整字幕轨道读取（timedtext） | unknown | 可能需要播放器自身生成的请求参数   |
-| 仅当前显示字幕（增量）        | unknown |                                    |
-| 广告识别                      | unknown |                                    |
-| 直播 / Shorts / 画中画        | unknown | 未验证前显示「未验证」             |
+真实 MIT 视频的短探针已通过：本地识别 → Luna → 当前可见中文字幕 → 实际系统中文朗读，4 条译文、3 句正常朗读结束，停止后无捕获或继续朗读。首句朗读约晚于原句结束 6.6 秒。详见 [LIVE_TEST.md](reviews/2026-09-17/LIVE_TEST.md)；不等于长时运行或真人听感通过。
+
+| 能力                          | 状态               | 备注                                                                      |
+| ----------------------------- | ------------------ | ------------------------------------------------------------------------- |
+| 播放器时间读取                | verified（短时）   | 真实 MIT 视频时长 2738.401 秒；持续播放、暂停和跳转的完整验收仍待完成     |
+| SPA 视频身份变化              | unknown            | 同上                                                                      |
+| 完整字幕轨道读取（timedtext） | failed（当前环境） | 请求返回 HTTP 200、空正文，无扩展对照也相同；另已修复真实轨道请求名称映射 |
+| 仅当前显示字幕（增量）        | unknown            | 本次原生 CC 未生成可读片段，未完成真实验收                                |
+| 广告识别                      | unknown            |                                                                           |
+| 直播 / Shorts / 画中画        | unknown            | 未验证前显示「未验证」                                                    |
 
 ## 4. 语音识别后端
 
 | 后端                                     | 状态                         | 备注                                                                                                                                                                |
 | ---------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 本地 faster-whisper 服务（独立运行）     | verified（2026-09-16，本机） | small 模型 CPU int8（实际 int8_float32）；英/日/中合成语音 5 秒段约 2.2 s（RTF≈0.44）、识别文本与语言检测正确；连续 75 次请求无内存单调增长；详见 docs/ASR_LOCAL.md |
-| 本地识别服务 ↔ 扩展 offscreen 联调       | unknown                      | 尚未验证 Chrome 实际发出的 Origin / Sec-Fetch 头与主机权限访问                                                                                                      |
+| 本地识别服务 ↔ 扩展 offscreen 联调       | verified（本机 Chromium）    | 合成测试视频经过真实 tabCapture、Whisper small、Luna 与系统中文配音通过；真实 YouTube 已短时生成译文，长时稳定性和真实工具栏手势仍待验收                            |
 | 真实视频音频（音乐、噪声、多人）识别质量 | unknown                      | 仅测试了 macOS `say` 合成语音                                                                                                                                       |
 | sub2api 语音识别                         | unknown                      | 见第 1 节                                                                                                                                                           |
 

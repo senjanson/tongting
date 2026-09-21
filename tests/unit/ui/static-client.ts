@@ -50,6 +50,8 @@ export class StaticClient implements UiClient {
   sendCommand<C extends UiCommand>(command: C): Promise<ResultOf<C>> {
     this.sent.push(command);
     const handler = this.handlers[command.kind];
+    if (!handler && command.kind === 'tts/voices')
+      return Promise.resolve({ voices: [] } as unknown as ResultOf<C>);
     if (!handler) return Promise.resolve({ accepted: true } as ResultOf<C>);
     try {
       return Promise.resolve(handler(command) as ResultOf<C>);

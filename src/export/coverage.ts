@@ -54,6 +54,8 @@ export function sourceModeLabel(mode: SourceMode | undefined): string {
       return '增量字幕（仅读取当前显示的字幕）';
     case 'asr':
       return '语音识别';
+    case 'asr-preload':
+      return '音频预读识别';
     case 'none':
       return '暂无字幕来源';
     default:
@@ -67,7 +69,12 @@ export function isCompleteCoverage(
   sourceMode?: SourceMode,
 ): boolean {
   if (!coverage?.complete) return false;
-  if (sourceMode === 'asr' || sourceMode === 'incremental-captions' || sourceMode === 'none')
+  if (
+    sourceMode === 'asr' ||
+    sourceMode === 'asr-preload' ||
+    sourceMode === 'incremental-captions' ||
+    sourceMode === 'none'
+  )
     return false;
   return true;
 }
@@ -82,7 +89,9 @@ export function describeCoverage(
   sourceMode?: SourceMode,
 ): string {
   if (!coverage) {
-    return sourceMode === 'asr' || sourceMode === 'incremental-captions'
+    return sourceMode === 'asr' ||
+      sourceMode === 'asr-preload' ||
+      sourceMode === 'incremental-captions'
       ? `覆盖范围未知（部分字幕，非全视频，${sourceModeLabel(sourceMode)}）`
       : '覆盖范围未知';
   }
@@ -91,7 +100,7 @@ export function describeCoverage(
     return duration ? `完整字幕轨道（视频时长 ${formatDurationZh(duration)}）` : '完整字幕轨道';
   }
   const modeNote =
-    sourceMode === 'asr' || sourceMode === 'incremental-captions'
+    sourceMode === 'asr' || sourceMode === 'asr-preload' || sourceMode === 'incremental-captions'
       ? `，${sourceModeLabel(sourceMode)}`
       : '';
   const ranges = mergeRanges(coverage.ranges);

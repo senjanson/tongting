@@ -330,6 +330,44 @@ export function mapHttpStatus(
     });
   const code = serviceCode?.toLowerCase() ?? '';
   switch (true) {
+    // 本地预读使用独立错误码；只映射已知语义，不直接展示可能包含凭证/签名 URL 的服务端正文。
+    case status === 503 && local && code === 'youtube_preload_unavailable':
+      return info({
+        code: 'preload-unavailable',
+        category: 'config',
+        retryable: false,
+        message:
+          '本地识别服务未启用音频预读，或缺少依赖。请以 --youtube-preload 启动服务，并确认已安装 yt-dlp、ffmpeg 和 Node.js；也可切换为「连续播放」。',
+      });
+    case status === 422 && local && code === 'youtube_unsupported':
+      return info({
+        code: 'preload-video-unsupported',
+        category: 'unsupported',
+        retryable: false,
+        message:
+          '此视频不支持音频预读，可能为直播、受限视频或没有可用音频。请使用普通公开视频；录播视频也可尝试「连续播放」。',
+      });
+    case status === 416 && local && code === 'youtube_range_unavailable':
+      return info({
+        code: 'preload-range-unavailable',
+        category: 'unsupported',
+        retryable: false,
+        message: '预读位置已超过视频结尾，请跳回视频有效时间后重试。',
+      });
+    case status === 502 && local && code === 'youtube_audio_failed':
+      return info({
+        code: 'preload-audio-failed',
+        category: 'network',
+        retryable: true,
+        message: '无法读取视频音频，请检查视频访问权限、网络或代理后重试；也可切换为「连续播放」。',
+      });
+    case status === 504 && local && code === 'youtube_preload_timeout':
+      return info({
+        code: 'preload-timeout',
+        category: 'timeout',
+        retryable: true,
+        message: '视频音频预读超时，请检查网络或代理后重试；也可切换为「连续播放」。',
+      });
     case status === 400 && local && /language/.test(code):
       return info({
         code: 'asr-local-language-unsupported',
@@ -415,14 +453,14 @@ export function mapHttpStatus(
         retryable: true,
         message: `${label}繁忙或限流（429），稍后重试。`,
       });
-    case status === 503 && local && /load/.test(code):
+    case status === 503 && local && code === 'model_loading':
       return info({
         code: 'asr-local-model-loading',
         category: 'server',
         retryable: true,
         message: '本地识别模型正在加载，请稍候。',
       });
-    case status === 503 && local && /unavailable/.test(code):
+    case status === 503 && local && code === 'model_unavailable':
       return info({
         code: 'asr-local-model-unavailable',
         category: 'server',

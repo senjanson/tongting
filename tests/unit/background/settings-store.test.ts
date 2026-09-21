@@ -46,10 +46,30 @@ describe('settings store', () => {
     local.failWrites = true;
     expect(await saveSettings(local, defaultSettings())).toBe(false);
   });
+
+  it('upgrades the old default to persistent credentials once, preserving all unrelated settings', async () => {
+    const local = new MemoryArea();
+    const old = {
+      ...defaultSettings(),
+      schemaVersion: 1,
+      rememberCredentials: false,
+      targetLanguage: 'ja',
+    };
+    local.data.set('settings', old);
+    const loaded = await loadSettings(local, logger);
+    expect(loaded).toMatchObject({
+      needsPersistence: true,
+      settings: { schemaVersion: 2, rememberCredentials: true, targetLanguage: 'ja' },
+    });
+    await saveSettings(local, { ...loaded.settings, rememberCredentials: false });
+    const next = await loadSettings(local, logger);
+    expect(next.settings.rememberCredentials).toBe(false);
+    expect(next.needsPersistence).toBe(false);
+  });
 });
 
 describe('secrets', () => {
-  it('stores in session by default, moves to secure local when remembered, and never keeps both copies', async () => {
+  it('stores in session when explicitly requested, moves to secure local when remembered, and never keeps both copies', async () => {
     const areas = {
       local: new MemoryArea(),
       session: new MemoryArea(),

@@ -45,7 +45,7 @@ const SegmentSchema = z.object({
   noSpeechProb: z.number().min(0).max(1).optional(),
 });
 
-const TranscriptionSchema = z.object({
+export const TranscriptionSchema = z.object({
   text: z.string().max(8_000),
   language: z.string().max(20).optional(),
   languageProbability: z.number().min(0).max(1).optional(),

@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
+import type { UiToBackground } from '@src/messaging/ui-protocol';
 import { OptionsApp } from '@src/ui/options/OptionsApp';
 import { PopupApp } from '@src/ui/popup/PopupApp';
 import { makeSnapshot } from './fixtures';
@@ -47,7 +48,28 @@ describe('popup', () => {
 });
 
 describe('options page', () => {
-  it('never echoes the key, shows honest storage wording and presets with real model names', async () => {
+  it('retains a key when durable saving fails and clears the draft only after a successful retry', async () => {
+    let persisted = false;
+    useWorker(
+      createFakeWorker(makeSnapshot(), {
+        'credentials/set': () => ({ persisted, storage: 'local' }),
+      }),
+    );
+    render(<OptionsApp />);
+    const key = (await screen.findByLabelText('API Key')) as HTMLInputElement;
+    fireEvent.change(key, { target: { value: 'sk-fake-options-retry' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存 Key' }));
+    await screen.findByText('Key 未能完整保存，请重试保存后再重新加载扩展。');
+    expect(key.value).toBe('sk-fake-options-retry');
+    persisted = true;
+    fireEvent.click(screen.getByRole('button', { name: '保存 Key' }));
+    await waitFor(() => expect(key.value).toBe(''));
+    expect(worker.commands().filter((command) => command.kind === 'credentials/set')).toHaveLength(
+      2,
+    );
+  });
+
+  it('never echoes the key and keeps the current model separate from discovered models', async () => {
     useWorker(
       createFakeWorker(
         makeSnapshot({
@@ -63,15 +85,16 @@ describe('options page', () => {
     expect(screen.getByText(/当前 Key：••••abcd，仅保存在本次浏览器会话/)).toBeTruthy();
     expect(screen.getByText(/它不是安全保险箱/)).toBeTruthy();
 
-    for (const model of ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra']) {
-      const preset = within(screen.getByRole('group', { name: '模型预设' }))
-        .getByText(model)
-        .closest('button')!;
-      expect(within(preset).getByText('候选预设 · 需实测可用')).toBeTruthy();
-    }
+    const model = screen.getByRole('combobox', { name: '翻译模型' }) as HTMLSelectElement;
+    expect(model.value).toBe('gpt-5.6-luna');
+    expect(model.disabled).toBe(true);
+    expect(screen.queryByRole('group', { name: '模型预设' })).toBeNull();
+    expect(screen.getByRole('button', { name: '获取模型列表' })).toBeTruthy();
 
     fireEvent.change(keyInput, { target: { value: 'sk-test-not-real-0000' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: '记住在本机' }));
+    expect((screen.getByRole('checkbox', { name: '记住在本机' }) as HTMLInputElement).checked).toBe(
+      true,
+    );
     fireEvent.click(screen.getByRole('button', { name: '保存 Key' }));
     await waitFor(() =>
       expect(worker.commands()).toContainEqual({
@@ -280,4 +303,108 @@ describe('options page', () => {
     expect(screen.getAllByText('未检测').length).toBeGreaterThan(0);
     expect(document.body.textContent).not.toContain('已验证');
   });
+});
+
+describe('settings draft ownership', () => {
+  it('keeps newer text, including an ABA edit, when an older save succeeds', async () => {
+    const snapshot = makeSnapshot();
+    const fake = createFakeWorker(snapshot);
+    let pending: { requestId: string } | undefined;
+    const port = fake.port as {
+      postMessage(message: UiToBackground): void;
+    };
+    const post = port.postMessage.bind(port);
+    port.postMessage = (message) => {
+      if (message.type === 'command' && message.command.kind === 'settings/update')
+        pending = message;
+      else post(message);
+    };
+    useWorker(fake);
+    render(<OptionsApp />);
+    const input = (await screen.findByLabelText('模型 ID（可手动填写）')) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'model-first' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存模型' }));
+    fireEvent.change(input, { target: { value: 'model-second' } });
+    fireEvent.change(input, { target: { value: 'model-first' } });
+    await act(async () =>
+      fake.emit({
+        type: 'result',
+        requestId: pending!.requestId,
+        ok: true,
+        data: { persisted: true },
+      }),
+    );
+    expect(input.value).toBe('model-first');
+    expect((screen.getByRole('button', { name: '保存模型' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+});
+
+it.each([
+  ['API Key', '保存 Key', 'credentials/set', 'sk-test-first', 'sk-test-next'],
+  ['配对令牌', '保存令牌', 'asr/set-token', 'pair-first', 'pair-next'],
+  [
+    'sub2api 服务地址（Base URL）',
+    '保存地址',
+    'settings/update',
+    'https://first.example.com',
+    'https://next.example.com',
+  ],
+  ['本地服务地址', '保存地址', 'settings/update', 'http://127.0.0.1:8766', 'http://127.0.0.1:8767'],
+])(
+  'preserves a newer %s draft while the earlier save completes',
+  async (label, button, kind, first, next) => {
+    const fake = createFakeWorker(makeSnapshot({}, { asr: { backend: 'local' } }));
+    let pending: { requestId: string } | undefined;
+    const port = fake.port as {
+      postMessage(message: UiToBackground): void;
+    };
+    const post = port.postMessage.bind(port);
+    port.postMessage = (message) => {
+      if (message.type === 'command' && message.command.kind === kind) pending = message;
+      else post(message);
+    };
+    useWorker(fake);
+    render(<OptionsApp />);
+    const input = (await screen.findByLabelText(label)) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: first } });
+    const saveButton =
+      button === '保存地址'
+        ? within(input.closest('section')!).getByRole('button', { name: button })
+        : screen.getByRole('button', { name: button });
+    fireEvent.click(saveButton);
+    expect(pending).toBeTruthy();
+    fireEvent.change(input, { target: { value: next } });
+    await act(async () =>
+      fake.emit({
+        type: 'result',
+        requestId: pending!.requestId,
+        ok: true,
+        data: { persisted: true, storage: 'session' },
+      }),
+    );
+    expect(input.value).toBe(next);
+    expect((saveButton as HTMLButtonElement).disabled).toBe(false);
+  },
+);
+
+it('keeps credential cleanup retry available after in-memory revocation', async () => {
+  useWorker(
+    createFakeWorker(
+      makeSnapshot(
+        {
+          credential: { configured: false, generation: 2, storage: 'none', cleanupPending: true },
+          asrToken: { configured: false, generation: 2, storage: 'none', cleanupPending: true },
+        },
+        { asr: { backend: 'local' } },
+      ),
+    ),
+  );
+  render(<OptionsApp />);
+  expect(await screen.findByRole('button', { name: '重试清理 Key' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: '重试清理令牌' })).toBeTruthy();
+  expect((screen.getByRole('button', { name: '删除 Key' }) as HTMLButtonElement).disabled).toBe(
+    false,
+  );
 });

@@ -174,8 +174,8 @@ describe('extractPlayerResponse (MAIN world)', () => {
       lengthSeconds: 213,
       isLive: false,
       tracks: [
-        { languageCode: 'en', kind: null, name: 'English', vssId: '.en' },
-        { languageCode: 'en', kind: 'asr', name: 'English (auto)', vssId: 'a.en' },
+        { languageCode: 'en', kind: null, name: 'English', vssId: '.en', requestName: '' },
+        { languageCode: 'en', kind: 'asr', name: 'English (auto)', vssId: 'a.en', requestName: '' },
       ],
       defaultTrackIndex: 0,
     });

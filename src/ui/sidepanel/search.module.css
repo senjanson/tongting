@@ -1,0 +1,194 @@
+.pane {
+  padding: 18px 16px 22px;
+  min-width: 0;
+}
+.title {
+  margin: 0 0 5px;
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.3px;
+}
+.intro {
+  margin: 0 0 18px;
+  color: var(--tt-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.label {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 12px;
+}
+.input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  padding: 11px 12px;
+  font: inherit;
+  line-height: 1.6;
+  color: var(--tt-text);
+  border: 1px solid var(--tt-line-strong);
+  border-radius: 9px;
+  background: var(--tt-soft);
+}
+.input:disabled {
+  opacity: 0.7;
+}
+.inputMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 7px 0 12px;
+  font-size: 11px;
+  color: var(--tt-muted);
+}
+.resultHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 22px 0 3px;
+  font-size: 12px;
+}
+.resultHead > :last-child {
+  color: var(--tt-muted);
+  font-size: 11px;
+}
+.results {
+  min-width: 0;
+}
+.result {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--tt-line);
+}
+.result:last-child {
+  border-bottom: 0;
+}
+.category {
+  color: var(--tt-accent);
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+.english {
+  margin: 0 0 5px;
+  font-size: 14px;
+  line-height: 1.55;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.meaning {
+  margin: 0;
+  color: var(--tt-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 11px;
+}
+.searchButton {
+  background: var(--tt-tint);
+  color: var(--tt-accent);
+  border-color: transparent;
+}
+.editNote,
+.previous {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--tt-muted);
+}
+.error {
+  font-size: 12px;
+  color: var(--tt-danger);
+  margin: 10px 0;
+  line-height: 1.6;
+}
+.config {
+  margin: 0 0 16px;
+  padding: 12px;
+  border: 1px solid var(--tt-warning-line);
+  background: var(--tt-warning-bg);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.config p {
+  margin: 0 0 9px;
+}
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 26px 13px;
+  color: var(--tt-muted);
+  font-size: 12px;
+}
+.empty p {
+  margin: 0;
+  max-width: 245px;
+}
+.history {
+  margin-top: 14px;
+  border-top: 1px solid var(--tt-line);
+  padding-top: 14px;
+  font-size: 12px;
+}
+.history summary {
+  cursor: pointer;
+  color: var(--tt-muted);
+}
+.history summary svg {
+  margin: 0 5px -2px 0;
+}
+.history summary span {
+  margin-left: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.history ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 10px;
+}
+.historyHint {
+  margin: 9px 0;
+  color: var(--tt-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.historyItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 11px 0;
+  border: 0;
+  border-bottom: 1px solid var(--tt-line);
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: var(--tt-text);
+  cursor: pointer;
+}
+.historyItem > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.historyItem small {
+  display: block;
+  margin-top: 4px;
+  color: var(--tt-muted);
+  font-size: 11px;
+}
+.historyItem svg {
+  flex-shrink: 0;
+}
+@media (pointer: coarse) {
+  .input {
+    font-size: 16px;
+  }
+}

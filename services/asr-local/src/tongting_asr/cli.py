@@ -84,6 +84,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="只接受该扩展 ID 的 Origin（可重复；默认接受任意 chrome-extension:// 来源，但仍需令牌）",
     )
     serve.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
+    serve.add_argument(
+        "--youtube-preload", action="store_true",
+        help="允许扩展预读普通 YouTube 公开视频音频（需 youtube 可选依赖、ffmpeg 和 Node.js）",
+    )
     _add_model_options(serve)
     _add_data_dir(serve)
     serve.set_defaults(handler=cmd_serve)
@@ -152,6 +156,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         port=args.port,
         queue_size=args.queue_size,
         allowed_extension_ids=frozenset(args.allow_extension_id),
+        youtube_preload=args.youtube_preload,
     )
     model_config = _model_config(args)
     setup_logging(args.log_level)
@@ -189,6 +194,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
             compute_type=model_config.compute_type,
         )
         app = create_app(config=service_config, manager=manager, verify_token=FileTokenVerifier(store))
+        if service_config.youtube_preload and not app.state.youtube.available:
+            logger.warning("YouTube 预读不可用：请安装 youtube 可选依赖、ffmpeg 和 Node.js。")
         logger.info(
             "tongting-asr %s 监听 http://127.0.0.1:%d（仅本机）。模型在后台准备，按 Ctrl+C 停止。",
             __version__,

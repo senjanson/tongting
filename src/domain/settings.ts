@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { DEFAULT_TARGET_LANGUAGE } from './languages';
+import { DEFAULT_TEXT_MODEL } from './translation-models';
 
-export const SETTINGS_SCHEMA_VERSION = 1;
+export const SETTINGS_SCHEMA_VERSION = 2;
 
 export const TranslationStyleSchema = z.enum(['natural', 'faithful', 'concise', 'terminology']);
 export type TranslationStyle = z.infer<typeof TranslationStyleSchema>;
@@ -28,6 +29,8 @@ export const CaptionSettingsSchema = z.object({
 export type CaptionSettings = z.infer<typeof CaptionSettingsSchema>;
 
 export const AudioSettingsSchema = z.object({
+  /** 配音会话内全程静音原声；旧配置缺少此字段时也采用静音。 */
+  originalMode: z.enum(['mute', 'mix']).default('mute'),
   /** 原声音量（0..1），仅在配音/捕获模式下由扩展调整。 */
   originalVolume: z.number().min(0).max(1).default(1),
   dubVolume: z.number().min(0).max(1).default(1),
@@ -46,7 +49,7 @@ export const ProviderSettingsSchema = z.object({
   protocol: TextProtocolSchema.default('auto'),
   /** 自动检测后确定的协议；配置变化时清空。 */
   detectedProtocol: z.enum(['responses', 'chat']).optional(),
-  model: z.string().max(200).default('gpt-5.6-terra'),
+  model: z.string().max(200).default(DEFAULT_TEXT_MODEL),
   /** 推理强度参数：omit 表示不发送该字段。需实测服务是否接受。 */
   reasoningEffort: z.enum(['omit', 'none', 'low']).default('omit'),
   streaming: z.boolean().default(false),
@@ -85,11 +88,14 @@ export const SettingsSchema = z.object({
   asr: AsrSettingsSchema.default(AsrSettingsSchema.parse({})),
   tts: TtsSettingsSchema.default(TtsSettingsSchema.parse({})),
   prefetch: z.boolean().default(true),
+  /** 录播先准备译文再播放；连续模式保留边播边译的行为。 */
+  playbackMode: z.enum(['buffered', 'continuous']).default('buffered'),
+  bufferSeconds: z.union([z.literal(5), z.literal(10), z.literal(20)]).default(10),
   pauseDubWithVideo: z.boolean().default(true),
   cacheTranslations: z.boolean().default(true),
   glossary: z.array(GlossaryEntrySchema).max(500).default([]),
-  /** 是否把凭证保存在本机（chrome.storage.local）；否则仅保存在浏览器会话。 */
-  rememberCredentials: z.boolean().default(false),
+  /** 默认保存在扩展专属 IndexedDB；主动取消后仅存于临时浏览器会话。 */
+  rememberCredentials: z.boolean().default(true),
   layout: z.enum(['sidebar']).default('sidebar'),
 });
 export type Settings = z.infer<typeof SettingsSchema>;

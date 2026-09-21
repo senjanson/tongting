@@ -39,6 +39,8 @@ export interface TranscriptViewProps {
   seekUnavailableReason?: string;
   onQuote?: (cue: Cue) => void;
   demo?: boolean;
+  /** 侧栏沿用原型密度，显示选项折叠到详情。 */
+  compact?: boolean;
   /** 初始视图（默认双语）。 */
   initialView?: CueViewMode;
   /** 全片补译（仅实时会话且来源为完整字幕轨道时提供）。 */
@@ -70,6 +72,7 @@ export function TranscriptView({
   seekUnavailableReason,
   onQuote,
   demo,
+  compact = false,
   initialView = 'bilingual',
   backfill,
 }: TranscriptViewProps) {
@@ -151,7 +154,7 @@ export function TranscriptView({
   const partial = !(source.coverage?.complete && source.sourceMode === 'full-track');
 
   return (
-    <div className={styles.root}>
+    <div className={cx(styles.root, compact && styles.compact)}>
       <div className={styles.toolbar}>
         <div className={styles.search}>
           <Search size={15} aria-hidden="true" />
@@ -170,19 +173,34 @@ export function TranscriptView({
           pressed={favoritesOnly}
           onClick={() => setFavoritesOnly((v) => !v)}
         />
+        {compact && (
+          <IconButton
+            label="跟随播放"
+            icon={<Locate size={16} aria-hidden="true" />}
+            pressed={following}
+            disabled={!canFollow}
+            onClick={() => setFollowing(true)}
+          />
+        )}
       </div>
-      <div className={styles.viewRow}>
-        <Segmented<CueViewMode>
-          label="字幕显示内容"
-          value={view}
-          onChange={setView}
-          options={[
-            { value: 'bilingual', label: '双语' },
-            { value: 'translation', label: '译文' },
-            { value: 'original', label: '原文' },
-          ]}
-        />
-      </div>
+      <details className={styles.displayOptions} open={!compact || undefined}>
+        <summary hidden={!compact}>显示与覆盖详情</summary>
+        <div className={styles.viewRow}>
+          <Segmented<CueViewMode>
+            label="字幕显示内容"
+            value={view}
+            onChange={setView}
+            options={[
+              { value: 'bilingual', label: '双语' },
+              { value: 'translation', label: '译文' },
+              { value: 'original', label: '原文' },
+            ]}
+          />
+        </div>
+        <div className={styles.coverage} data-partial={partial || undefined}>
+          {coverageText}
+        </div>
+      </details>
       <div className={styles.meta}>
         <span>
           {loading ? '正在同步字幕…' : `${visible.length} / ${cues.length} 条字幕`}
@@ -197,9 +215,6 @@ export function TranscriptView({
                 ? '正在读取收藏…'
                 : `${favorites.ids.size} 条收藏`}
         </span>
-      </div>
-      <div className={styles.coverage} data-partial={partial || undefined}>
-        {coverageText}
       </div>
       {backfill && backfill.total > 0 && (backfill.enabled || backfill.done < backfill.total) && (
         <div className={styles.meta}>

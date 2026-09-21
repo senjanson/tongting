@@ -249,6 +249,26 @@ describe('sub2api TTS engine (via offscreen, unverified against real service)', 
     expect(second).toEqual([]);
   });
 
+  it('review #7: rebuilding an engine never reuses a stopped physical operation id', () => {
+    const off = fakeOffscreen();
+    const params = { offscreen: off.client, getRoute: () => route, getOwner: () => owner };
+    const first = createSub2apiTtsEngine(params);
+    first.speak(utt('dub-0-1'), () => undefined);
+    const oldId = (off.requests[0] as { utteranceId: string }).utteranceId;
+    first.stop();
+    first.dispose?.();
+    const second = createSub2apiTtsEngine(params);
+    const events: TtsEngineEvent[] = [];
+    second.speak(utt('dub-0-1'), (e) => events.push(e));
+    const newId = (off.requests.at(-1) as { utteranceId: string }).utteranceId;
+    expect(newId).not.toBe(oldId);
+    off.emit({ kind: 'tts/event', utteranceId: oldId, event: 'interrupted' });
+    expect(events).toEqual([]);
+    off.emit({ kind: 'tts/event', utteranceId: newId, event: 'start' });
+    expect(events).toEqual([{ type: 'start', utteranceId: 'dub-0-1' }]);
+    second.dispose?.();
+  });
+
   it('reports configuration and request errors asynchronously', async () => {
     const off = fakeOffscreen();
     let r: typeof route | null = null;

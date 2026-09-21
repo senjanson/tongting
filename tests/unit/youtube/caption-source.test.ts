@@ -125,6 +125,7 @@ describe('caption source', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(bridge.loadTrack).toHaveBeenCalledWith({
       commandId: 'cmd1',
+      ownerId: expect.any(String),
       videoId: A,
       languageCode: 'en',
       kind: 'standard',
@@ -140,7 +141,11 @@ describe('caption source', () => {
     expect(JSON.stringify(loaded)).not.toContain('SECRET');
     expect(source.changedNativeCaptions).toBe(true);
     source.restoreNativeCaptions();
-    expect(bridge.restoreCaptions).toHaveBeenCalledWith({ commandId: 'cmd2', videoId: A });
+    expect(bridge.restoreCaptions).toHaveBeenCalledWith({
+      commandId: 'cmd2',
+      videoId: A,
+      ownerId: bridge.loadTrack.mock.calls[0]![0].ownerId,
+    });
     expect(source.changedNativeCaptions).toBe(false);
     // 再次请求：命中缓存，不再驱动播放器。
     await expect(source.loadTrack({ trackKey: '.en' })).resolves.toBe(loaded);

@@ -7,10 +7,24 @@ import {
   applySettingsPatch,
   defaultSettings,
   SettingsPatchSchema,
+  SettingsSchema,
   translationFingerprint,
   type SettingsPatch,
 } from '@src/domain/settings';
 import { UiCommandSchema } from '@src/messaging/ui-protocol';
+
+it('defaults both fresh and existing saved audio settings to continuous original silence', () => {
+  const fresh = defaultSettings();
+  expect(fresh.audio.originalMode).toBe('mute');
+  const { originalMode: _mode, ...oldAudio } = fresh.audio;
+  const migrated = SettingsSchema.parse({ ...fresh, audio: { ...oldAudio, originalVolume: 0.8 } });
+  expect(migrated.audio).toMatchObject({ originalMode: 'mute', originalVolume: 0.8 });
+  const mix = applySettingsPatch(migrated, { audio: { originalMode: 'mix' } });
+  expect(
+    applySettingsPatch(mix, SettingsPatchSchema.parse({ audio: { dubVolume: 0.4 } })).audio
+      .originalMode,
+  ).toBe('mix');
+});
 
 describe('cue helpers', () => {
   it('merges overlapping and touching ranges', () => {

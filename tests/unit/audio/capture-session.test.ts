@@ -133,6 +133,40 @@ describe('CaptureSession', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
+  it('applies silence requested during audio startup before connecting output, while recognition still receives PCM', async () => {
+    const { deps, events, ctx, worklets, transcribeCalls } = setup();
+    const gate = deferred<void>();
+    ctx.addModuleImpl = () => gate.promise;
+    const session = new CaptureSession(request(), deps);
+    const starting = session.start();
+    await vi.advanceTimersByTimeAsync(0);
+    session.setOriginalGain(0, 0);
+    gate.resolve();
+    await starting;
+    expect(ctx.gains[0]!.gain.value).toBe(0);
+    expect(ctx.sources[0]!.connections).toEqual([ctx.gains[0], worklets[0]]);
+    pump(
+      ctx,
+      worklets[0]!,
+      join(tone(3500, SR), new Float32Array(Math.round(0.4 * SR)), tone(2500, SR)),
+      0,
+    );
+    session.addAnchor(anchor({ epochMs: T0 + 8970, mediaTimeMs: 68000 }));
+    await vi.advanceTimersByTimeAsync(400);
+    expect(transcribeCalls).toHaveLength(1);
+    const samples = new Int16Array(transcribeCalls[0]!.wav, 44);
+    expect(samples.some((value) => value !== 0)).toBe(true);
+    transcribeCalls[0]!.d.resolve({
+      text: 'Audio still recognized',
+      language: 'en',
+      durationMs: 3900,
+      segments: [{ text: 'Audio still recognized', startMs: 0, endMs: 3000 }],
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events.some((event) => event.kind === 'asr/result')).toBe(true);
+    await session.stop('stopped');
+  });
+
   it('builds the graph: source → original gain → destination, and source → PCM tap (before gain)', async () => {
     const { deps, events, ctx, worklets } = setup();
     const session = new CaptureSession(request(), deps);

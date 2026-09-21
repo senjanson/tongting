@@ -597,6 +597,12 @@ describe('offscreen host', () => {
       anchor: { ...anchor, discontinuityId: 5 },
     });
     request(port, { kind: 'capture/set-epoch', leaseId: 'lease-eee-00002', epoch: 4 });
+    request(port, {
+      kind: 'audio/original-gain',
+      leaseId: 'lease-eee-00002',
+      gain: 0.3,
+      rampMs: 150,
+    });
     await vi.advanceTimersByTimeAsync(0);
     expect(port.replies().find((r) => r.requestId === renew)).toMatchObject({ ok: true });
     await vi.advanceTimersByTimeAsync(20);
@@ -604,6 +610,26 @@ describe('offscreen host', () => {
       expect.objectContaining({ discontinuityId: 5 }),
     );
     expect(sessions[1]!.setEpoch).toHaveBeenCalledWith(4);
+    const current = sessions[1]!;
+    expect(current.setOriginalGain).toHaveBeenCalledWith(0.3, 150);
+    expect(current.setOriginalGain.mock.invocationCallOrder[0]).toBeLessThan(
+      current.start.mock.invocationCallOrder[0]!,
+    );
+    // 新会话仍在获取音频时切换到静音；完成启动后不能用较旧的排队值覆盖它。
+    request(port, {
+      kind: 'audio/original-gain',
+      leaseId: 'lease-eee-00002',
+      gain: 0,
+      rampMs: 0,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(current.setOriginalGain).toHaveBeenLastCalledWith(0, 0);
+    current.startGate.resolve();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(current.setOriginalGain.mock.calls).toEqual([
+      [0.3, 150],
+      [0, 0],
+    ]);
     const disposing = host.dispose();
     await vi.advanceTimersByTimeAsync(10);
     await disposing;

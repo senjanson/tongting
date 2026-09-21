@@ -7,7 +7,12 @@
 import { z } from 'zod';
 import type { CaptionTrackInfo } from '../domain/session';
 import { MAX_CAPTION_BODY_CHARS } from '../captions/normalize';
-import { BRIDGE_TAG, type DistributiveOmit, type IsolatedToBridge } from './bridge/protocol';
+import {
+  BRIDGE_TAG,
+  trackNameFromVssId,
+  type DistributiveOmit,
+  type IsolatedToBridge,
+} from './bridge/protocol';
 import { VIDEO_ID_RE } from './video-id';
 
 const VideoId = z.string().regex(VIDEO_ID_RE);
@@ -23,6 +28,7 @@ const BridgeTrackSchema = z.object({
   kind: z.string().max(20).nullable(),
   name: z.string().max(200),
   vssId: z.string().max(100),
+  requestName: z.string().max(200).optional(),
 });
 
 /** 可选字段非法时只丢弃该字段；单条非法轨道只丢弃该轨道（整体结构仍需合法）。 */
@@ -72,6 +78,24 @@ export const BridgeCommandResultSchema = z.object({
   fetched: z.boolean().optional(),
 });
 
+export const BridgeCaptionsChangedSchema = z.object({
+  ...Envelope,
+  type: z.literal('captions-changed'),
+  commandId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  ownerId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+});
+export type BridgeCaptionsChangedMsg = z.infer<typeof BridgeCaptionsChangedSchema>;
+
+export const BridgeCaptionSelectionSchema = z.object({
+  ...Envelope,
+  type: z.literal('caption-selection'),
+  videoId: VideoId,
+  languageCode: LanguageCode,
+  kind: z.enum(['asr', 'standard']),
+  vssId: z.string().max(100),
+});
+export type BridgeCaptionSelectionMsg = z.infer<typeof BridgeCaptionSelectionSchema>;
+
 export type BridgePlayerResponseMsg = z.infer<typeof BridgePlayerResponseSchema>;
 export type BridgeTimedtextMsg = z.infer<typeof BridgeTimedtextSchema>;
 export type BridgeCommandResultMsg = z.infer<typeof BridgeCommandResultSchema>;
@@ -116,7 +140,10 @@ export interface PlayerMetadata {
   isLive: boolean;
   tracks: CaptionTrackInfo[];
   /** trackKey → 桥命令所需字段（不含 URL）。 */
-  bridgeTracks: Map<string, { languageCode: string; kind: 'asr' | 'standard'; vssId: string }>;
+  bridgeTracks: Map<
+    string,
+    { languageCode: string; kind: 'asr' | 'standard'; vssId: string; requestName: string }
+  >;
 }
 
 const VSS_ID_RE = /^[a-z]?\.[A-Za-z0-9_.-]{1,60}$/;
@@ -134,6 +161,7 @@ export function toPlayerMetadata(msg: BridgePlayerResponseMsg): PlayerMetadata {
       languageCode: t.languageCode,
       kind: asr ? 'asr' : 'standard',
       vssId: t.vssId,
+      requestName: t.requestName ?? trackNameFromVssId(t.vssId, t.languageCode),
     });
     const info: CaptionTrackInfo = {
       trackKey: key,
@@ -162,14 +190,18 @@ export interface BridgeClientHandlers {
   onPlayerResponseMissing?(msg: BridgeMissingMsg): void;
   onTimedtext(msg: BridgeTimedtextMsg): void;
   onCommandResult(msg: BridgeCommandResultMsg): void;
+  onCaptionsChanged?(msg: BridgeCaptionsChangedMsg): void;
+  onCaptionSelection?(msg: BridgeCaptionSelectionMsg): void;
 }
 
 export interface BridgeClient {
   requestPlayerResponse(videoId: string | null): void;
+  requestCaptionSelection(videoId: string): void;
   /** 请求 MAIN world 重放其缓存的该视频 timedtext 正文（覆盖内容脚本就绪前捕获的正文）。 */
   requestReplay(videoId: string): void;
   loadTrack(cmd: {
     commandId: string;
+    ownerId?: string;
     videoId: string;
     languageCode: string;
     kind: 'asr' | 'standard';
@@ -177,7 +209,7 @@ export interface BridgeClient {
     /** 跳过播放器，直接做 fmt=json3 同源兜底请求（捕获到的正文无法解析时）。 */
     fetchOnly?: boolean;
   }): void;
-  restoreCaptions(cmd: { commandId: string; videoId: string }): void;
+  restoreCaptions(cmd: { commandId: string; videoId: string; ownerId?: string }): void;
   /** 被丢弃的非法桥消息数（不含内容）。 */
   readonly rejectedCount: number;
   dispose(): void;
@@ -221,6 +253,18 @@ export function createBridgeClient(win: Window, handlers: BridgeClientHandlers):
             else rejected++;
             break;
           }
+          case 'captions-changed': {
+            const r = BridgeCaptionsChangedSchema.safeParse(d);
+            if (r.success) handlers.onCaptionsChanged?.(r.data);
+            else rejected++;
+            break;
+          }
+          case 'caption-selection': {
+            const r = BridgeCaptionSelectionSchema.safeParse(d);
+            if (r.success) handlers.onCaptionSelection?.(r.data);
+            else rejected++;
+            break;
+          }
           default:
             rejected++;
         }
@@ -249,6 +293,9 @@ export function createBridgeClient(win: Window, handlers: BridgeClientHandlers):
     },
     requestPlayerResponse(videoId) {
       post({ type: 'request-player-response', videoId });
+    },
+    requestCaptionSelection(videoId) {
+      post({ type: 'request-caption-selection', videoId });
     },
     loadTrack(cmd) {
       post({ type: 'load-track', ...cmd });

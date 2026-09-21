@@ -767,3 +767,94 @@ test('T22 offscreen 文档意外销毁：会话立即报 offscreen-lost，捕获
   (evidence.t22 as Record<string, unknown>).restartMs = Date.now() - closedAt;
   await f.ui.ok({ kind: 'session/stop', tabId, sessionId: again.identity.sessionId });
 });
+
+// 回归：ASR 整段完成后才得到译文，此时原句通常已经结束，仍应有界地开始配音。
+test('ASR 迟到译文实际触发系统配音，停止后释放捕获与朗读', async () => {
+  test.skip(!process.env.TONGTING_E2E_TTS, '此用例同时需要 TONGTING_E2E_TTS=1');
+  const { f, page, tabId } = await setup();
+  await f.ui.ok({
+    kind: 'settings/update',
+    patch: {
+      outputMode: 'subtitle-voice',
+      tts: { backend: 'system' },
+      audio: { dubVolume: 0.2, originalVolume: 0.3 },
+    },
+  });
+  await f.ext.serviceWorker.evaluate(() => {
+    type Opts = { onEvent?: (e: { type: string }) => void };
+    const g = globalThis as unknown as {
+      chrome: { tts: { speak(text: string, options: Opts): unknown } };
+      __asrDub: { calls: Array<{ text: string; at: number }>; events: string[] };
+    };
+    g.__asrDub = { calls: [], events: [] };
+    const speak = g.chrome.tts.speak.bind(g.chrome.tts);
+    g.chrome.tts.speak = (text, options) => {
+      g.__asrDub.calls.push({ text, at: Date.now() });
+      return speak(text, {
+        ...options,
+        onEvent: (event) => {
+          g.__asrDub.events.push(event.type);
+          options.onEvent?.(event);
+        },
+      });
+    };
+  });
+  expect(await video(page).play()).toBe(true);
+  const anchor = await page.evaluate(() => ({
+    at: Date.now(),
+    mediaMs: document.querySelector<HTMLVideoElement>('video')!.currentTime * 1000,
+  }));
+  await f.ui.ok({ kind: 'session/start', tabId });
+  const running = await f.ui.waitSession(
+    tabId,
+    (s) => s.phase === 'running' && s.sourceMode === 'asr',
+    { timeout: 30_000 },
+  );
+  await f.ui.subscribeCues(running.identity.sessionId);
+  const readDub = () =>
+    f.ext.serviceWorker.evaluate(
+      () =>
+        (
+          globalThis as unknown as {
+            __asrDub: { calls: Array<{ text: string; at: number }>; events: string[] };
+          }
+        ).__asrDub,
+    );
+  await expect
+    .poll(async () => (await readDub()).events.includes('start'), { timeout: 45_000 })
+    .toBe(true);
+  const dub = await readDub();
+  const cues = await f.ui.cues(running.identity.sessionId);
+  const matching = cues.find((c) => c.translatedText === dub.calls[0]?.text);
+  expect(matching).toBeTruthy();
+  const callMediaMs = anchor.mediaMs + dub.calls[0]!.at - anchor.at;
+  expect(matching!.endMs).toBeLessThan(callMediaMs);
+  evidence.asrDubbingRegression = {
+    calls: dub.calls,
+    events: dub.events,
+    cue: matching,
+    callMediaMs,
+  };
+  await f.ui.ok({ kind: 'session/stop', tabId, sessionId: running.identity.sessionId });
+  await expect
+    .poll(async () => (await capturedTabs(f)).filter((t) => t.status === 'active').length)
+    .toBe(0);
+  await f.ui.waitSnapshot(
+    (s) => !s.sessions.some((session) => session.identity.sessionId === running.identity.sessionId),
+  );
+  await expect
+    .poll(() =>
+      f.ext.serviceWorker.evaluate(
+        () =>
+          new Promise<boolean>((resolve) => {
+            const api = (
+              globalThis as unknown as {
+                chrome: { tts: { isSpeaking(callback: (speaking: boolean) => void): void } };
+              }
+            ).chrome.tts;
+            api.isSpeaking(resolve);
+          }),
+      ),
+    )
+    .toBe(false);
+});

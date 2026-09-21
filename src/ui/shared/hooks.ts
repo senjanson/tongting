@@ -2,6 +2,7 @@
  * 页面共用的业务 hooks：命令执行、设置更新、滑块草稿、播放时钟、声音列表。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { browser } from 'wxt/browser';
 import type { PlayerState } from '../../domain/session';
 import type { SettingsPatch } from '../../domain/settings';
 import type { UiCommand } from '../../messaging/ui-protocol';
@@ -95,7 +96,7 @@ export function useDraftValue<T>(
   });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const latest = useRef<{ value: T; pending: boolean }>({ value: external, pending: false });
+  const latest = useRef({ value: external, pending: false, revision: 0 });
   const commitRef = useRef(commit);
   useEffect(() => {
     commitRef.current = commit;
@@ -109,24 +110,28 @@ export function useDraftValue<T>(
     if (!latest.current.pending) return;
     latest.current.pending = false;
     const value = latest.current.value;
+    const revision = latest.current.revision;
     void commitRef.current(value).then(
       () => {
+        if (latest.current.revision !== revision) return;
         if (settleTimer.current) clearTimeout(settleTimer.current);
         settleTimer.current = setTimeout(() => {
           setDraft((d) =>
-            d.value === value && !latest.current.pending ? { value, active: false } : d,
+            latest.current.revision === revision && !latest.current.pending
+              ? { value, active: false }
+              : d,
           );
         }, 800);
       },
       () => {
-        setDraft((d) => (d.value === value ? { value, active: false } : d));
+        setDraft((d) => (latest.current.revision === revision ? { value, active: false } : d));
       },
     );
   }, []);
 
   const onChange = useCallback(
     (value: T) => {
-      latest.current = { value, pending: true };
+      latest.current = { value, pending: true, revision: latest.current.revision + 1 };
       setDraft({ value, active: true });
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(flush, delayMs);
@@ -195,5 +200,16 @@ export function useVoiceList(
   }, [client, enabled, connected, reloadKey, nonce]);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
+  useEffect(() => {
+    if (!enabled || !connected || client.mode === 'demo') return undefined;
+    // 系统安装/移除声音后及时更新；从系统设置返回时也重新读取。
+    const changed = browser.tts?.onVoicesChanged;
+    changed?.addListener(reload);
+    window.addEventListener('focus', reload);
+    return () => {
+      changed?.removeListener(reload);
+      window.removeEventListener('focus', reload);
+    };
+  }, [client, enabled, connected, reload]);
   return { state, reload };
 }

@@ -77,6 +77,7 @@ export async function configureProvider(
   const r = await fc.ui.ok<{ persisted: boolean }>({
     kind: 'settings/update',
     patch: {
+      playbackMode: 'continuous',
       ...patch,
       provider: {
         baseUrl: fc.mock.baseUrl,

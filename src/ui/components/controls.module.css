@@ -9,7 +9,7 @@
   border-radius: var(--tt-radius-sm);
   background: var(--tt-panel);
   color: var(--tt-text);
-  font-size: 13px;
+  font-size: var(--tt-control-font, 13px);
   line-height: 1.3;
   cursor: pointer;
   text-align: center;
@@ -140,12 +140,12 @@
 }
 
 .fieldLabel {
-  font-size: 12px;
+  font-size: var(--tt-label-font, 12px);
   color: var(--tt-muted);
 }
 
 .hint {
-  font-size: 12px;
+  font-size: var(--tt-hint-font, 12px);
   color: var(--tt-muted);
   line-height: 1.55;
 }
@@ -167,7 +167,7 @@
   border-radius: var(--tt-radius-sm);
   background: var(--tt-panel);
   color: var(--tt-text);
-  font-size: 13px;
+  font-size: var(--tt-control-font, 13px);
 }
 
 .select {
@@ -202,8 +202,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 34px;
-  font-size: 13px;
+  min-height: var(--tt-row-height, 34px);
+  font-size: var(--tt-control-font, 13px);
   min-width: 0;
 }
 
@@ -264,7 +264,7 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--tt-control-font, 13px);
   cursor: pointer;
 }
 
@@ -288,7 +288,7 @@
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--tt-control-font, 13px);
 }
 
 .rangeHead output {

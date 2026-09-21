@@ -13,15 +13,18 @@ import { buildCueUnits } from '../captions/build-units';
 import { createIncrementalCaptionAssembler } from '../captions/incremental';
 import { randomId } from '../messaging/ports';
 import { checkLocalAsrHealth } from '../providers/asr/local-client';
+import { preloadYoutubeAudio } from '../providers/asr/youtube-preload';
 import { normalizeBaseUrl } from '../providers/text/base-url';
 import { runTextConnectionCheck } from '../providers/text/connection-check';
 import { createTextProvider } from '../providers/text/factory';
 import { discoverModels } from '../providers/text/models';
+import { generateSearchKeywords } from '../providers/text/search-keywords';
+import { searchHistory } from '../storage/search-history';
 import { createDubbingController } from '../providers/tts/dubbing-controller';
 import { createSub2apiTtsEngine } from '../providers/tts/sub2api-engine';
 import { createSystemTtsEngine } from '../providers/tts/system-engine';
 import { createIdbTranslationCache } from '../storage/translation-cache';
-import { getTranscript, putTranscript } from '../storage/transcripts';
+import { createTranscriptWriter, getTranscript, putTranscript } from '../storage/transcripts';
 import { createTranslationScheduler } from '../translation/scheduler';
 import { Coordinator } from './coordinator';
 import type { CoordinatorDeps, KeyValueArea } from './deps';
@@ -45,6 +48,8 @@ export function startBackground(): Coordinator {
 
   const offscreen = createOffscreenClient();
   const deps: CoordinatorDeps = {
+    generateSearchKeywords,
+    searchHistory,
     now: () => Date.now(),
     randomId,
     storage: {
@@ -117,6 +122,7 @@ export function startBackground(): Coordinator {
       return { text: result.text, latencyMs: Date.now() - started };
     },
     createTranslationScheduler,
+    preloadYoutubeAudio,
     translationCache: createIdbTranslationCache(),
     buildCueUnits,
     createIncrementalCaptionAssembler,
@@ -126,7 +132,7 @@ export function startBackground(): Coordinator {
     createSub2apiTtsEngine,
     createDubbingController,
     checkLocalAsrHealth: (baseUrl, signal) => checkLocalAsrHealth(baseUrl, signal),
-    transcripts: { putTranscript, getTranscript },
+    transcripts: { putTranscript, getTranscript, createWriter: createTranscriptWriter },
     logger: console,
   };
 

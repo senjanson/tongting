@@ -2,6 +2,11 @@
  * 打开扩展页面与标签页操作。失败时抛出，由调用方提示。
  */
 import { browser } from 'wxt/browser';
+import { youtubeSearchUrl } from '../../domain/search';
+
+export async function openYouTubeSearch(keyword: string): Promise<void> {
+  await browser.tabs.create({ url: youtubeSearchUrl(keyword) });
+}
 
 export async function openOptionsPage(): Promise<void> {
   await browser.runtime.openOptionsPage();

@@ -1,16 +1,13 @@
 /**
  * 侧栏「字幕」标签：有会话时显示实时字幕（useCues），否则读取本地保存的该视频字幕记录。
  */
-import { PanelsTopLeft } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { PageInfo, SessionSnapshot } from '../../domain/session';
 import type { TranscriptRecord } from '../../storage/db';
-import { Button, SelectField } from '../components/controls';
+import { SelectField } from '../components/controls';
 import { Callout, EmptyState } from '../components/layout';
-import { useToast } from '../components/toast';
 import { formatDateTime, languageLabel } from '../format';
 import { useCommandRunner, usePlayerClock } from '../shared/hooks';
-import { openWorkspace } from '../shared/navigation';
 import { isSessionEnded, sessionRecordId, sourceModeShortLabel } from '../state/derive';
 import { useCues, useUiClient } from '../state/hooks';
 import { useRepos } from '../state/repos';
@@ -31,31 +28,10 @@ export function TranscriptTab({
   captionOffsetMs,
 }: TranscriptTabProps) {
   const client = useUiClient();
-  const notify = useToast();
   const demo = client.mode === 'demo';
-
-  const openWs = () => {
-    if (demo) return;
-    openWorkspace(page.videoId ?? undefined).catch(() => notify('无法打开字幕工作台。', 'danger'));
-  };
-
-  const workspaceButton = (
-    <Button
-      size="sm"
-      icon={<PanelsTopLeft size={14} aria-hidden="true" />}
-      onClick={openWs}
-      disabled={demo}
-      title={demo ? '演示模式下不可用' : undefined}
-    >
-      打开字幕工作台
-    </Button>
-  );
 
   return (
     <div className={styles.transcriptPane}>
-      <div className={styles.actionsRow} style={{ marginBottom: 8, justifyContent: 'flex-end' }}>
-        {workspaceButton}
-      </div>
       {session && !isSessionEnded(session) ? (
         <LiveTranscript
           page={page}
@@ -105,6 +81,7 @@ function LiveTranscript({
   );
   return (
     <TranscriptView
+      compact
       key={session.identity.sessionId}
       cues={cues.cues}
       loading={cues.status === 'loading'}
@@ -229,6 +206,7 @@ function SavedTranscript({
         </div>
       )}
       <TranscriptView
+        compact
         key={selected.recordId}
         cues={selected.cues}
         source={source}

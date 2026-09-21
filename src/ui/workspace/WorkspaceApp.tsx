@@ -503,12 +503,15 @@ function NotesPanel({
   reloadNonce: number;
 }) {
   const notify = useToast();
-  const [load, setLoad] = useState<{ status: 'loading' | 'ready' | 'error' }>({
+  const [load, setLoad] = useState<{ status: 'loading' | 'ready' | 'error'; nonce: number }>({
     status: 'loading',
+    nonce: 0,
   });
   const [text, setText] = useState('');
   const [saveStatus, setSaveStatus] = useState<NoteSaveStatus>('idle');
   const [loadNonce, setLoadNonce] = useState(0);
+  // A refresh immediately stops editing, including the render before its effect runs.
+  const loadStatus = load.nonce === loadNonce ? load.status : 'loading';
   const [draft, setDraft] = useState<NoteDraft | undefined>(undefined);
   const saverRef = useRef<NoteAutosaver | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -539,7 +542,7 @@ function NotesPanel({
         baseUpdatedAt.current = note?.updatedAt ?? 0;
         textRef.current = baseline;
         setText(baseline);
-        setLoad({ status: 'ready' });
+        setLoad({ status: 'ready', nonce: loadNonce });
         setSaveStatus('idle');
         const pendingDraft = readNoteDraft(videoId);
         setDraft(pendingDraft && pendingDraft.text !== baseline ? pendingDraft : undefined);
@@ -557,7 +560,7 @@ function NotesPanel({
         });
       },
       () => {
-        if (!cancelled) setLoad({ status: 'error' });
+        if (!cancelled) setLoad({ status: 'error', nonce: loadNonce });
       },
     );
     return () => {
@@ -698,7 +701,7 @@ function NotesPanel({
           size="sm"
           variant="ghost"
           icon={<Quote size={14} aria-hidden="true" />}
-          disabled={!activeCue || load.status !== 'ready'}
+          disabled={!activeCue || loadStatus !== 'ready'}
           title={
             activeCue
               ? '插入当前播放的字幕'
@@ -709,8 +712,8 @@ function NotesPanel({
           引用当前字幕
         </Button>
       </div>
-      {load.status === 'loading' && <EmptyState icon={<Spinner />} title="正在读取笔记…" />}
-      {load.status === 'error' && (
+      {loadStatus === 'loading' && <EmptyState icon={<Spinner />} title="正在读取笔记…" />}
+      {loadStatus === 'error' && (
         <Callout
           tone="danger"
           actions={
@@ -722,7 +725,7 @@ function NotesPanel({
           读取笔记失败。为避免覆盖已有笔记，暂时不能编辑。
         </Callout>
       )}
-      {load.status === 'ready' && (
+      {loadStatus === 'ready' && (
         <>
           {draft && (
             <Callout

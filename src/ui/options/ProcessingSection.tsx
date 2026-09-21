@@ -7,6 +7,7 @@ import type { AppSnapshot } from '../../messaging/ui-protocol';
 import { Button, Hint, SelectField, SwitchRow, TextField } from '../components/controls';
 import { useToast } from '../components/toast';
 import { GrantPermissionButton } from '../shared/GrantPermissionButton';
+import { PlaybackControls } from '../shared/PlaybackControls';
 import { useCommandRunner, useSettingsUpdater, useVoiceList } from '../shared/hooks';
 import { Callout } from '../components/layout';
 import { checkLocalAsrUrl } from '../state/permissions';
@@ -158,10 +159,16 @@ export function ProcessingSection({ snapshot }: { snapshot: AppSnapshot }) {
       />
 
       <div className={styles.subhead}>播放与缓存</div>
+      <PlaybackControls settings={settings} />
       <SwitchRow
         label="预翻译后续字幕"
-        description="只在能读取完整字幕轨道时生效，会提前产生翻译请求。"
-        checked={settings.prefetch}
+        description={
+          settings.playbackMode === 'buffered'
+            ? '同步优先会持续预读；切换连续播放后使用你保存的预翻译设置。'
+            : '只在能读取完整字幕轨道时生效，会提前产生翻译请求。'
+        }
+        checked={settings.playbackMode === 'buffered' || settings.prefetch}
+        disabled={settings.playbackMode === 'buffered'}
         onChange={(prefetch) => void update({ prefetch })}
       />
       <SwitchRow
@@ -199,7 +206,8 @@ function ModelField({
   const save = async () => {
     const trimmed = value.trim();
     if (!allowEmpty && !trimmed) return;
-    if (await onSave(trimmed)) setDraft({ value: trimmed, dirty: false });
+    if (await onSave(trimmed))
+      setDraft((current) => (current === draft ? { value: trimmed, dirty: false } : current));
   };
   return (
     <div className={styles.row}>
@@ -232,13 +240,14 @@ function LocalAsrFields({ snapshot }: { snapshot: AppSnapshot }) {
   const [draft, setDraft] = useState<Draft>({ value: saved, dirty: false });
   const value = draftValue(draft, saved);
   const check = checkLocalAsrUrl(value);
-  const [token, setToken] = useState('');
+  const [tokenDraft, setTokenDraft] = useState({ value: '' });
+  const token = tokenDraft.value;
   const tokenState = snapshot.asrToken;
 
   const saveUrl = async () => {
     if (!check.ok) return;
     if (await update({ asr: { localUrl: value.trim() } }))
-      setDraft({ value: value.trim(), dirty: false });
+      setDraft((current) => (current === draft ? { value: value.trim(), dirty: false } : current));
   };
 
   const saveToken = async () => {
@@ -249,7 +258,7 @@ function LocalAsrFields({ snapshot }: { snapshot: AppSnapshot }) {
       { errorPrefix: '保存配对令牌失败' },
     );
     if (!result) return;
-    setToken('');
+    setTokenDraft((current) => (current === tokenDraft ? { value: '' } : current));
     notify(
       result.persisted ? '配对令牌已保存。尚未验证本地服务。' : '配对令牌仅本次生效，保存失败。',
       result.persisted ? 'success' : 'warning',
@@ -298,7 +307,12 @@ function LocalAsrFields({ snapshot }: { snapshot: AppSnapshot }) {
           spellCheck={false}
           placeholder={tokenState.configured ? '输入新令牌以替换' : '本地服务启动时显示的配对令牌'}
           value={token}
-          onChange={setToken}
+          onChange={(value) => setTokenDraft({ value })}
+          error={
+            tokenState.cleanupPending
+              ? '旧令牌存储清理失败，请重试清理。已撤销的令牌不会再用于请求。'
+              : undefined
+          }
           hint={
             tokenState.configured
               ? `已保存：${tokenState.masked ?? '（已隐藏）'}`
@@ -313,7 +327,7 @@ function LocalAsrFields({ snapshot }: { snapshot: AppSnapshot }) {
         >
           保存令牌
         </Button>
-        {tokenState.configured && (
+        {(tokenState.configured || tokenState.cleanupPending) && (
           <Button
             variant="danger"
             icon={<Trash size={15} aria-hidden="true" />}
@@ -326,7 +340,7 @@ function LocalAsrFields({ snapshot }: { snapshot: AppSnapshot }) {
               if (result) notify('已删除配对令牌。', 'success');
             }}
           >
-            删除令牌
+            {tokenState.cleanupPending ? '重试清理令牌' : '删除令牌'}
           </Button>
         )}
       </div>
