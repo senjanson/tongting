@@ -1,161 +1,252 @@
-# 同听 Tongting
+# 同听 · Tongting
 
-在 YouTube 网页上观看视频时，为视频生成目标语言（默认简体中文）的翻译字幕，并可选择播放翻译配音的 Chrome MV3 扩展。文本翻译使用你自己配置的 [sub2api](https://github.com/Wei-Shaw/sub2api) 服务；没有可读字幕的视频需要另行配置语音识别服务（例如本项目附带的本地识别服务）。
+**English** · [简体中文](README.zh-CN.md)
 
-## 当前状态
+A Chrome MV3 extension that gives YouTube videos translated subtitles in your target language (Simplified Chinese by default) while you watch, and can optionally read the translation aloud. Text translation runs through **your own** [sub2api](https://github.com/Wei-Shaw/sub2api) deployment — the extension ships no keys and no hosted backend. Videos without readable captions need a separate speech-recognition service; a local one is included in this repository.
 
-**真实 sub2api 的 Luna 翻译、流式返回，以及本地测试视频的识别／中文配音链路已通过；真实 YouTube 长时间观看仍未验收。** 最新范围与证据见 [真实服务测试记录](docs/reviews/2026-09-17/LIVE_TEST.md)。默认翻译模型为 `gpt-5.6-luna`，模型列表只展示服务实际提供的 GPT-5.6 及以上文本型号。
+![Bilingual subtitle overlay on the player](docs/screenshots/youtube-overlay.png)
 
-新增默认「同步优先」：先准备 10 秒译文，再随视频播放；译文不足或跳转后会重新缓冲。可选 5 / 10 / 20 秒或切换「连续播放」。无完整字幕的公开录播通过本地服务预读后续音轨，需要安装并启用 [YouTube 预读](services/asr-local/README.md)。缓冲就绪表示译文已准备好，系统语音按视频时间朗读，不代表音频已预合成或零延迟。验证范围见 [缓冲播放记录](docs/reviews/2026-09-17/BUFFERED_PLAYBACK.md)。
+> Captured against the bundled local player fixture with a mock translation service — see [Screenshots](#screenshots) for how every image in this README was produced.
 
-- **已接入的链路**：service worker 协调器、YouTube 内容脚本（字幕轨道 / 当前显示字幕 / 无字幕时捕获音频识别）、sub2api 文本翻译适配器、系统语音与 sub2api 语音合成配音、offscreen 音频捕获与识别分段、本地识别服务、侧栏 / 弹窗 / 设置页 / 字幕工作台。构建出的扩展可以完成端到端流程。
-- **验证方式**：
-  - 单元与集成测试使用模拟的 sub2api、播放器与音频资源。
-  - 常规 Playwright E2E 使用本地 YouTube 夹具与模拟 sub2api；显式启用的真实服务测试使用用户服务、真实 Chromium 扩展、本地识别及系统中文配音。
-  - 结果与覆盖范围见 [docs/VALIDATION.md](docs/VALIDATION.md)。
-- **尚未实测**：
-  - 代理开启后可访问真实 YouTube；隔离浏览器中两个公开视频约 40～50 秒后报播放错误，无扩展对照也出现。原生字幕请求返回空正文，20 分钟连续观看尚未通过。
-  - 云端语音识别、云端语音合成仍未验证；本轮使用本地 Whisper 和系统中文声音。
-  - 以下需要人工完成：工具栏点击授权捕获、真人试听配音效果、20/30 分钟连续运行。
-- 各项能力的实测状态见 [docs/CAPABILITIES.md](docs/CAPABILITIES.md)，进度与阻塞见 [docs/PROGRESS.md](docs/PROGRESS.md)。
-- 2026-09-17 复查发现的 17 项问题及本次修复、回归测试、A 侧栏 UI 对照见 [修复验收记录](docs/reviews/2026-09-17/FIXES.md)。
+---
 
-本项目不承诺「任何语言」「任何视频」或「零延迟」。支持范围以实测记录为准。
+## Project status
 
-## 功能范围
+This is a working extension, not a finished product. Read this section before trying it.
 
-计划交付（每一项都需要实测后才算完成）：
+**Verified end to end:** text translation against a real sub2api deployment (model list, Responses/Chat protocols, structured output, streaming), and a full recognition → translation → Chinese speech chain on locally generated test video using local Whisper and system voices.
 
-- 有字幕视频：读取播放器提供的字幕，经 sub2api 文本模型翻译后覆盖显示在原播放器上，支持双语、字号、位置、背景透明度与时间微调。
-- 无字幕视频：同步优先模式由本地服务分段预读公开录播音轨、识别并翻译；连续播放模式捕获当前标签页音频，边播放边识别。
-- 翻译配音：系统语音（或经实测可用的 sub2api 语音合成），默认全程静音原声，中文停顿时也不恢复；可调声音、语速、配音音量，也可手动选择保留原声。
-- 目标语言切换、暂停/继续翻译、停止并释放音频、跳转、换视频、倍速下的正确同步与清理。
-- 字幕记录与工作台：搜索、收藏、带时间的笔记、复制，导出 SRT / VTT / TXT，并如实显示覆盖范围。
-- 中文找视频：侧栏「搜索」输入中文，AI 生成 3 组英文搜索词与中文注释，支持编辑、复制、新标签页搜索和本机最近记录。复用当前翻译服务和模型，默认 `gpt-5.6-luna`。见 [使用说明](docs/USER_GUIDE.md#11-用中文搜索-youtube) 与 [验证记录](docs/reviews/2026-09-17/AI_SEARCH.md)。
-- 设置与连接检查：Base URL、API Key（默认保存在本机，扩展重载和浏览器重启后仍保留）、按单一 origin 授权、协议自动检测、模型发现与手动模型 ID、分项连接检查。
-- 演示模式：用示例数据预览界面，有持续可见的标识，不连接视频与服务。
+**Not yet verified:**
 
-界面默认采用「A 轻巧侧栏」布局（Chrome 原生侧栏 + 工具栏弹窗 + 设置页 + 字幕工作台页）。B 沉浸观影、C 字幕工作台作为可选布局，用户尚未选择。
+- Long real-YouTube sessions. In an isolated browser, two public videos threw playback errors after roughly 40–50 seconds — including the control run with the extension disabled. Native caption requests came back with empty bodies. A continuous 20-minute watch has not passed.
+- Cloud speech recognition and cloud speech synthesis through sub2api. The tested runs used local Whisper and the operating system's Chinese voices.
+- Anything needing a human: clicking the toolbar to authorize tab capture, judging how the dubbing actually sounds, and 20–30 minute continuous runs.
 
-### 明确不做（本轮）
+Per-capability test status lives in [docs/CAPABILITIES.md](docs/CAPABILITIES.md); automated results and the acceptance matrix are in [docs/VALIDATION.md](docs/VALIDATION.md).
 
-- 手机、Safari、Firefox 版本。
-- 音色克隆、唇形同步、视频重编码、视频下载器。
-- 任意网站的通用音频捕获、多人会议、账号系统、支付平台、团队后台。
-- 改写或绕过 DRM、付费墙、登录限制及其他内容访问控制。
-- 发布到扩展商店、部署公共服务器、自动购买服务。
-- 画面内烧录文字的 OCR。
+**This project does not claim "any language, any video, zero latency."** What it supports is exactly what the validation records show.
 
-直播、Shorts、画中画不在首批验收范围内，未验证前不宣称支持。
+---
 
-## 环境要求
+## What it does
 
-| 项目                | 版本                         | 说明                                                                   |
-| ------------------- | ---------------------------- | ---------------------------------------------------------------------- |
-| Node                | 24.15.0                      | 见 `.nvmrc` 与 `package.json` 的 `volta` 字段；WXT 0.21 要求 Node ≥ 22 |
-| pnpm                | 10.33.0                      | `packageManager` 字段                                                  |
-| Chrome              | ≥ 116（桌面版）              | manifest `minimum_chrome_version`；日常人工验收计划使用 Chrome 152     |
-| Playwright Chromium | 随 `@playwright/test` 1.63.0 | 仅扩展 E2E 使用；品牌版 Chrome 137+ 不支持命令行加载扩展               |
-| Python + uv（可选） | Python 3.12–3.13             | 仅本地识别服务需要，见 [docs/ASR_LOCAL.md](docs/ASR_LOCAL.md)          |
+### Videos that already have captions
 
-本机若默认 Node 版本较低（例如 nvm 的 Node 20），在运行命令前先切换到 Volta 安装的 Node 24：
+Reads the caption track the player exposes, translates it through a sub2api text model, and draws the result over the native player. Bilingual display, font size, position, background opacity and timing offset are all adjustable.
+
+### Videos without captions
+
+Two playback modes:
+
+- **Sync-first (default).** Prepares roughly 10 seconds of translation before playback continues (5 / 10 / 20 s selectable). For public recordings without a full caption track, a local service pre-reads the upcoming audio track, recognizes it, and translates ahead of the playhead. Requires the [local ASR service](services/asr-local/README.md).
+- **Continuous.** Captures the current tab's audio and recognizes it as the video plays. Subtitles and dubbing may lag behind the picture.
+
+"Buffer ready" means the _translation_ is ready. It does not mean audio was pre-synthesized, and it is not a zero-latency guarantee.
+
+### Dubbing
+
+System voices, or sub2api speech synthesis once it has been verified against your deployment. The original audio is muted for the whole session by default — including during pauses in the Chinese speech — and you can adjust the voice, rate and dubbing volume, or choose to keep the original audio.
+
+### Transcript workbench
+
+Search, bookmarks, timestamped notes, copy, and export to SRT / VTT / TXT with an honest statement of what the record actually covers.
+
+### Find videos in Chinese
+
+Type what you are looking for in Chinese; the side panel's Search tab generates three English search phrases with Chinese annotations, each editable, copyable and openable in a new tab. Recent searches stay on your machine. It reuses whichever translation service and model you already configured.
+
+### Demo mode
+
+Previews the interface with sample data behind a banner that never goes away. It does not connect to any video or service.
+
+---
+
+## Screenshots
+
+Every image below was generated by [`tests/e2e/screenshots.spec.ts`](tests/e2e/screenshots.spec.ts), which you can re-run yourself:
+
+```sh
+pnpm build
+TONGTING_E2E=1 pnpm exec wxt build
+TONGTING_SHOTS=1 pnpm exec playwright test tests/e2e/screenshots.spec.ts
+```
+
+Two sources, labelled per image:
+
+- **Demo mode** — the production build with `?demo=1`. Sample data, permanent "演示模式" banner, no service connection.
+- **Local fixture** — the real extension (real service-worker coordinator, real content script, real overlay), but YouTube is routed to a bundled fixture page with an ffmpeg-generated silent video, and sub2api is routed to a local mock server. The Chinese text in these shots comes from a fixed lookup table in the mock, not from any model.
+
+The interface is currently Simplified Chinese only.
+
+|                                                                                          |                                                                                                    |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| **Side panel — Translate** (demo mode)<br>![](docs/screenshots/sidepanel-translate.png)  | **Side panel — Translate, dark** (demo mode)<br>![](docs/screenshots/sidepanel-translate-dark.png) |
+| **Side panel — Subtitles** (demo mode)<br>![](docs/screenshots/sidepanel-transcript.png) | **Side panel — Search** (demo mode)<br>![](docs/screenshots/sidepanel-search.png)                  |
+| **Side panel — Settings** (demo mode)<br>![](docs/screenshots/sidepanel-settings.png)    | **Side panel — running session** (local fixture)<br>![](docs/screenshots/sidepanel-running.png)    |
+
+**Toolbar popup** (local fixture, session running)
+
+![Toolbar popup](docs/screenshots/popup.png)
+
+**Transcript workbench** (local fixture) — bilingual/translation/source views, per-cue bookmarks and quotes, per-video notes, export
+
+![Transcript workbench](docs/screenshots/workspace.png)
+
+**Full settings page** (production build, nothing configured yet — this is what a new install looks like)
+
+![Settings page](docs/screenshots/options.png)
+
+---
+
+## Requirements
+
+|                     | Version                                | Notes                                                                                     |
+| ------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Node                | 24.15.0                                | See `.nvmrc` and the `volta` field in `package.json`; WXT 0.21 needs Node ≥ 22            |
+| pnpm                | 10.33.0                                | `packageManager` field                                                                    |
+| Chrome              | ≥ 116 (desktop)                        | manifest `minimum_chrome_version`                                                         |
+| Playwright Chromium | bundled with `@playwright/test` 1.63.0 | Extension E2E only — branded Chrome 137+ no longer loads extensions from the command line |
+| Python + uv         | 3.12–3.13                              | Optional, only for the local ASR service — see [docs/ASR_LOCAL.md](docs/ASR_LOCAL.md)     |
+
+If your default Node is older, switch first:
 
 ```sh
 export PATH=$HOME/.volta/tools/image/node/24.15.0/bin:$PATH
-node -v   # 应输出 v24.15.0
+node -v   # v24.15.0
 ```
 
-详细环境记录见 [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)。
+More environment detail in [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 
-## 快速开始
+---
+
+## Quick start
 
 ```sh
-pnpm install     # 会自动执行 wxt prepare
-pnpm build       # 输出到 .output/chrome-mv3
+pnpm install     # runs wxt prepare
+pnpm build       # outputs .output/chrome-mv3
 ```
 
-然后在 Chrome 打开 `chrome://extensions`，开启「开发者模式」，点击「加载已解压的扩展程序」并选择 `.output/chrome-mv3`。配置与使用步骤见 [docs/USER_GUIDE.md](docs/USER_GUIDE.md)。
+Then open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and pick `.output/chrome-mv3`.
 
-## 脚本
+### Point it at your sub2api deployment
 
-| 命令                    | 作用                                                                                                                                                                                                                                                                                                                                                   |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm dev`              | 启动 WXT 开发构建（输出到 `.output/chrome-mv3-dev`）。已关闭自动打开浏览器，需要手动加载该目录                                                                                                                                                                                                                                                         |
-| `pnpm build`            | 生产构建，输出到 `.output/chrome-mv3`                                                                                                                                                                                                                                                                                                                  |
-| `pnpm zip`              | 打包构建结果为 zip（输出到 `.output/`），仅用于本地分发，不发布商店                                                                                                                                                                                                                                                                                    |
-| `pnpm format`           | Prettier 格式化全部文件                                                                                                                                                                                                                                                                                                                                |
-| `pnpm format:check`     | Prettier 格式检查                                                                                                                                                                                                                                                                                                                                      |
-| `pnpm lint`             | ESLint                                                                                                                                                                                                                                                                                                                                                 |
-| `pnpm typecheck`        | `wxt prepare` 后执行 `tsc --noEmit`（严格模式）                                                                                                                                                                                                                                                                                                        |
-| `pnpm test`             | Vitest 单元测试（`tests/unit`），运行一次后退出                                                                                                                                                                                                                                                                                                        |
-| `pnpm test:integration` | Vitest 集成测试（`tests/integration`），使用模拟 sub2api、模拟播放器与音频资源                                                                                                                                                                                                                                                                         |
-| `pnpm test:e2e`         | Playwright 扩展 E2E（`tests/e2e`）。需先 `pnpm build` 与 `TONGTING_E2E=1 pnpm exec wxt build`；首次运行可能需要 `pnpm exec playwright install chromium`。真实本地识别、系统语音配音、P0 音频实验用例默认跳过（会发声），分别用 `TONGTING_E2E_ASR=1`、`TONGTING_E2E_TTS=1`、`TONGTING_P0_AUDIO=1` 开启，见 [docs/VALIDATION.md](docs/VALIDATION.md) 3.1 |
-| `pnpm smoke:sub2api`    | 真实 sub2api 冒烟测试（`tests/smoke/**/*.smoke.ts`）。会产生真实调用与可能的费用，只在显式需要时运行                                                                                                                                                                                                                                                   |
+1. Open the extension's settings page (toolbar popup → **设置**).
+2. Fill in **sub2api 服务地址 (Base URL)** and **API Key**. HTTPS only, except `http://127.0.0.1:<port>` for local debugging.
+3. "记住在本机" is on by default: the key is kept on this machine and survives reloads and browser restarts. Turn it off to keep it in session storage only.
+4. Click **获取模型列表**, choose a model, then **检查连接** — it verifies host permission, reachability, auth, the model list, the model itself, a small translation and streaming, one item at a time.
 
-`smoke:sub2api` 的凭证配置：复制 `.env.example` 为 `.env.local`（已被 `.gitignore` 忽略），填写 `SUB2API_BASE_URL` 与 `SUB2API_API_KEY=<你的 Key>`。不要把 Key 写进命令行参数、源码、文档或会被分享的文件。
+The extension asks for host permission for a single origin — the one you entered. Nothing is sent anywhere else.
 
-默认只测文本接口（模型列表、Responses / Chat、流式）。如需测语音合成与识别，另外在 `.env.local` 中设置 `SUB2API_TTS_MODEL` / `SUB2API_TTS_VOICE` / `SUB2API_ASR_MODEL`，这两项会产生计费调用。
+Speech recognition and speech synthesis are separate capabilities with their own configuration and their own checks. A sub2api audio check costs one real billed call, so it only runs after you explicitly opt in.
 
-本地识别服务有独立的 Python 环境、测试与启动方式，不能通过 `pnpm install` 安装，见 [docs/ASR_LOCAL.md](docs/ASR_LOCAL.md)。
+Step-by-step instructions are in [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
-## 目录结构
+### Optional: local speech recognition
+
+`services/asr-local` is a Python + FastAPI + faster-whisper service bound to `127.0.0.1` only. It handles videos without captions and powers sync-first pre-reading of public recordings. It has its own environment and is _not_ installed by `pnpm install` — see [docs/ASR_LOCAL.md](docs/ASR_LOCAL.md) and [services/asr-local/README.md](services/asr-local/README.md).
+
+---
+
+## Scripts
+
+| Command                             | What it does                                                                                                                                                                                                                                                                                               |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                          | WXT dev build into `.output/chrome-mv3-dev`. Auto-open is disabled; load that directory manually                                                                                                                                                                                                           |
+| `pnpm build`                        | Production build into `.output/chrome-mv3`                                                                                                                                                                                                                                                                 |
+| `pnpm zip`                          | Zips the build into `.output/` for local distribution only — not for store submission                                                                                                                                                                                                                      |
+| `pnpm format` / `pnpm format:check` | Prettier                                                                                                                                                                                                                                                                                                   |
+| `pnpm lint`                         | ESLint                                                                                                                                                                                                                                                                                                     |
+| `pnpm typecheck`                    | `wxt prepare` then `tsc --noEmit` (strict)                                                                                                                                                                                                                                                                 |
+| `pnpm test`                         | Vitest unit tests (`tests/unit`)                                                                                                                                                                                                                                                                           |
+| `pnpm test:integration`             | Vitest integration tests (`tests/integration`) against a mock sub2api, mock player and mock audio                                                                                                                                                                                                          |
+| `pnpm test:e2e`                     | Playwright extension E2E (`tests/e2e`). Requires `pnpm build` and `TONGTING_E2E=1 pnpm exec wxt build` first; you may also need `pnpm exec playwright install chromium`. Tests that make real sound are skipped by default — enable with `TONGTING_E2E_ASR=1`, `TONGTING_E2E_TTS=1`, `TONGTING_P0_AUDIO=1` |
+| `pnpm smoke:sub2api`                | Smoke test against a real sub2api deployment. Makes real, potentially billed calls — run only when you mean to                                                                                                                                                                                             |
+
+For the smoke test, copy `.env.example` to `.env.local` (gitignored) and fill in `SUB2API_BASE_URL` and `SUB2API_API_KEY`. Never put a key in a command-line argument, in source, in documentation, or in any file you might share. Text endpoints are all it touches by default; setting `SUB2API_TTS_MODEL` / `SUB2API_TTS_VOICE` / `SUB2API_ASR_MODEL` adds billed audio calls.
+
+---
+
+## Project layout
 
 ```text
-entrypoints/                    WXT 入口（薄封装，实现放在 src/）
-  background.ts                 service worker 入口（调用 src/background/wiring.ts 装配协调器）
-  youtube.content/              YouTube 主内容脚本（ISOLATED world）：播放器、字幕、覆盖层
-  youtube-bridge.content.ts     YouTube MAIN world 桥：只读必要的播放器元数据，数据一律视为不可信
-  popup/                        工具栏弹窗
-  sidepanel/                    A 轻巧侧栏（翻译 / 字幕 / 设置）
-  options/                      设置页（新标签页打开）
-  workspace/                    字幕工作台页
-  offscreen/                    offscreen 文档：标签页音频捕获、识别分段、合成音频播放
+entrypoints/                    WXT entry points (thin wrappers; implementation lives in src/)
+  background.ts                 service worker entry (assembles the coordinator via src/background/wiring.ts)
+  youtube.content/              YouTube content script (ISOLATED world): player, captions, overlay
+  youtube-bridge.content.ts     YouTube MAIN-world bridge: reads only the player metadata it needs, all of it untrusted
+  popup/                        toolbar popup
+  sidepanel/                    side panel (Translate / Subtitles / Search / Settings)
+  options/                      full settings page
+  workspace/                    transcript workbench
+  offscreen/                    offscreen document: tab audio capture, recognition segmentation, synthesized playback
 src/
-  domain/                       领域类型与 schema：设置、会话、字幕 cue、能力状态、错误、语言
-  messaging/                    跨上下文协议：UI、内容脚本、offscreen 消息 schema 与端口
-  background/                   会话协调器、会话生命周期、设置/凭证存储、依赖装配
-  youtube/                      PlayerAdapter、导航、字幕来源、MAIN 桥客户端、字幕覆盖层、原声 ducking
-  captions/                     字幕解析（json3 / srv3 / vtt）、规范化、合句、增量与 ASR 字幕组装
-  translation/                  翻译调度器、重试策略
-  providers/text/               sub2api 文本适配器：Base URL、Responses / Chat、SSE、校验、连接检查
-  providers/asr/                语音识别契约与客户端（本地服务、sub2api）
-  providers/tts/                系统语音、sub2api 语音合成、配音控制器
-  audio/                        PCM、重采样、分段、识别队列、媒体时间轴、资源清理、offscreen 客户端
-  storage/                      IndexedDB：字幕记录、收藏、笔记、翻译缓存
-  export/                       SRT / VTT / TXT 生成、覆盖范围说明、下载
-  ui/                           共享组件、主题、状态客户端、各页面、字幕视图、演示数据
+  domain/                       domain types and schemas: settings, session, cues, capability state, errors, languages
+  messaging/                    cross-context protocols: UI, content script, offscreen message schemas and ports
+  background/                   session coordinator, session lifecycle, settings/credential stores, dependency wiring
+  youtube/                      PlayerAdapter, navigation, caption sources, MAIN-bridge client, overlay, original-audio ducking
+  captions/                     caption parsing (json3 / srv3 / vtt), normalization, sentence joining, incremental and ASR assembly
+  translation/                  translation scheduler, retry policy, playback buffer, audio preloader
+  providers/text/               sub2api text adapter: base URL, Responses / Chat, SSE, validation, connection checks
+  providers/asr/                speech-recognition contracts and clients (local service, sub2api)
+  providers/tts/                system voices, sub2api synthesis, dubbing controller
+  audio/                        PCM, resampling, segmentation, recognition queue, media timeline, cleanup, offscreen client
+  storage/                      IndexedDB: transcripts, bookmarks, notes, translation cache, search history
+  export/                       SRT / VTT / TXT generation, coverage statements, download
+  ui/                           shared components, theming, state client, pages, transcript view, demo data
 tests/
-  unit/                         单元测试
-  integration/                  集成测试（模拟 sub2api 服务、协调器 harness）
-  e2e/                          Playwright 扩展 E2E（YouTube 路由到本地夹具页面）
-  smoke/                        真实 sub2api 冒烟测试（显式运行）
-  fixtures/                     人工构造的字幕与 sub2api 响应夹具
-  helpers/                      模拟 sub2api 服务等测试工具
-services/asr-local/             本地语音识别补充服务（Python + FastAPI + faster-whisper，仅监听 127.0.0.1）
-public/icon/                    扩展图标
-docs/                           文档（见下方索引）
+  unit/                         unit tests
+  integration/                  integration tests (mock sub2api service, coordinator harness)
+  e2e/                          Playwright extension E2E (YouTube routed to a local fixture)
+  smoke/                        real sub2api smoke tests (explicit opt-in)
+  fixtures/                     hand-built caption and sub2api response fixtures
+services/asr-local/             local speech-recognition service (Python + FastAPI + faster-whisper, 127.0.0.1 only)
+public/icon/                    extension icons
+docs/                           documentation (index below)
 ```
 
-## 开发约定
+---
 
-- **契约优先**：跨模块、跨进程的类型与 schema 集中在 `src/domain/`、`src/messaging/` 与各 `src/providers/*/types.ts`。本地识别服务的 HTTP 契约写在 `src/providers/asr/types.ts`，扩展与 `services/asr-local` 必须保持一致。修改契约时同步更新双方与测试。
-- **运行时校验**：消息、存储读出的数据、模型与服务返回都经过 zod 校验；MAIN world 与页面数据一律视为不可信。
-- **Service worker 是业务状态的权威来源**：UI 只发命令、只接受更新版本的快照，不各自持有翻译客户端或 Key。
-- **真实模式不造假**：能力状态只来自实际调用；失败不自动切换为演示数据；没有数据时显示「未知 / 未检测」。
-- **秘密不外泄**：API Key 与本地识别配对令牌不进入快照广播、内容脚本、DOM、URL、日志、错误信息、导出设置、测试夹具或文档。
-- **显式导入**：WXT 配置为 `imports: false`，路径别名 `@src` 指向 `src/`；TypeScript 严格模式。
-- **测试分层**：纯逻辑写单元测试；需要副作用计数（请求、tracks、队列、释放）的用集成测试；扩展加载与页面往返用 E2E；工具栏手势、真实音频、系统声音、真实 YouTube 与 sub2api 只能人工或冒烟测试覆盖，并在 [docs/VALIDATION.md](docs/VALIDATION.md) 如实记录。不以删除断言、跳过测试或吞掉异常换取通过。
-- **Git 暂存区由用户控制**：协作者（包括自动化工具）不执行 `git add` / `git stage` / `git commit -a` 或任何改变索引的操作，不自动提交；所有修改留在工作区，由用户自行 review 与暂存。
+## Privacy and security
 
-## 文档索引
+- **Your key stays yours.** The API key and the local-ASR pairing token never enter snapshot broadcasts, content scripts, the DOM, URLs, logs, error messages, exported settings, test fixtures or documentation.
+- **One origin.** Host permission is requested for the single sub2api origin you configured, nothing else.
+- **Translation requests carry subtitle text only** — cue ids, text, target language and prompt. No page URL, no video title, no signed player parameters.
+- **Everything local stays local.** Transcripts, bookmarks, notes and the translation cache live in your browser's IndexedDB. The local ASR service binds to `127.0.0.1` and never downloads media to disk.
+- **Untrusted by default.** MAIN-world and page data, storage reads, and model/service responses are all validated with zod before use.
+- **No fake success.** Capability state comes only from real calls. Failures never silently fall back to demo data; with no data the UI says "未知 / 未检测" rather than guessing.
 
-| 文档                                                 | 内容                                                |
-| ---------------------------------------------------- | --------------------------------------------------- |
-| [docs/USER_GUIDE.md](docs/USER_GUIDE.md)             | 安装、配置 sub2api、使用、隐私、故障排查与已知限制  |
-| [docs/ASR_LOCAL.md](docs/ASR_LOCAL.md)               | 本地识别服务的安装、启动/停止、模型下载、性能与排障 |
-| [docs/VALIDATION.md](docs/VALIDATION.md)             | 自动化测试结果、T01–T40 验收矩阵与真实链路实测记录  |
-| [docs/CAPABILITIES.md](docs/CAPABILITIES.md)         | 服务、浏览器、YouTube 能力矩阵与权限说明            |
-| [docs/PROGRESS.md](docs/PROGRESS.md)                 | 阶段进度、阻塞项与技术决策                          |
-| [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)           | 开发与验证环境、网络限制                            |
-| [EXECUTION_PLAN.md](EXECUTION_PLAN.md)               | 执行计划、产品规格与完整验收矩阵                    |
-| [docs/reference/README.md](docs/reference/README.md) | UI 原型参考说明（原型不是可交付的扩展）             |
+---
+
+## Development conventions
+
+- **Contracts first.** Cross-module and cross-process types live in `src/domain/`, `src/messaging/` and each `src/providers/*/types.ts`. The local ASR HTTP contract is in `src/providers/asr/types.ts`, and `services/asr-local` must match it. Change both sides plus the tests together.
+- **The service worker owns business state.** The UI sends commands and accepts newer snapshots; it never holds its own translation client or key.
+- **Explicit imports.** WXT runs with `imports: false`, `@src` aliases `src/`, TypeScript strict mode.
+- **Layered tests.** Pure logic gets unit tests; anything needing side-effect counts (requests, tracks, queues, releases) gets integration tests; extension loading and page round-trips get E2E. Toolbar gestures, real audio, system voices, real YouTube and real sub2api can only be covered manually or by smoke tests, and are recorded honestly in [docs/VALIDATION.md](docs/VALIDATION.md). Passing is never bought by deleting assertions, skipping tests or swallowing exceptions.
+- **The git index belongs to the user.** Contributors — including automated tools — do not run `git add` / `git stage` / `git commit -a` or anything else that mutates the index, and do not commit on their own. Changes stay in the working tree for the user to review and stage.
+
+---
+
+## Out of scope
+
+Not in this project: mobile, Safari or Firefox builds; voice cloning, lip sync, video re-encoding or downloaders; general-purpose audio capture on arbitrary sites; multi-party meetings; accounts, payments or a team backend; circumventing DRM, paywalls, sign-in requirements or any other access control; OCR of text burned into the picture; store publication or hosted servers.
+
+Live streams, Shorts and picture-in-picture are not in the first acceptance round and are not claimed as supported.
+
+---
+
+## Documentation
+
+| Document                                     | Contents                                                                             |
+| -------------------------------------------- | ------------------------------------------------------------------------------------ |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md)     | Install, configure sub2api, use, privacy, troubleshooting, known limits              |
+| [docs/ASR_LOCAL.md](docs/ASR_LOCAL.md)       | Local ASR service: install, start/stop, model download, performance, troubleshooting |
+| [docs/VALIDATION.md](docs/VALIDATION.md)     | Automated test results, the T01–T40 acceptance matrix, real-service measurements     |
+| [docs/CAPABILITIES.md](docs/CAPABILITIES.md) | Service, browser and YouTube capability matrix, permissions                          |
+| [docs/PROGRESS.md](docs/PROGRESS.md)         | Phase progress, blockers, technical decisions                                        |
+| [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)   | Development and validation environment, network limits                               |
+
+---
+
+## License
+
+[MIT](LICENSE)

@@ -1,0 +1,212 @@
+/**
+ * README 截图生成器。不属于验收用例，常规 `pnpm test:e2e` 会跳过。
+ *
+ * 运行：
+ *   pnpm build
+ *   TONGTING_E2E=1 pnpm exec wxt build
+ *   TONGTING_SHOTS=1 pnpm exec playwright test tests/e2e/screenshots.spec.ts
+ *
+ * 产出目录：docs/screenshots/
+ *
+ * 两类来源，README 中必须如实标注：
+ * 1. 演示模式（产品构建 + `?demo=1`）——界面持续显示「演示模式」标识，不连接任何服务。
+ * 2. 本地夹具全链路（E2E 构建）——真实扩展、真实 service worker 协调器、真实内容脚本与覆盖层，
+ *    但 YouTube 指向本地夹具页与 ffmpeg 合成的静音视频，sub2api 指向本地模拟服务。
+ *    截图里的译文来自模拟服务的固定对照表，不是任何模型的真实输出。
+ */
+import { expect, test, type Page } from '@playwright/test';
+import { mkdir } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { launchExtension, type LaunchedExtension } from './helpers/extension';
+import {
+  configureProvider,
+  openWatch,
+  setupFullChain,
+  video,
+  waitOverlay,
+  type FullChain,
+} from './helpers/full-chain';
+import { ffmpegAvailable, silentVideo } from './fixtures/full-chain/media';
+import type { CaptionLine, FixtureVideo } from './fixtures/full-chain/youtube';
+
+const OUT_DIR = resolve(import.meta.dirname, '../../docs/screenshots');
+const SCALE = ['--force-device-scale-factor=2'];
+
+/** 夹具字幕与对照译文：与演示模式同一组文案，保证 README 的截图语气一致。 */
+const SENTENCES: Array<[string, string]> = [
+  [
+    'We often look at things without really seeing them.',
+    '我们常常看着眼前的事物，却没有真正看见。',
+  ],
+  ['Attention is something we can practice.', '专注观察是一项可以练习的能力。'],
+  ['Real learning begins with staying curious.', '真正的学习，始于保持好奇。'],
+  ['You do not need to have all the answers.', '你不需要掌握所有答案。'],
+  ['Sometimes a better question is enough.', '有时候，提出一个更好的问题就足够了。'],
+  ['Try slowing down and noticing one small detail.', '试着慢下来，留意一个微小的细节。'],
+  ['Familiar places can reveal new possibilities.', '熟悉的地方，也能让你看见新的可能。'],
+];
+
+const TABLE = new Map(SENTENCES);
+const CAPTIONS: CaptionLine[] = SENTENCES.map(([text], i) => ({
+  startMs: 1_000 + i * 6_000,
+  durationMs: 5_600,
+  text,
+}));
+
+function shot(page: Page, name: string, options: { fullPage?: boolean } = {}) {
+  return page.screenshot({
+    path: join(OUT_DIR, name),
+    animations: 'disabled',
+    caret: 'hide',
+    ...options,
+  });
+}
+
+test.describe('README 截图', () => {
+  test.skip(process.env.TONGTING_SHOTS !== '1', '仅在生成 README 截图时运行（TONGTING_SHOTS=1）');
+  test.describe.configure({ timeout: 180_000 });
+
+  test.beforeAll(async () => {
+    await mkdir(OUT_DIR, { recursive: true });
+  });
+
+  test('演示模式界面与设置页', async () => {
+    let ext: LaunchedExtension | undefined;
+    try {
+      ext = await launchExtension({ extraArgs: SCALE });
+      const open = async (path: string, width: number, scheme: 'light' | 'dark' = 'light') => {
+        const page = await ext!.context.newPage();
+        await page.setViewportSize({ width, height: 900 });
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.goto(`chrome-extension://${ext!.extensionId}/${path}`);
+        return page;
+      };
+
+      // 侧栏：演示模式（持续显示演示标识）
+      const panel = await open('sidepanel.html?demo=1', 400);
+      const banner = panel.getByText('演示模式 · 示例数据，不连接视频与服务');
+      await expect(banner).toBeVisible();
+      await expect(panel.getByRole('button', { name: '暂停翻译' })).toBeVisible();
+      await shot(panel, 'sidepanel-translate.png', { fullPage: true });
+
+      await panel.getByRole('tab', { name: '字幕', exact: true }).click();
+      await expect(
+        panel.getByRole('list', { name: '字幕列表' }).getByRole('listitem').first(),
+      ).toBeVisible();
+      await shot(panel, 'sidepanel-transcript.png', { fullPage: true });
+
+      await panel.getByRole('tab', { name: '搜索', exact: true }).click();
+      await panel.getByLabel('你想在 YouTube 上找什么？').fill('新手怎么用 AI 剪辑 YouTube 视频');
+      await panel.getByRole('button', { name: '生成英文搜索词', exact: true }).click();
+      await expect(panel.getByRole('article')).toHaveCount(3);
+      await shot(panel, 'sidepanel-search.png', { fullPage: true });
+
+      await panel.getByRole('tab', { name: '设置', exact: true }).click();
+      await expect(panel.getByRole('button', { name: '打开完整设置' })).toBeVisible();
+      await shot(panel, 'sidepanel-settings.png', { fullPage: true });
+      await panel.close();
+
+      // 深色主题
+      const dark = await open('sidepanel.html?demo=1', 400, 'dark');
+      await expect(dark.getByText('演示模式 · 示例数据，不连接视频与服务')).toBeVisible();
+      await shot(dark, 'sidepanel-translate-dark.png', { fullPage: true });
+      await dark.close();
+
+      // 完整设置页：未配置时的真实空状态
+      const options = await open('options.html', 1120);
+      await expect(options.getByRole('heading', { name: '设置' })).toBeVisible();
+      await expect(
+        options
+          .getByRole('heading', { name: '模型连接' })
+          .or(options.getByText('正在连接后台服务…').first()),
+      ).toBeVisible();
+      await shot(options, 'options.png', { fullPage: true });
+      await options.close();
+    } finally {
+      await ext?.close();
+    }
+  });
+
+  test('本地夹具全链路：播放器覆盖层、运行中的侧栏、弹窗与字幕工作台', async () => {
+    test.skip(!(await ffmpegAvailable()), '需要 ffmpeg 生成夹具视频');
+    const videos: FixtureVideo[] = [
+      {
+        videoId: 'SHOTS000001',
+        title: 'Fixture: noticing small details',
+        lengthSeconds: 60,
+        captions: CAPTIONS,
+        media: await silentVideo(60),
+      },
+    ];
+
+    let fc: FullChain | undefined;
+    try {
+      fc = await setupFullChain({
+        videos,
+        extraArgs: () => SCALE,
+        mock: { translate: (_target, text) => TABLE.get(text) ?? text },
+      });
+      await fc.ui.page.setViewportSize({ width: 400, height: 900 });
+      await configureProvider(fc, { targetLanguage: 'zh-CN' });
+
+      const { page, tabId } = await openWatch(fc, 'SHOTS000001');
+      await fc.ui.waitPage('SHOTS000001', (p) => p.captionsAvailability === 'available');
+      expect(await video(page).play()).toBe(true);
+      await fc.ui.ok({ kind: 'session/start', tabId });
+      const session = await fc.ui.waitSession(
+        tabId,
+        (s) => s.phase === 'running' && s.sourceMode === 'full-track',
+        { timeout: 30_000, message: '会话进入 running/full-track' },
+      );
+
+      // 停在第 3 句，等覆盖层显示双语
+      await video(page).pause();
+      await video(page).seek(13.5);
+      const expected = TABLE.get(SENTENCES[2]![0])!;
+      const overlay = await waitOverlay(page, (s) => s.main === expected, 30_000, '覆盖层显示译文');
+      expect(overlay.secondary).toBe(SENTENCES[2]![0]);
+      expect(overlay.hideNative).toBe(true);
+
+      await page.setViewportSize({ width: 720, height: 460 });
+      await page.locator('#movie_player').screenshot({
+        path: join(OUT_DIR, 'youtube-overlay.png'),
+        animations: 'disabled',
+      });
+
+      // 运行中的侧栏（真实会话状态，不是演示数据）
+      await fc.ui.waitSession(tabId, (s) => s.translation.done > 0, { timeout: 30_000 });
+      await shot(fc.ui.page, 'sidepanel-running.png', { fullPage: true });
+
+      // 工具栏弹窗：先让观看页回到前台，弹窗才会显示真实的当前视频而不是自己所在的标签页
+      const popup = await fc.ext.context.newPage();
+      await popup.setViewportSize({ width: 360, height: 560 });
+      await popup.goto(`chrome-extension://${fc.ext.extensionId}/popup.html`);
+      await expect(popup.getByRole('button', { name: '打开侧栏' })).toBeVisible();
+      await page.bringToFront();
+      await expect(popup.getByLabel('当前标签页')).toContainText(
+        'Fixture: noticing small details',
+        {
+          timeout: 30_000,
+        },
+      );
+      await shot(popup, 'popup.png', { fullPage: true });
+      await popup.close();
+
+      // 字幕工作台：读取本次会话写入 IndexedDB 的记录，并选中它显示正文
+      expect(session.recordId).toBeTruthy();
+      const workspace = await fc.ext.context.newPage();
+      await workspace.setViewportSize({ width: 1180, height: 980 });
+      await workspace.goto(`chrome-extension://${fc.ext.extensionId}/workspace.html`);
+      await expect(workspace.getByRole('heading', { name: '字幕工作台' })).toBeVisible();
+      const record = workspace.getByRole('button', { name: /Fixture: noticing small details/ });
+      await expect(record).toBeVisible({ timeout: 30_000 });
+      await record.click();
+      await expect(workspace.getByText('没有选中的字幕记录')).toHaveCount(0, { timeout: 30_000 });
+      await expect(workspace.getByText(SENTENCES[0]![1], { exact: true }).first()).toBeVisible();
+      await shot(workspace, 'workspace.png', { fullPage: true });
+      await workspace.close();
+    } finally {
+      await fc?.close();
+    }
+  });
+});

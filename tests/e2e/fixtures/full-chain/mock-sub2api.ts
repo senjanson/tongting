@@ -91,10 +91,16 @@ function wait(ms: number, res: ServerResponse): Promise<boolean> {
 }
 
 export async function startE2eMockSub2api(
-  options: { apiKey?: string; models?: string[] } = {},
+  options: {
+    apiKey?: string;
+    models?: string[];
+    /** 覆盖译文生成，便于截图脚本用可读译文；默认仍是确定性的 mockTranslation。 */
+    translate?: (targetLanguage: string | undefined, text: string) => string;
+  } = {},
 ): Promise<E2eMockSub2api> {
   const apiKey = options.apiKey ?? E2E_API_KEY;
   const models = options.models ?? ['gpt-5.6-terra', 'gpt-5.6-luna'];
+  const translateText = options.translate ?? mockTranslation;
   const requests: RecordedRequest[] = [];
   const queues: Record<Endpoint, Reply[]> = { models: [], responses: [], chat: [] };
   const defaults: Record<Endpoint, Reply | null> = { models: null, responses: null, chat: null };
@@ -122,7 +128,7 @@ export async function startE2eMockSub2api(
     const outputText = JSON.stringify({
       translations: record.items.map((i) => ({
         id: i.id,
-        text: mockTranslation(record.targetLanguage, i.text),
+        text: translateText(record.targetLanguage, i.text),
       })),
     });
     const body = record.body as Record<string, unknown>;

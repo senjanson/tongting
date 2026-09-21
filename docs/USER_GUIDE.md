@@ -1,6 +1,8 @@
 # 同听 Tongting 使用指南
 
-> **开发中**：真实 sub2api 的 Luna 翻译与本地测试视频的中文配音链路已通过；真实 YouTube 长时观看仍受播放错误影响，尚未验收。默认输出为「仅字幕」，需要听中文时请切换为「字幕 + 配音」。本指南按当前实现与设计编写。实测支持范围见 [LIVE_TEST.md](reviews/2026-09-17/LIVE_TEST.md) 与 [CAPABILITIES.md](CAPABILITIES.md)。
+> 本文中提到的 LIVE_TEST、FIXES、REVIEW、BUFFERED_PLAYBACK、POPUP_LAYOUT 等复查记录与 EXECUTION_PLAN 实施计划属于内部开发过程文档，未随本仓库发布。
+
+> **开发中**：真实 sub2api 的 Luna 翻译与本地测试视频的中文配音链路已通过；真实 YouTube 长时观看仍受播放错误影响，尚未验收。默认输出为「仅字幕」，需要听中文时请切换为「字幕 + 配音」。本指南按当前实现与设计编写。实测支持范围见 LIVE_TEST.md 与 [CAPABILITIES.md](CAPABILITIES.md)。
 
 ## 目录
 
@@ -528,7 +530,7 @@ https://your-sub2api.example.com/v1
 
 ## 10. 已知限制
 
-- **尚未完成真实验收**：云端识别／合成、真实 YouTube 长时观看、工具栏点击授权下的捕获及真人听感。Luna 文本翻译与本地合成视频的真实识别／中文配音已经验证；范围见 [LIVE_TEST.md](reviews/2026-09-17/LIVE_TEST.md)。
+- **尚未完成真实验收**：云端识别／合成、真实 YouTube 长时观看、工具栏点击授权下的捕获及真人听感。Luna 文本翻译与本地合成视频的真实识别／中文配音已经验证；范围见 LIVE_TEST.md。
 - **本地地址只允许 127.0.0.1**：sub2api 的 http 地址和本地识别服务都不接受 `localhost`（可能解析到 IPv6 上的其他进程）。
 - **视频类型**：首批验收对象是普通 YouTube 录播。直播、Shorts、画中画、嵌入其他网站的 YouTube 播放器、`m.youtube.com` 均未验证，不宣称支持。
 - **字幕读取依赖 YouTube 页面**：完整字幕轨道读取、广告识别、播放器状态都依赖 YouTube 当前的页面结构，YouTube 改版可能导致暂时不可用。读不到完整轨道时只能读取当前显示的字幕（需要开启 CC，只覆盖已播放部分）。

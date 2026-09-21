@@ -40,9 +40,11 @@ export async function setupFullChain(options: {
    * 需要观察「空闲不连接」时用 /options.html 或 /workspace.html（不唤醒）。
    */
   uiPath?: '/sidepanel.html' | '/options.html' | '/workspace.html';
+  /** 传给模拟 sub2api 的选项（例如截图脚本覆盖译文生成）。 */
+  mock?: Parameters<typeof startE2eMockSub2api>[0];
 }): Promise<FullChain> {
   const prepared = await prepareE2EExtension();
-  const mock = await startE2eMockSub2api();
+  const mock = await startE2eMockSub2api(options.mock);
   const ext = await launchExtension({
     extensionDir: prepared.dir,
     unmute: options.unmute,
