@@ -4,6 +4,14 @@
   "private": true,
   "version": "0.1.0",
   "description": "YouTube 实时翻译字幕与配音 Chrome 扩展（基于 sub2api）",
+  "author": "asen",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/senjanson/tongting.git"
+  },
+  "homepage": "https://github.com/senjanson/tongting#readme",
+  "bugs": "https://github.com/senjanson/tongting/issues",
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "engines": {

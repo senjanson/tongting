@@ -24,7 +24,7 @@ uv run --extra youtube tongting-asr serve --youtube-preload --allow-extension-id
 `POST /v1/youtube/transcribe` 使用 `Authorization: Bearer <配对令牌>`，`Content-Type: application/json`，同样接受已有的扩展来源、Host 与令牌检查。
 
 ```json
-{"videoId":"ZA-tUyM_y7s","startMs":300000,"durationMs":20000,"language":"en"}
+{ "videoId": "ZA-tUyM_y7s", "startMs": 300000, "durationMs": 20000, "language": "en" }
 ```
 
 - `videoId`：11 位 YouTube 视频 ID，不接受任意网址。

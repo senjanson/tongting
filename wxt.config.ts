@@ -21,6 +21,7 @@ export default defineConfig({
     // 用户配置的服务 origin 在设置页按需申请，只申请单一 origin。
     optional_host_permissions: ['https://*/*', 'http://127.0.0.1/*'],
     ...(isE2E ? { host_permissions: ['http://127.0.0.1/*'] } : {}),
+    homepage_url: 'https://github.com/senjanson/tongting',
     action: {
       default_title: '同听',
     },
