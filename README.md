@@ -98,6 +98,26 @@ The interface is currently Simplified Chinese only.
 
 ---
 
+## Install
+
+### Download a build (no toolchain needed)
+
+Grab the latest `tongting-<version>-chrome.zip` from [**Releases**](https://github.com/senjanson/tongting/releases), then:
+
+1. Unzip it.
+2. Open `chrome://extensions` and turn on **Developer mode** (top right).
+3. Click **Load unpacked** and pick the unzipped folder.
+
+Every release zip is built by [GitHub Actions](.github/workflows/release.yml) from the tagged commit, after typecheck, lint, format and the unit + integration suites pass. Each release lists the SHA256 of its zip.
+
+> It is an unpacked build, not a store-signed `.crx`, so Developer mode is required. The extension is not on the Chrome Web Store yet.
+
+After installing, open the settings page and point it at **your own** sub2api deployment — see [Point it at your sub2api deployment](#point-it-at-your-sub2api-deployment). Nothing works until you do; the extension ships no keys.
+
+### Build from source
+
+See [Quick start](#quick-start) below.
+
 ## Requirements
 
 |                     | Version                                | Notes                                                                                     |

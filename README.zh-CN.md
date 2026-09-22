@@ -98,6 +98,26 @@ TONGTING_SHOTS=1 pnpm exec playwright test tests/e2e/screenshots.spec.ts
 
 ---
 
+## 安装
+
+### 直接下载构建产物（不需要装工具链）
+
+到 [**Releases**](https://github.com/senjanson/tongting/releases) 下载最新的 `tongting-<版本>-chrome.zip`，然后：
+
+1. 解压。
+2. 打开 `chrome://extensions`，开启右上角的**开发者模式**。
+3. 点击**加载已解压的扩展程序**，选择解压出来的文件夹。
+
+每个 Release 的 zip 都由 [GitHub Actions](.github/workflows/release.yml) 从对应 tag 的提交构建，并且在类型检查、ESLint、格式检查、单元与集成测试全部通过之后才发布。每个 Release 都附带 zip 的 SHA256。
+
+> 这是解压包，不是商店签名的 `.crx`，所以必须用开发者模式加载。扩展尚未上架 Chrome 商店。
+
+装好之后要在设置页填上**你自己的** sub2api 服务——见[指向你的 sub2api 服务](#指向你的-sub2api-服务)。不填的话什么都跑不了，扩展不内置任何 Key。
+
+### 从源码构建
+
+见下面的[快速开始](#快速开始)。
+
 ## 环境要求
 
 | 项目                | 版本                         | 说明                                                                   |

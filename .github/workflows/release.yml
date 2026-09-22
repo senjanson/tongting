@@ -1,0 +1,103 @@
+name: Release
+
+# 打 v* tag 时构建扩展并发布 Release；也可以在 Actions 页面手动触发。
+# 产物是解压后用「加载已解压的扩展程序」安装的 zip，不是商店签名的 crx。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 启用 corepack（按 package.json 的 packageManager 取 pnpm）
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: 校验 tag 与 package.json 版本一致
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "tag 是 v$TAG_VERSION，但 package.json 是 $PKG_VERSION，先对齐再发版" >&2
+            exit 1
+          fi
+          echo "version=$PKG_VERSION" >> "$GITHUB_ENV"
+
+      - run: pnpm install --frozen-lockfile
+
+      # 不发布未通过检查的构建
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm test
+      - run: pnpm test:integration
+
+      - run: pnpm build
+      - run: pnpm zip
+
+      - name: 计算校验和
+        id: artifact
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          ZIP=".output/tongting-${VERSION}-chrome.zip"
+          test -f "$ZIP" || { echo "找不到产物 $ZIP" >&2; ls -la .output >&2; exit 1; }
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$ZIP" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: 上传构建产物（无 tag 的手动运行也能取到）
+        uses: actions/upload-artifact@v4
+        with:
+          name: tongting-chrome-${{ steps.artifact.outputs.version }}
+          path: ${{ steps.artifact.outputs.zip }}
+
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.artifact.outputs.version }}
+          ZIP: ${{ steps.artifact.outputs.zip }}
+          SHA256: ${{ steps.artifact.outputs.sha256 }}
+        run: |
+          # 0.x 一律标记为预发布：核心链路尚未在真实 YouTube 上长时间验收。
+          PRERELEASE=""
+          case "$VERSION" in 0.*) PRERELEASE="--prerelease" ;; esac
+
+          cat > notes.md <<EOF
+          ## 安装
+
+          1. 下载下面的 \`tongting-${VERSION}-chrome.zip\` 并解压。
+          2. 打开 \`chrome://extensions\`，开启右上角的**开发者模式**。
+          3. 点击**加载已解压的扩展程序**，选择解压出来的文件夹。
+
+          这是解压包，不是商店签名的 crx，所以必须用开发者模式加载。需要 Chrome 116 及以上。
+
+          安装后还要在设置页填入你自己的 [sub2api](https://github.com/Wei-Shaw/sub2api) 服务地址与 API Key 才能工作；扩展不内置任何 Key，也没有托管后端。配置步骤见 [使用说明](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/USER_GUIDE.md)。
+
+          ## 状态
+
+          真实 sub2api 的文本翻译、以及本地合成视频上的识别→翻译→中文配音已验证。**真实 YouTube 的长时间观看、云端识别与云端合成尚未验收**，详见 [README 的项目状态](https://github.com/${GITHUB_REPOSITORY}#project-status)。
+
+          ## 校验和
+
+          \`\`\`
+          SHA256  ${SHA256}
+          \`\`\`
+          EOF
+
+          gh release create "$GITHUB_REF_NAME" "$ZIP" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md \
+            $PRERELEASE
