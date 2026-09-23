@@ -115,3 +115,29 @@ describe('secrets', () => {
     expect(maskSecret(undefined)).toBeUndefined();
   });
 });
+
+describe('首次安装的默认目标语言跟随界面语言', () => {
+  it('非中文界面默认英文，而不是简体中文', async () => {
+    const local = new MemoryArea();
+    const loaded = await loadSettings(local, logger, 'en-US');
+    expect(loaded.settings.targetLanguage).toBe('en');
+  });
+
+  it('日文界面默认日文', async () => {
+    expect((await loadSettings(new MemoryArea(), logger, 'ja-JP')).settings.targetLanguage).toBe(
+      'ja',
+    );
+  });
+
+  it('中文界面仍默认简体中文', async () => {
+    expect((await loadSettings(new MemoryArea(), logger, 'zh-CN')).settings.targetLanguage).toBe(
+      'zh-CN',
+    );
+  });
+
+  it('不覆盖已保存的选择', async () => {
+    const local = new MemoryArea();
+    await saveSettings(local, { ...defaultSettings(), targetLanguage: 'ko' });
+    expect((await loadSettings(local, logger, 'en-US')).settings.targetLanguage).toBe('ko');
+  });
+});

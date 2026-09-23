@@ -58,6 +58,7 @@ export function startBackground(): Coordinator {
       secureLocal: createSecureLocalArea(),
     },
     runtimeId: browser.runtime.id,
+    uiLanguage: browser.i18n.getUILanguage(),
     extensionOrigin: `chrome-extension://${browser.runtime.id}`,
     permissions: {
       contains: (originPattern) => browser.permissions.contains({ origins: [originPattern] }),

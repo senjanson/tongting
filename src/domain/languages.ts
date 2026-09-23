@@ -47,6 +47,26 @@ export const SOURCE_LANGUAGES: readonly { code: string; label: string }[] = [
 
 export const DEFAULT_TARGET_LANGUAGE = 'zh-CN';
 
+/**
+ * 首次安装（或设置损坏被重置）时按浏览器界面语言挑默认目标语言。
+ * 中文界面按简繁保持中文；其余界面优先匹配受支持的同一语言，匹配不到用英文——
+ * 看不懂中文的人不应该默认拿到中文字幕。检测不到界面语言时保持内置默认值。
+ * 只用于产生初始默认值，绝不覆盖用户已保存的选择。
+ */
+export function defaultTargetLanguageFor(uiLanguage: string | undefined): string {
+  const tag = (uiLanguage ?? '').trim().toLowerCase();
+  if (!tag) return DEFAULT_TARGET_LANGUAGE;
+  if (primaryLanguageTag(tag) === 'zh')
+    return chineseScript(tag) === 'hant' ? 'zh-TW' : DEFAULT_TARGET_LANGUAGE;
+  const exact = TARGET_LANGUAGES.find((l) => l.code.toLowerCase() === tag);
+  if (exact) return exact.code;
+  const primary = primaryLanguageTag(tag);
+  const byPrimary = TARGET_LANGUAGES.find(
+    (l) => primaryLanguageTag(l.code) === primary && primaryLanguageTag(l.code) !== 'zh',
+  );
+  return byPrimary?.code ?? 'en';
+}
+
 export function findTargetLanguage(code: string): LanguageOption | undefined {
   return TARGET_LANGUAGES.find((l) => l.code === code);
 }

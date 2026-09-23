@@ -208,7 +208,7 @@ export class Coordinator implements SessionHost {
 
   private async init(): Promise<void> {
     const { deps } = this;
-    const loaded = await loadSettings(deps.storage.local, deps.logger);
+    const loaded = await loadSettings(deps.storage.local, deps.logger, deps.uiLanguage);
     this.settingsValue = loaded.settings;
     const [apiKey, asrToken] = await Promise.all([
       loadSecret(deps.storage, 'apiKey'),

@@ -100,8 +100,12 @@ export const SettingsSchema = z.object({
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
-export function defaultSettings(): Settings {
-  return SettingsSchema.parse({ schemaVersion: SETTINGS_SCHEMA_VERSION });
+/** targetLanguage 用于首次安装时按界面语言给出默认值；省略则使用内置默认。 */
+export function defaultSettings(targetLanguage?: string): Settings {
+  return SettingsSchema.parse({
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    ...(targetLanguage ? { targetLanguage } : {}),
+  });
 }
 
 type NestedSettingsKey = 'captions' | 'audio' | 'provider' | 'asr' | 'tts';

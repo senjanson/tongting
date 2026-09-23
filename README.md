@@ -2,7 +2,9 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-A Chrome MV3 extension that gives YouTube videos translated subtitles in your target language (Simplified Chinese by default) while you watch, and can optionally read the translation aloud. Text translation runs through **your own** [sub2api](https://github.com/Wei-Shaw/sub2api) deployment — the extension ships no keys and no hosted backend. Videos without readable captions need a separate speech-recognition service; a local one is included in this repository.
+A Chrome MV3 extension that gives YouTube videos translated subtitles in your target language while you watch, and can optionally read the translation aloud. Text translation runs through **your own** [sub2api](https://github.com/Wei-Shaw/sub2api) deployment — the extension ships no keys and no hosted backend. Videos without readable captions need a separate speech-recognition service; a local one is included in this repository.
+
+On a fresh install the target language follows your browser's UI language: Chinese browsers get Simplified or Traditional Chinese, other browsers get their own language when it is one of the supported targets, and English otherwise. You can change it at any time — the default is only ever applied once.
 
 ![Bilingual subtitle overlay on the player](docs/screenshots/youtube-overlay.png)
 

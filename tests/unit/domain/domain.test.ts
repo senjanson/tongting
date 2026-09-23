@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { findActiveCue, mergeRanges } from '@src/domain/cue';
 import { redactSecrets, redactUrl, toAppErrorInfo } from '@src/domain/errors';
-import { isSameLanguage } from '@src/domain/languages';
+import { defaultTargetLanguageFor, isSameLanguage } from '@src/domain/languages';
 import { isCurrentIdentity } from '@src/domain/session';
 import {
   applySettingsPatch,
@@ -159,5 +159,34 @@ describe('languages & identity', () => {
     expect(isCurrentIdentity(cur, { ...cur, epoch: 1 })).toBe(false);
     expect(isCurrentIdentity(cur, { ...cur, sessionId: 's0' })).toBe(false);
     expect(isCurrentIdentity(undefined, cur)).toBe(false);
+  });
+});
+
+describe('defaultTargetLanguageFor', () => {
+  it('中文界面按简繁保持中文', () => {
+    for (const ui of ['zh', 'zh-CN', 'zh-Hans', 'zh-SG', 'ZH-cn'])
+      expect(defaultTargetLanguageFor(ui)).toBe('zh-CN');
+    for (const ui of ['zh-TW', 'zh-HK', 'zh-Hant', 'zh-MO'])
+      expect(defaultTargetLanguageFor(ui)).toBe('zh-TW');
+  });
+
+  it('非中文界面匹配到受支持的同一语言', () => {
+    expect(defaultTargetLanguageFor('en-US')).toBe('en');
+    expect(defaultTargetLanguageFor('ja-JP')).toBe('ja');
+    expect(defaultTargetLanguageFor('ko')).toBe('ko');
+    expect(defaultTargetLanguageFor('es-MX')).toBe('es');
+    expect(defaultTargetLanguageFor('fr-CA')).toBe('fr');
+    expect(defaultTargetLanguageFor('de-AT')).toBe('de');
+  });
+
+  it('不受支持的界面语言退回英文，而不是中文', () => {
+    for (const ui of ['ru', 'pt-BR', 'ar', 'hi-IN', 'vi'])
+      expect(defaultTargetLanguageFor(ui)).toBe('en');
+  });
+
+  it('检测不到界面语言时保持内置默认值', () => {
+    expect(defaultTargetLanguageFor(undefined)).toBe('zh-CN');
+    expect(defaultTargetLanguageFor('')).toBe('zh-CN');
+    expect(defaultTargetLanguageFor('   ')).toBe('zh-CN');
   });
 });

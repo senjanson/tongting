@@ -54,6 +54,8 @@ export interface CoordinatorDeps {
   storage: { local: KeyValueArea; session: KeyValueArea; secureLocal: KeyValueArea };
   runtimeId: string;
   extensionOrigin: string;
+  /** 浏览器界面语言（browser.i18n.getUILanguage()），用于首次安装的默认目标语言。 */
+  uiLanguage?: string;
 
   permissions: {
     contains(originPattern: string): Promise<boolean>;

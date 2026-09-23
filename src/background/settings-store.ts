@@ -7,6 +7,7 @@
  * - 写入失败不得报告为已保存；调用方拿到 persisted=false 后提示「仅本次生效」。
  */
 import type { KeyValueArea } from './deps';
+import { defaultTargetLanguageFor } from '../domain/languages';
 import {
   SETTINGS_SCHEMA_VERSION,
   SettingsSchema,
@@ -30,15 +31,18 @@ export interface LoadedSettings {
 export async function loadSettings(
   local: KeyValueArea,
   logger: Pick<Console, 'warn'>,
+  /** 浏览器界面语言，用于首次安装时挑默认目标语言；省略则使用内置默认。 */
+  uiLanguage?: string,
 ): Promise<LoadedSettings> {
+  const initial = () => defaultSettings(defaultTargetLanguageFor(uiLanguage));
   let raw: unknown;
   try {
     raw = (await local.get([SETTINGS_KEY]))[SETTINGS_KEY];
   } catch (error) {
     logger.warn('[tongting] settings read failed', error instanceof Error ? error.name : 'unknown');
-    return { settings: defaultSettings(), recoveredFromCorruption: false };
+    return { settings: initial(), recoveredFromCorruption: false };
   }
-  if (raw === undefined) return { settings: defaultSettings(), recoveredFromCorruption: false };
+  if (raw === undefined) return { settings: initial(), recoveredFromCorruption: false };
   const migrated = migrateSettings(raw);
   const parsed = SettingsSchema.safeParse(migrated);
   if (parsed.success)
@@ -54,7 +58,7 @@ export async function loadSettings(
     // 备份失败不影响继续使用默认设置。
   }
   logger.warn('[tongting] settings invalid, using defaults; backup kept');
-  return { settings: defaultSettings(), recoveredFromCorruption: true };
+  return { settings: initial(), recoveredFromCorruption: true };
 }
 
 /** v2 将默认凭证策略改为持久保存；之后用户显式选择的临时模式不会被再次覆盖。 */
