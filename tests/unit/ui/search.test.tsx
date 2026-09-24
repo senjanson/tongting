@@ -5,8 +5,11 @@ import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { ToastProvider } from '@src/ui/components/toast';
 import { PanelView } from '@src/ui/sidepanel/SidePanelApp';
 import { UiClientProvider } from '@src/ui/state/hooks';
+import { TARGET_LANGUAGES } from '@src/domain/languages';
 import type { SearchRecord } from '@src/domain/search';
+import { applySettingsPatch, type SettingsPatch } from '@src/domain/settings';
 import * as clipboard from '@src/ui/shared/clipboard';
+import { DemoClient } from '@src/ui/demo/demo-client';
 import { StaticClient } from './static-client';
 import { makeSnapshot } from './fixtures';
 import { searchRecord, deferred } from '../../fixtures/search';
@@ -17,19 +20,36 @@ function setup(
     history?: () => unknown;
     clear?: () => unknown;
     configured?: boolean;
+    settings?: SettingsPatch;
   } = {},
 ) {
-  const snapshot = makeSnapshot(
+  const base = makeSnapshot(
     options.configured === false
       ? { credential: { configured: false, generation: 1, storage: 'none' } }
       : {},
   );
+  const snapshot = options.settings
+    ? { ...base, settings: applySettingsPatch(base.settings, options.settings) }
+    : base;
   const client = new StaticClient(
     { connection: 'connected', snapshot, reconnectAttempts: 0 },
     {
       'search/history': options.history ?? (() => ({ records: [] })),
       'search/generate': options.generate ?? (() => ({ record: searchRecord, persisted: true })),
       'search/clear-history': options.clear ?? (() => ({ cleared: true })),
+      // 模拟 worker：应用设置补丁并推送新快照。
+      'settings/update': (command) => {
+        if (command.kind !== 'settings/update') return undefined;
+        const state = client.getState();
+        client.setState({
+          ...state,
+          snapshot: {
+            ...state.snapshot!,
+            settings: applySettingsPatch(state.snapshot!.settings, command.patch),
+          },
+        });
+        return { persisted: true };
+      },
     },
   );
   render(
@@ -72,9 +92,12 @@ describe('search sidebar A', () => {
     expect(screen.getAllByRole('article')).toHaveLength(3);
     expect(client.sent.filter((c) => c.kind === 'search/generate')).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: '编辑搜索词 1' }));
-    fireEvent.change(screen.getByLabelText('编辑英文搜索词'), { target: { value: '中文词' } });
+    // 搜索词与语言无关，只要求单行：换行的输入被拒绝。
+    fireEvent.change(screen.getByLabelText('编辑英文搜索词'), {
+      target: { value: 'first line\nsecond line' },
+    });
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
-    expect(screen.getByRole('alert').textContent).toContain('单行英文');
+    expect(screen.getByRole('alert').textContent).toContain('单行搜索词');
     const edited = 'AI video editing & YouTube #tutorial';
     fireEvent.change(screen.getByLabelText('编辑英文搜索词'), { target: { value: edited } });
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
@@ -161,8 +184,121 @@ describe('search sidebar A', () => {
     );
     await generate();
     fireEvent.click(screen.getAllByRole('button', { name: '复制' })[0]!);
-    await screen.findByText('复制失败，请选中英文词手动复制。');
+    await screen.findByText('复制失败，请选中搜索词手动复制。');
     fireEvent.click(screen.getAllByRole('button', { name: '搜索' })[0]!);
     await screen.findByText('未能打开 YouTube 搜索，请重试或复制关键词。');
+  });
+
+  it('defaults to the target language and English, saves dropdown changes and updates the wording', async () => {
+    const client = setup({ settings: { targetLanguage: 'ja' } });
+    expect(screen.getByRole('heading', { name: '用日文，搜英文' })).toBeTruthy();
+    const mine = screen.getByLabelText('我的语言') as HTMLSelectElement;
+    const target = screen.getByLabelText('搜索语言') as HTMLSelectElement;
+    expect(mine.value).toBe('ja');
+    expect(target.value).toBe('en');
+    expect(mine.options.length).toBe(TARGET_LANGUAGES.length);
+    fireEvent.change(target, { target: { value: 'zh-TW' } });
+    fireEvent.change(mine, { target: { value: 'zh-CN' } });
+    expect(client.sent.filter((c) => c.kind === 'settings/update')).toEqual([
+      { kind: 'settings/update', patch: { search: { keywordLanguage: 'zh-TW' } } },
+      { kind: 'settings/update', patch: { search: { userLanguage: 'zh-CN' } } },
+    ]);
+    await screen.findByRole('heading', { name: '用简体中文，搜繁体中文' });
+    expect(screen.getByRole('button', { name: '生成繁体中文搜索词' })).toBeTruthy();
+    expect(
+      screen.getByText('输入简体中文后，这里会显示繁体中文搜索词和简体中文注释。'),
+    ).toBeTruthy();
+    expect(screen.getByText('1 条原文直译 + 2 条简短搜索词')).toBeTruthy();
+    fireEvent.change(target, { target: { value: 'zh-CN' } });
+    await screen.findByRole('heading', { name: '用中文，搜中文' });
+    expect(screen.getByText('1 条完整搜索句 + 2 条简短搜索词')).toBeTruthy();
+    expect(screen.getByText('输入中文后，这里会显示优化后的搜索词和注释。')).toBeTruthy();
+    fireEvent.change(mine, { target: { value: 'fr' } });
+    await screen.findByRole('heading', { name: '用法文，搜中文' });
+    expect(
+      (screen.getByLabelText('你想在 YouTube 上找什么？') as HTMLTextAreaElement).placeholder,
+    ).toContain('用法文描述');
+  });
+
+  it('sends the displayed languages with the request and labels results by their record languages', async () => {
+    const record: SearchRecord = {
+      ...searchRecord,
+      userLanguage: 'en',
+      keywordLanguage: 'ja',
+      items: [
+        {
+          label: 'Direct translation',
+          keyword: '初心者のAI動画編集',
+          annotation: 'AI video editing for beginners',
+        },
+        { label: 'Tutorial', keyword: 'AI 動画編集 入門', annotation: 'Intro tutorial' },
+        { label: 'Tools', keyword: 'AI 動画編集 ツール', annotation: 'Editing tools' },
+      ],
+    };
+    const client = setup({
+      settings: { search: { userLanguage: 'en', keywordLanguage: 'ja' } },
+      generate: () => ({ record, persisted: true }),
+    });
+    input();
+    fireEvent.click(screen.getByRole('button', { name: '生成日文搜索词' }));
+    await screen.findByText('初心者のAI動画編集');
+    expect(client.sent.find((c) => c.kind === 'search/generate')).toMatchObject({
+      userLanguage: 'en',
+      keywordLanguage: 'ja',
+    });
+    expect(screen.getByText('01 · Direct translation')).toBeTruthy();
+    expect(screen.getByText('英文注释 · 可编辑')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '重新生成日文搜索词' })).toBeTruthy();
+    // 切换语言后，旧结果标为「上次生成」并注明其语言，按钮不再是「重新生成」。
+    fireEvent.change(screen.getByLabelText('搜索语言'), { target: { value: 'de' } });
+    await screen.findByRole('button', { name: '生成德文搜索词' });
+    expect(screen.getByText('上次生成')).toBeTruthy();
+    expect(screen.getByText(`${searchRecord.query} · 英文 → 日文`)).toBeTruthy();
+    expect(screen.getByRole('region', { name: '日文搜索词' })).toBeTruthy();
+  });
+
+  it('shows legacy history records as Chinese → English', async () => {
+    setup({
+      settings: { targetLanguage: 'en' },
+      history: () => ({ records: [searchRecord] }),
+    });
+    const details = document.querySelector('details')!;
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(searchRecord.query) }));
+    expect(screen.getByText(/中文 → 英文 · gpt-5\.6-luna/)).toBeTruthy();
+    expect(screen.getByText('01 · 原文直译')).toBeTruthy();
+    expect(screen.getByText('中文注释 · 可编辑')).toBeTruthy();
+  });
+
+  it('demo mode switches languages locally and keeps showing the fixed Chinese → English sample', async () => {
+    const client = new DemoClient();
+    const send = vi.spyOn(client, 'sendCommand');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    render(
+      <ToastProvider>
+        <UiClientProvider client={client}>
+          <PanelView
+            activeTab={{
+              loading: false,
+              tab: { tabId: 3, windowId: 1, url: 'https://example.com/' },
+            }}
+            onEnterDemo={() => undefined}
+          />
+        </UiClientProvider>
+      </ToastProvider>,
+    );
+    fireEvent.click(screen.getByRole('tab', { name: '搜索' }));
+    fireEvent.change(screen.getByLabelText('搜索语言'), { target: { value: 'ko' } });
+    await screen.findByRole('heading', { name: '用中文，搜韩文' });
+    input();
+    fireEvent.click(screen.getByRole('button', { name: '生成韩文搜索词' }));
+    await screen.findByText(searchRecord.items[0]!.keyword);
+    // 演示数据是英文搜索词：按数据实际语言标注，而不是冒充所选的韩文。
+    expect(screen.getByRole('region', { name: '英文搜索词' })).toBeTruthy();
+    expect(send.mock.calls.map(([c]) => c.kind)).toEqual(
+      expect.arrayContaining(['settings/update', 'search/generate']),
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

@@ -13,6 +13,7 @@ import {
   normalizeServiceBaseUrl,
   redactUrl,
 } from '../asr/http';
+import { t } from '../../i18n';
 
 export const SPEECH_MAX_BYTES = 20 * 1024 * 1024;
 
@@ -64,7 +65,7 @@ export async function synthesizeSpeech(req: SpeechRequest): Promise<SpeechAudio>
           code: 'sub2api-tts-bad-response',
           category: 'format',
           retryable: false,
-          message: 'sub2api 语音合成没有返回音频数据',
+          message: t('background.sub2apiTts.noAudio'),
           detail: `${origin} ${type.slice(0, 60)}`,
         });
       }
@@ -83,7 +84,7 @@ export async function synthesizeSpeech(req: SpeechRequest): Promise<SpeechAudio>
       code: 'sub2api-tts-empty',
       category: 'format',
       retryable: false,
-      message: 'sub2api 语音合成返回了空音频',
+      message: t('background.sub2apiTts.emptyAudio'),
     });
   }
   return {

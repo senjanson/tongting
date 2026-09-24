@@ -2,6 +2,7 @@
  * 确认对话框（删除 Key、清空缓存等不可撤销操作）。
  */
 import type { ReactNode } from 'react';
+import { useT } from '../../i18n/react';
 import { Button } from './controls';
 import { Dialog } from './layout';
 
@@ -24,6 +25,7 @@ export function ConfirmDialog({
   onConfirm(): void;
   onCancel(): void;
 }) {
+  const t = useT();
   return (
     <Dialog
       open={open}
@@ -31,7 +33,7 @@ export function ConfirmDialog({
       onClose={onCancel}
       footer={
         <>
-          <Button onClick={onCancel}>取消</Button>
+          <Button onClick={onCancel}>{t('common.cancel')}</Button>
           <Button variant={danger ? 'danger' : 'primary'} busy={busy} onClick={onConfirm}>
             {confirmLabel}
           </Button>

@@ -12,14 +12,20 @@ import {
   parseServiceErrorBody,
   type ParsedServiceError,
 } from '../text/http-errors';
+import { t } from '../../i18n';
 
 export type AudioServiceKind = 'local-asr' | 'sub2api-asr' | 'sub2api-tts';
 
-const SERVICE_LABEL: Record<AudioServiceKind, string> = {
-  'local-asr': '本地识别服务',
-  'sub2api-asr': 'sub2api 语音识别',
-  'sub2api-tts': 'sub2api 语音合成',
-};
+function serviceLabel(kind: AudioServiceKind): string {
+  switch (kind) {
+    case 'local-asr':
+      return t('background.audioHttp.serviceLocalAsr');
+    case 'sub2api-asr':
+      return t('background.audioHttp.serviceSub2apiAsr');
+    case 'sub2api-tts':
+      return t('background.audioHttp.serviceSub2apiTts');
+  }
+}
 
 /** 错误响应体最多读取的字节数（超出部分截断丢弃）。 */
 export const ERROR_BODY_MAX_BYTES = 16_000;
@@ -37,16 +43,13 @@ export function normalizeLoopbackBaseUrl(input: string): string {
   try {
     url = new URL(input.trim());
   } catch {
-    throw configError('asr-local-url-invalid', '本地识别服务地址无效，应为 http://127.0.0.1:端口');
+    throw configError('asr-local-url-invalid', t('background.audioHttp.localUrlInvalid'));
   }
   if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port) {
-    throw configError(
-      'asr-local-url-not-loopback',
-      '本地识别服务地址只允许 http://127.0.0.1:端口（不支持 localhost）',
-    );
+    throw configError('asr-local-url-not-loopback', t('background.audioHttp.localUrlNotLoopback'));
   }
   if (url.username || url.password || url.search || url.hash) {
-    throw configError('asr-local-url-invalid', '本地识别服务地址不能包含账号、查询参数或锚点');
+    throw configError('asr-local-url-invalid', t('background.audioHttp.localUrlExtras'));
   }
   return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '')}`;
 }
@@ -57,15 +60,15 @@ export function normalizeServiceBaseUrl(input: string): string {
   try {
     url = new URL(input.trim());
   } catch {
-    throw configError('base-url-invalid', 'sub2api 地址无效');
+    throw configError('base-url-invalid', t('background.audioHttp.baseUrlInvalid'));
   }
   // 与 worker 端 base-url 规则一致：http 只允许 127.0.0.1（manifest 不再申请 localhost 主机权限）。
   const loopback = url.protocol === 'http:' && url.hostname === '127.0.0.1';
   if (url.protocol !== 'https:' && !loopback) {
-    throw configError('base-url-insecure', 'sub2api 地址必须使用 HTTPS（本机开发地址除外）');
+    throw configError('base-url-insecure', t('background.audioHttp.baseUrlInsecure'));
   }
   if (url.username || url.password || url.search || url.hash) {
-    throw configError('base-url-invalid', 'sub2api 地址不能包含账号、查询参数或锚点');
+    throw configError('base-url-invalid', t('background.audioHttp.baseUrlExtras'));
   }
   return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '')}`;
 }
@@ -111,7 +114,7 @@ function tooLarge(): AppError {
     code: 'response-too-large',
     category: 'format',
     retryable: false,
-    message: '服务返回的数据过大',
+    message: t('background.audioHttp.bodyTooLarge'),
   });
 }
 
@@ -217,7 +220,7 @@ export async function guardedRequest<T>(
         code: 'redirect-blocked',
         category: 'network',
         retryable: false,
-        message: `${SERVICE_LABEL[options.service]}返回了重定向，已拒绝跟随以保护凭证；请检查服务地址。`,
+        message: t('background.audioHttp.redirect', { service: serviceLabel(options.service) }),
         httpStatus: response.status || undefined,
         detail: options.origin,
       });
@@ -248,7 +251,7 @@ function cancelled(): AppError {
     code: 'cancelled',
     category: 'cancelled',
     retryable: false,
-    message: '操作已取消',
+    message: t('background.audioHttp.cancelled'),
   });
 }
 
@@ -257,7 +260,7 @@ function timeoutError(o: FetchGuardOptions): AppError {
     code: `${o.service}-timeout`,
     category: 'timeout',
     retryable: true,
-    message: `${SERVICE_LABEL[o.service]}响应超时`,
+    message: t('background.audioHttp.timeout', { service: serviceLabel(o.service) }),
     detail: o.origin,
   });
 }
@@ -270,8 +273,8 @@ function networkError(o: FetchGuardOptions, error: unknown): AppError {
       category: 'network',
       retryable: true,
       message: local
-        ? '无法连接本地识别服务：请确认服务已启动、地址为 http://127.0.0.1:端口，并已授予扩展访问 http://127.0.0.1 的权限。'
-        : `无法连接${SERVICE_LABEL[o.service]}：可能是网络中断、跨域被拒绝或服务尝试重定向（已禁止跟随）。`,
+        ? t('background.audioHttp.localUnreachable')
+        : t('background.audioHttp.unreachable', { service: serviceLabel(o.service) }),
       detail: `${o.origin}${error instanceof Error ? ` ${redactSecrets(error.name)}` : ''}`,
     },
     { cause: error },
@@ -334,7 +337,7 @@ export function mapHttpStatus(
   origin: string,
   serviceError?: ParsedServiceError,
 ): AppError {
-  const label = SERVICE_LABEL[service];
+  const label = serviceLabel(service);
   const local = service === 'local-asr';
   const detail = [origin, serviceCode].filter(Boolean).join(' ');
   const info = (i: Omit<AppErrorInfo, 'httpStatus' | 'detail'>): AppError =>
@@ -352,51 +355,49 @@ export function mapHttpStatus(
         code: 'preload-unavailable',
         category: 'config',
         retryable: false,
-        message:
-          '本地识别服务未启用音频预读，或缺少依赖。请以 --youtube-preload 启动服务，并确认已安装 yt-dlp、ffmpeg 和 Node.js；也可切换为「连续播放」。',
+        message: t('background.audioHttp.preloadUnavailable'),
       });
     case status === 422 && local && code === 'youtube_unsupported':
       return info({
         code: 'preload-video-unsupported',
         category: 'unsupported',
         retryable: false,
-        message:
-          '此视频不支持音频预读，可能为直播、受限视频或没有可用音频。请使用普通公开视频；录播视频也可尝试「连续播放」。',
+        message: t('background.audioHttp.preloadUnsupportedVideo'),
       });
     case status === 416 && local && code === 'youtube_range_unavailable':
       return info({
         code: 'preload-range-unavailable',
         category: 'unsupported',
         retryable: false,
-        message: '预读位置已超过视频结尾，请跳回视频有效时间后重试。',
+        message: t('background.audioHttp.preloadPastEnd'),
       });
     case status === 502 && local && code === 'youtube_audio_failed':
       return info({
         code: 'preload-audio-failed',
         category: 'network',
         retryable: true,
-        message: '无法读取视频音频，请检查视频访问权限、网络或代理后重试；也可切换为「连续播放」。',
+        message: t('background.audioHttp.preloadAudioFailed'),
       });
     case status === 504 && local && code === 'youtube_preload_timeout':
       return info({
         code: 'preload-timeout',
         category: 'timeout',
         retryable: true,
-        message: '视频音频预读超时，请检查网络或代理后重试；也可切换为「连续播放」。',
+        message: t('background.audioHttp.preloadTimeout'),
       });
     case status === 400 && local && /language/.test(code):
       return info({
         code: 'asr-local-language-unsupported',
         category: 'config',
         retryable: false,
-        message: '本地识别服务不支持当前识别语言，请改为「自动识别」或其他语言。',
+        message: t('background.audioHttp.localLanguageUnsupported'),
       });
     case status === 400:
       return info({
         code: `${service}-bad-request`,
         category: 'format',
         retryable: false,
-        message: `${label}拒绝了请求参数（400）`,
+        message: t('background.audioHttp.badRequest', { service: label }),
       });
     case status === 401:
       return info({
@@ -404,8 +405,8 @@ export function mapHttpStatus(
         category: 'auth',
         retryable: false,
         message: local
-          ? '本地识别服务配对令牌无效，请在设置中重新配对。'
-          : 'API Key 无效或已失效，请在设置中检查。',
+          ? t('background.audioHttp.localTokenInvalid')
+          : t('background.audioHttp.keyInvalid'),
       });
     // 与文本接口使用同一额度判断；本地识别服务的 403 只表示来源或地址被拒绝。
     case status === 402 ||
@@ -414,7 +415,7 @@ export function mapHttpStatus(
         code: 'quota-exceeded',
         category: 'quota',
         retryable: false,
-        message: `${label}余额或额度不足。`,
+        message: t('background.audioHttp.quota', { service: label }),
       });
     case status === 403:
       return info({
@@ -426,85 +427,85 @@ export function mapHttpStatus(
         category: 'permission',
         retryable: false,
         message: local
-          ? '本地识别服务拒绝了请求（403）：请使用 http://127.0.0.1:端口 地址，并确认请求来自扩展。'
-          : `当前 Key 无权使用${label}或所选模型（403）。`,
+          ? t('background.audioHttp.localForbidden')
+          : t('background.audioHttp.forbidden', { service: label }),
       });
     case status === 404:
       return info({
         code: `${service}-not-found`,
         category: 'unsupported',
         retryable: false,
-        message: `${label}接口不存在（404）：服务可能不支持该能力或地址有误。`,
+        message: t('background.audioHttp.notFound', { service: label }),
       });
     case status === 408:
       return info({
         code: `${service}-timeout`,
         category: 'timeout',
         retryable: true,
-        message: `${label}处理超时（408）`,
+        message: t('background.audioHttp.requestTimeout', { service: label }),
       });
     case status === 413:
       return info({
         code: 'audio-too-large',
         category: 'format',
         retryable: false,
-        message: `${label}拒绝了过长的音频（413）`,
+        message: t('background.audioHttp.audioTooLong', { service: label }),
       });
     case status === 415:
       return info({
         code: 'audio-format-unsupported',
         category: 'format',
         retryable: false,
-        message: `${label}不接受该音频格式（415）`,
+        message: t('background.audioHttp.unsupportedMedia', { service: label }),
       });
     case status === 429 && /quota|insufficient|billing/.test(code):
       return info({
         code: 'quota-exceeded',
         category: 'quota',
         retryable: false,
-        message: `${label}额度不足（429）。`,
+        message: t('background.audioHttp.quota429', { service: label }),
       });
     case status === 429:
       return info({
         code: `${service}-rate-limited`,
         category: 'rate-limit',
         retryable: true,
-        message: `${label}繁忙或限流（429），稍后重试。`,
+        message: t('background.audioHttp.rateLimited', { service: label }),
       });
     case status === 503 && local && code === 'model_loading':
       return info({
         code: 'asr-local-model-loading',
         category: 'server',
         retryable: true,
-        message: '本地识别模型正在加载，请稍候。',
+        message: t('background.audioHttp.localModelLoading'),
       });
     case status === 503 && local && code === 'model_unavailable':
       return info({
         code: 'asr-local-model-unavailable',
         category: 'server',
         retryable: true,
-        message: '本地识别服务的模型不可用，请检查服务日志或重新启动服务。',
+        message: t('background.audioHttp.localModelUnavailable'),
       });
     case status === 503 && local:
       return info({
         code: 'asr-local-unavailable',
         category: 'server',
         retryable: true,
-        message: '本地识别服务暂不可用（503）。',
+        message: t('background.audioHttp.localUnavailable'),
       });
     case status >= 500:
       return info({
         code: `${service}-server-error`,
         category: 'server',
         retryable: true,
-        message: `${label}服务端错误（${status}）`,
+        message: t('background.audioHttp.serverError', { service: label, status }),
       });
     default:
       return info({
         code: `${service}-http-${status}`,
         category: 'server',
         retryable: false,
-        message: `${label}返回异常状态（${status}）`,
+        message: t('background.audioHttp.unexpectedStatus', { service: label, status }),
       });
   }
 }

@@ -1,21 +1,22 @@
 /**
- * 字幕覆盖范围说明（导出与工作台共用）。
+ * 字幕覆盖范围说明（导出与工作台共用），按界面语言生成（默认中文）。
  *
  * 规则：只有来源为完整字幕轨道且 coverage.complete 为 true 时才能称为「完整字幕轨道」；
  * 增量字幕与语音识别得到的内容一律说明为部分字幕，不能标成全视频字幕。
  */
 import { mergeRanges, type SubtitleCoverage } from '../domain/cue';
 import type { SourceMode } from '../domain/session';
+import { translate, type Locale, type MessageKey } from '../i18n';
 
-const GAP_REASON_LABELS: Record<string, string> = {
-  'not-played': '尚未播放到',
-  'asr-backlog': '识别积压',
-  'asr-failed': '识别失败',
-  'paused-translation': '翻译暂停期间',
-  ad: '广告',
-  'seek-skipped': '跳转跳过',
-  'translation-failed': '翻译失败',
-  unknown: '原因未知',
+const GAP_REASON_KEYS: Record<string, MessageKey> = {
+  'not-played': 'options.coverage.gap.not-played',
+  'asr-backlog': 'options.coverage.gap.asr-backlog',
+  'asr-failed': 'options.coverage.gap.asr-failed',
+  'paused-translation': 'options.coverage.gap.paused-translation',
+  ad: 'options.coverage.gap.ad',
+  'seek-skipped': 'options.coverage.gap.seek-skipped',
+  'translation-failed': 'options.coverage.gap.translation-failed',
+  unknown: 'options.coverage.gap.unknown',
 };
 
 function pad(value: number, width = 2): string {
@@ -32,34 +33,34 @@ export function formatHms(ms: number): string {
   return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
-/** 时长 → 「X 分 Y 秒」或「X 小时 Y 分」。 */
-export function formatDurationZh(ms: number): string {
+/** 时长 → 「X 分 Y 秒」「X 小时 Y 分」（英文为「X min Y s」「X h Y min」）。 */
+export function formatDuration(ms: number, locale: Locale = 'zh-CN'): string {
   const seconds = Math.max(0, Math.round((Number.isFinite(ms) ? ms : 0) / 1000));
-  if (seconds < 60) return `${seconds} 秒`;
+  if (seconds < 60) return translate(locale, 'options.coverage.duration.seconds', { s: seconds });
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) {
     const rest = seconds % 60;
-    return rest ? `${minutes} 分 ${rest} 秒` : `${minutes} 分`;
+    return rest
+      ? translate(locale, 'options.coverage.duration.minutesSeconds', { m: minutes, s: rest })
+      : translate(locale, 'options.coverage.duration.minutes', { m: minutes });
   }
   const hours = Math.floor(minutes / 60);
   const restMinutes = minutes % 60;
-  return restMinutes ? `${hours} 小时 ${restMinutes} 分` : `${hours} 小时`;
+  return restMinutes
+    ? translate(locale, 'options.coverage.duration.hoursMinutes', { h: hours, m: restMinutes })
+    : translate(locale, 'options.coverage.duration.hours', { h: hours });
 }
 
-export function sourceModeLabel(mode: SourceMode | undefined): string {
+export function sourceModeLabel(mode: SourceMode | undefined, locale: Locale = 'zh-CN'): string {
   switch (mode) {
     case 'full-track':
-      return '完整字幕轨道';
     case 'incremental-captions':
-      return '增量字幕（仅读取当前显示的字幕）';
     case 'asr':
-      return '语音识别';
     case 'asr-preload':
-      return '音频预读识别';
     case 'none':
-      return '暂无字幕来源';
+      return translate(locale, `options.coverage.mode.${mode}`);
     default:
-      return '来源未知';
+      return translate(locale, 'options.coverage.mode.unknown');
   }
 }
 
@@ -87,39 +88,63 @@ export function isCompleteCoverage(
 export function describeCoverage(
   coverage: SubtitleCoverage | undefined,
   sourceMode?: SourceMode,
+  locale: Locale = 'zh-CN',
 ): string {
+  const partialMode =
+    sourceMode === 'asr' || sourceMode === 'asr-preload' || sourceMode === 'incremental-captions';
   if (!coverage) {
-    return sourceMode === 'asr' ||
-      sourceMode === 'asr-preload' ||
-      sourceMode === 'incremental-captions'
-      ? `覆盖范围未知（部分字幕，非全视频，${sourceModeLabel(sourceMode)}）`
-      : '覆盖范围未知';
+    return partialMode
+      ? translate(locale, 'options.coverage.unknownPartial', {
+          mode: sourceModeLabel(sourceMode, locale),
+        })
+      : translate(locale, 'options.coverage.unknown');
   }
   const duration = coverage.durationMs;
   if (isCompleteCoverage(coverage, sourceMode)) {
-    return duration ? `完整字幕轨道（视频时长 ${formatDurationZh(duration)}）` : '完整字幕轨道';
+    return duration
+      ? translate(locale, 'options.coverage.completeWithDuration', {
+          duration: formatDuration(duration, locale),
+        })
+      : translate(locale, 'options.coverage.complete');
   }
-  const modeNote =
-    sourceMode === 'asr' || sourceMode === 'asr-preload' || sourceMode === 'incremental-captions'
-      ? `，${sourceModeLabel(sourceMode)}`
-      : '';
+  const modeNote = partialMode
+    ? translate(locale, 'options.coverage.modeNote', { mode: sourceModeLabel(sourceMode, locale) })
+    : '';
   const ranges = mergeRanges(coverage.ranges);
   if (ranges.length === 0) {
-    return `部分字幕（非全视频${modeNote}）：尚未获得任何字幕片段`;
+    return translate(locale, 'options.coverage.partialNone', { modeNote });
   }
+  const separator = translate(locale, 'options.coverage.listSeparator');
   const covered = ranges.reduce((sum, r) => sum + (r.endMs - r.startMs), 0);
   const shown = ranges
     .slice(0, 3)
     .map((r) => `${formatHms(r.startMs)}–${formatHms(r.endMs)}`)
-    .join('、');
-  let text = `部分字幕（非全视频${modeNote}）：已覆盖 ${ranges.length} 段，共 ${formatDurationZh(covered)}`;
-  if (duration) text += ` / 视频 ${formatDurationZh(duration)}`;
-  text += `：${shown}${ranges.length > 3 ? ' 等' : ''}`;
+    .join(separator);
+  let text = translate(locale, 'options.coverage.partial', {
+    modeNote,
+    count: ranges.length,
+    covered: formatDuration(covered, locale),
+  });
+  if (duration)
+    text += translate(locale, 'options.coverage.partialDuration', {
+      duration: formatDuration(duration, locale),
+    });
+  text += translate(locale, 'options.coverage.ranges', {
+    ranges: shown,
+    more: ranges.length > 3 ? translate(locale, 'options.coverage.more') : '',
+  });
   if (coverage.gaps.length > 0) {
     const reasons = Array.from(
-      new Set(coverage.gaps.map((g) => GAP_REASON_LABELS[g.reason] ?? '原因未知')),
+      new Set(
+        coverage.gaps.map((g) =>
+          translate(locale, GAP_REASON_KEYS[g.reason] ?? 'options.coverage.gap.unknown'),
+        ),
+      ),
     );
-    text += `；缺口 ${coverage.gaps.length} 段（${reasons.join('、')}）`;
+    text += translate(locale, 'options.coverage.gaps', {
+      count: coverage.gaps.length,
+      reasons: reasons.join(separator),
+    });
   }
   return text;
 }

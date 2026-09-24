@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { AppError } from '@src/domain/errors';
@@ -9,6 +9,11 @@ import { OptionsApp } from '@src/ui/options/OptionsApp';
 import { PopupApp } from '@src/ui/popup/PopupApp';
 import { makeSnapshot } from './fixtures';
 import { createFakeWorker, type FakeWorker } from './fake-worker-port';
+
+// 界面语言跟随浏览器（快照中 uiLocale 默认 auto）：本文件的断言使用中文界面。
+beforeEach(() => {
+  vi.spyOn(fakeBrowser.i18n, 'getUILanguage').mockReturnValue('zh-CN');
+});
 
 let worker: FakeWorker;
 

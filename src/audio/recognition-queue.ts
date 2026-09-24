@@ -14,6 +14,7 @@
 import { AppError, toAppErrorInfo, type AppErrorInfo } from '../domain/errors';
 import type { AsrTranscription } from '../providers/asr/types';
 import { encodeWavPcm16 } from './wav';
+import { t } from '../i18n';
 
 export interface RecognitionSegment {
   id: string;
@@ -296,7 +297,7 @@ export class RecognitionQueue {
         toAppErrorInfo(error, {
           code: 'asr-encode-failed',
           category: 'audio',
-          message: '识别音频编码失败',
+          message: t('background.recognition.encodeFailed'),
         }),
       );
       this.pump();
@@ -326,7 +327,7 @@ export class RecognitionQueue {
             code: 'asr-request-watchdog',
             category: 'timeout',
             retryable: true,
-            message: '语音识别请求长时间没有完成，已中止。',
+            message: t('background.recognition.stalled'),
           }).info,
         );
       });
@@ -371,7 +372,11 @@ export class RecognitionQueue {
         settle(() =>
           this.handleFailure(
             entry,
-            toAppErrorInfo(error, { code: 'asr-failed', category: 'asr', message: '语音识别失败' }),
+            toAppErrorInfo(error, {
+              code: 'asr-failed',
+              category: 'asr',
+              message: t('background.recognition.failed'),
+            }),
           ),
         ),
     );

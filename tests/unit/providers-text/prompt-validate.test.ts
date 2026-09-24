@@ -188,6 +188,24 @@ describe('validateTranslations', () => {
       detectItemIssue('오늘은 날씨가 좋네요', 'The weather is nice today', 'en'),
     ).toBeUndefined();
   });
+
+  it('flags untranslated Latin sentences for Cyrillic, Arabic, Devanagari and Thai targets', () => {
+    const source = 'We often look at things without really seeing them at all.';
+    for (const [target, translated] of [
+      ['ru', 'Мы часто смотрим на вещи, не видя их по-настоящему.'],
+      ['uk', 'Ми часто дивимося на речі, не бачачи їх насправді.'],
+      ['ar', 'غالبًا ما ننظر إلى الأشياء دون أن نراها حقًا.'],
+      ['hi', 'हम अक्सर चीज़ों को देखते हैं, पर सचमुच नहीं देखते।'],
+      ['th', 'เรามักมองสิ่งต่างๆ โดยไม่ได้เห็นมันจริงๆ'],
+    ] as const) {
+      expect(detectItemIssue(source, translated, target)).toBeUndefined();
+      expect(detectItemIssue(source, source, target)).toBe('wrong-language');
+    }
+    // 拉丁文字的目标语言不做文字检查：原文与译文同为拉丁字母是正常的。
+    expect(
+      detectItemIssue(source, 'Spesso guardiamo le cose senza vederle.', 'it'),
+    ).toBeUndefined();
+  });
 });
 
 describe('extractPartialTranslations', () => {

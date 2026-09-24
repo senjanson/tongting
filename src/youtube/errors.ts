@@ -2,6 +2,7 @@
  * 内容脚本侧可展示错误。message 面向用户，不含字幕原文、URL 或堆栈。
  */
 import { AppError, type AppErrorInfo, type ErrorCategory } from '../domain/errors';
+import { t, type MessageKey } from '../i18n';
 
 export type YoutubeErrorCode =
   | 'stale-video'
@@ -17,65 +18,70 @@ export type YoutubeErrorCode =
   | 'duck-failed'
   | 'internal';
 
+/** 文案在创建错误时按内容脚本当前语言生成（语言由 worker 下发，见 controller）。 */
 const DEFS: Record<
   YoutubeErrorCode,
-  { category: ErrorCategory; retryable: boolean; message: string }
+  { category: ErrorCategory; retryable: boolean; messageKey: MessageKey }
 > = {
   'stale-video': {
     category: 'youtube',
     retryable: false,
-    message: '页面上的视频已经变化，旧请求已忽略。',
+    messageKey: 'background.youtube.staleVideo',
   },
   'navigation-changed': {
     category: 'cancelled',
     retryable: false,
-    message: '页面已切换到其他视频，操作已取消。',
+    messageKey: 'background.youtube.navigationChanged',
   },
   'player-unavailable': {
     category: 'youtube',
     retryable: true,
-    message: '未找到页面中的视频播放器，请等待视频加载后重试。',
+    messageKey: 'background.youtube.playerUnavailable',
   },
   'ad-playing': {
     category: 'youtube',
     retryable: true,
-    message: '广告播放中，请在正片开始后重试。',
+    messageKey: 'background.youtube.adPlaying',
   },
   'captions-no-tracks': {
     category: 'captions',
     retryable: false,
-    message: '当前视频没有可读取的字幕轨道。',
+    messageKey: 'background.youtube.noTracks',
   },
   'captions-track-not-found': {
     category: 'captions',
     retryable: false,
-    message: '找不到指定的字幕轨道，可能已随视频切换失效。',
+    messageKey: 'background.youtube.trackNotFound',
   },
   'captions-load-timeout': {
     category: 'captions',
     retryable: true,
-    message: '字幕轨道加载超时：播放器没有返回可读取的字幕内容。可改用当前显示字幕或语音识别。',
+    messageKey: 'background.youtube.loadTimeout',
   },
   'captions-parse-failed': {
     category: 'captions',
     retryable: false,
-    message: '字幕内容格式无法识别，无法读取完整轨道。',
+    messageKey: 'background.youtube.parseFailed',
   },
   'captions-player-unavailable': {
     category: 'captions',
     retryable: true,
-    message: '暂时无法读取播放器字幕信息，请稍后重试。',
+    messageKey: 'background.youtube.captionsPlayerUnavailable',
   },
   'captions-bridge-unavailable': {
     category: 'captions',
     retryable: true,
-    message: '页面字幕接入未就绪，请刷新 YouTube 页面后重试。',
+    messageKey: 'background.youtube.bridgeUnavailable',
   },
-  'duck-failed': { category: 'youtube', retryable: false, message: '无法调整原声音量。' },
+  'duck-failed': {
+    category: 'youtube',
+    retryable: false,
+    messageKey: 'background.youtube.duckFailed',
+  },
   internal: {
     category: 'internal',
     retryable: false,
-    message: '页面接入发生内部错误，请刷新页面后重试。',
+    messageKey: 'background.youtube.internal',
   },
 };
 
@@ -85,7 +91,7 @@ export function youtubeError(code: YoutubeErrorCode, detail?: string): AppError 
     code,
     category: def.category,
     retryable: def.retryable,
-    message: def.message,
+    message: t(def.messageKey),
     detail,
   });
 }

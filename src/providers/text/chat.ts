@@ -23,6 +23,7 @@ import {
 import { TRANSLATION_JSON_SCHEMA, TRANSLATION_SCHEMA_NAME } from './prompt';
 import type { SseEvent } from './sse';
 import type { TokenUsage } from './types';
+import { t } from '../../i18n';
 
 function parseUsage(value: unknown): TokenUsage | undefined {
   const u = asRecord(value);
@@ -64,7 +65,7 @@ export function extractChatOutput(json: unknown): ModelCallOutput {
       code: 'invalid-response',
       category: 'format',
       retryable: true,
-      message: '服务返回的 Chat Completions 结果格式无法识别。',
+      message: t('background.textFormat.chatUnrecognized'),
     });
   }
   if (body.error && !Array.isArray(body.choices)) throw errorFromPayload(body.error);
@@ -109,7 +110,7 @@ class ChatStreamAccumulator implements StreamAccumulator {
         code: 'invalid-stream-event',
         category: 'format',
         retryable: true,
-        message: '流式响应中出现无法解析的事件，本次结果已丢弃。',
+        message: t('background.textFormat.streamEventInvalid'),
       });
     }
     if (!payload) return 'continue';

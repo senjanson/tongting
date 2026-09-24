@@ -1,8 +1,10 @@
 /**
  * 演示模式客户端：实现与真实客户端相同的接口，但全部在页面内存中完成。
  * 不连接 service worker、不发送 UiCommand、不访问网络。
+ * 示例标签按界面语言生成；在演示中切换界面语言时同步更新。
  */
 import { AppError } from '../../domain/errors';
+import { t, type Locale, type LocalePreference } from '../../i18n';
 import type { SearchRecord } from '../../domain/search';
 import { demoSearchSuggestions } from './search-data';
 import { applySettingsPatch, defaultSettings } from '../../domain/settings';
@@ -18,6 +20,7 @@ import {
   demoCues,
   demoPage,
   demoPlayer,
+  demoSession,
   demoSnapshot,
   demoVoices,
 } from './demo-data';
@@ -27,7 +30,7 @@ function demoUnavailable(): AppError {
     code: 'demo-unavailable',
     category: 'unsupported',
     retryable: false,
-    message: '演示模式下不可用。退出演示后可在真实设置中操作。',
+    message: t('sidepanel.demo.unavailable'),
   });
 }
 
@@ -42,12 +45,54 @@ export class DemoClient implements UiClient {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly cueRefs = new Map<string, number>();
 
-  constructor() {
+  private locale: Locale;
+
+  /** browserLocale：界面语言设为「跟随浏览器」时使用的语言。 */
+  constructor(private readonly browserLocale: Locale = 'zh-CN') {
+    this.locale = browserLocale;
     this.state = {
       connection: 'connected',
-      snapshot: demoSnapshot(this.version),
+      snapshot: demoSnapshot(this.version, this.locale),
       reconnectAttempts: 0,
     };
+  }
+
+  /** 设置中的界面语言变化后，重新生成示例标题、频道、轨道与模型名称。 */
+  private relocalize(preference: string | undefined): void {
+    const next: Locale =
+      preference === 'zh-CN' || preference === 'en' ? preference : this.browserLocale;
+    if (next === this.locale) return;
+    this.locale = next;
+    const snapshot = this.state.snapshot!;
+    const current = snapshot.pages[0]?.player;
+    const player = demoPlayer(current?.currentTimeMs ?? 0, current?.paused ?? false, next);
+    const session = snapshot.sessions[0];
+    const fresh = demoSession(player, demoCues(), next);
+    this.update({
+      pages: [
+        { ...demoPage(player, next), connectedAt: snapshot.pages[0]?.connectedAt ?? Date.now() },
+      ],
+      sessions: session
+        ? [
+            {
+              ...session,
+              player,
+              sourceTrack: fresh.sourceTrack,
+              translation: { ...session.translation, model: fresh.translation.model },
+            },
+          ]
+        : [],
+    });
+  }
+
+  /**
+   * 采用用户在真实设置中保存的界面语言（只读取，不写回、不访问服务）。演示期间在演示设置里的切换
+   * 只作用于演示本身；真实设置的值变化时以它为准。
+   */
+  adoptUiLocale(preference: LocalePreference | undefined): void {
+    if (!preference || preference === this.state.snapshot!.settings.uiLocale) return;
+    this.update({ settings: { ...this.state.snapshot!.settings, uiLocale: preference } });
+    this.relocalize(preference);
   }
 
   /** 模拟播放进度，便于展示字幕高亮。 */
@@ -109,6 +154,9 @@ export class DemoClient implements UiClient {
           items: demoSearchSuggestions.map((item) => ({ ...item })),
           model: 'gpt-5.6-luna',
           createdAt: Date.now(),
+          // 演示数据固定为中文输入、英文搜索词；按数据实际语言标注，不随所选语言假装生成。
+          userLanguage: 'zh-CN',
+          keywordLanguage: 'en',
         };
         this.searchRecords = [
           record,
@@ -153,14 +201,20 @@ export class DemoClient implements UiClient {
       case 'player/seek':
         this.setPlayerTime(Math.min(command.timeMs, DEMO_DURATION_MS));
         return { accepted: true };
-      case 'settings/update':
-        this.update({ settings: applySettingsPatch(snapshot.settings, command.patch) });
+      case 'settings/update': {
+        const settings = applySettingsPatch(snapshot.settings, command.patch);
+        this.update({ settings });
+        this.relocalize(settings.uiLocale);
         return { persisted: true };
-      case 'settings/reset':
-        this.update({ settings: defaultSettings() });
+      }
+      case 'settings/reset': {
+        const settings = defaultSettings();
+        this.update({ settings });
+        this.relocalize(settings.uiLocale);
         return { persisted: true };
+      }
       case 'tts/voices':
-        return { voices: demoVoices() };
+        return { voices: demoVoices(this.locale) };
       case 'tts/preview':
         return { started: true };
       case 'tts/stop-preview':
@@ -179,10 +233,15 @@ export class DemoClient implements UiClient {
 
   private setPlayerTime(timeMs: number): void {
     const snapshot = this.state.snapshot!;
-    const player = demoPlayer(timeMs);
+    const player = demoPlayer(timeMs, false, this.locale);
     const session = snapshot.sessions[0];
     this.update({
-      pages: [{ ...demoPage(player), connectedAt: snapshot.pages[0]?.connectedAt ?? Date.now() }],
+      pages: [
+        {
+          ...demoPage(player, this.locale),
+          connectedAt: snapshot.pages[0]?.connectedAt ?? Date.now(),
+        },
+      ],
       sessions: session ? [{ ...session, player }] : [],
     });
   }

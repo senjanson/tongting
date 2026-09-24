@@ -830,6 +830,28 @@ describe('Coordinator – 语音识别模式', () => {
     expect(FakeScheduler.all.at(-1)!.disposed).toBe(false);
   });
 
+  it('does not restart a start in progress when only AI search languages change', async () => {
+    const h = createHarness();
+    const ui = await configure(h);
+    const content = h.content(1, { documentId: 'doc-1' });
+    content.hello();
+    content.navigate('aaaaaaaaaaa');
+    await wait(20);
+    await ui.command({ kind: 'session/start', tabId: 1 });
+    await wait(30);
+    const firstId = ui.lastSnapshot()!.sessions[0]!.identity.sessionId;
+    await ui.command({
+      kind: 'settings/update',
+      patch: { search: { userLanguage: 'en', keywordLanguage: 'ja' } },
+    });
+    await wait(80);
+    content.trackData();
+    await h.coordinator.idle();
+    await wait(150);
+    const s = ui.lastSnapshot()!.sessions[0]!;
+    expect(s.identity.sessionId).toBe(firstId);
+    expect(s.phase).toBe('running');
+  });
   it('discards a connection check that was in flight when the API key changed', async () => {
     const h = createHarness();
     const ui = await configure(h);

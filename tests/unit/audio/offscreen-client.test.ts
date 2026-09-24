@@ -117,6 +117,7 @@ describe('offscreen client', () => {
     expect(ports[0]!.sent[0]).toEqual({
       type: 'welcome',
       workerInstanceId: client.workerInstanceId,
+      locale: 'zh-CN',
     });
     expect(createDocument).toHaveBeenCalledTimes(1);
     expect(hasDocument).toHaveBeenCalledTimes(1);

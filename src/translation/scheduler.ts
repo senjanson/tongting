@@ -43,6 +43,7 @@ import type {
   TranslationScheduler,
   TranslationSchedulerDeps,
 } from './types';
+import { t as tr } from '../i18n';
 
 export interface SchedulerTimers {
   setTimeout(callback: () => void, ms: number): unknown;
@@ -401,7 +402,7 @@ export function createTranslationSchedulerWithOptions(
       code: 'circuit-open',
       category: info.category,
       retryable: true,
-      message: `连续 ${consecutiveFailedCalls} 次翻译请求没有得到有效译文，已暂停发送以免浪费额度；请检查模型或服务状态后点击「重试」。`,
+      message: tr('background.scheduler.circuitOpen', { count: consecutiveFailedCalls }),
       detail: `last=${info.code}`,
       at: now(),
     };
@@ -841,7 +842,7 @@ export function createTranslationSchedulerWithOptions(
           code: 'translation-incomplete',
           category: 'format',
           retryable: true,
-          message: '模型没有返回有效译文。',
+          message: tr('background.scheduler.noValidTranslation'),
         });
       }
     }
@@ -865,7 +866,7 @@ export function createTranslationSchedulerWithOptions(
           code: 'translation-incomplete',
           category: 'format',
           retryable: true,
-          message: '模型没有返回这条字幕的有效译文（已做有限修复），可稍后重试。',
+          message: tr('background.scheduler.cueNoValidTranslation'),
           at: now(),
         });
       }
@@ -944,7 +945,7 @@ export function createTranslationSchedulerWithOptions(
         code: 'request-cancelled',
         category: 'network',
         retryable: true,
-        message: '请求被意外中止（不是暂停或跳转触发的），稍后会自动重试。',
+        message: tr('background.scheduler.unexpectedAbort'),
         at: t,
       };
     }

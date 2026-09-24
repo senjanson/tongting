@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DEFAULT_TARGET_LANGUAGE, defaultTargetLanguageFor } from './languages';
+import { DEFAULT_SEARCH_KEYWORD_LANGUAGE, SearchLanguageTagSchema } from './search';
 import { DEFAULT_TEXT_MODEL } from './translation-models';
 
 export const SETTINGS_SCHEMA_VERSION = 2;
@@ -9,6 +10,11 @@ export type TranslationStyle = z.infer<typeof TranslationStyleSchema>;
 
 export const TextProtocolSchema = z.enum(['auto', 'responses', 'chat']);
 export type TextProtocol = z.infer<typeof TextProtocolSchema>;
+
+/** 实际显示的界面语言（见 src/i18n/locale.ts）。 */
+export const LocaleSchema = z.enum(['zh-CN', 'en']);
+/** 界面语言偏好：auto 跟随浏览器界面语言（中文含繁体显示中文，其余英文）。 */
+export const UiLocaleSchema = z.enum(['auto', 'zh-CN', 'en']);
 
 export const GlossaryEntrySchema = z.object({
   source: z.string().min(1).max(100),
@@ -75,6 +81,14 @@ export const TtsSettingsSchema = z.object({
 });
 export type TtsSettings = z.infer<typeof TtsSettingsSchema>;
 
+export const SearchSettingsSchema = z.object({
+  /** AI 搜索的输入、标签与释义语言；缺省表示跟随 targetLanguage。 */
+  userLanguage: SearchLanguageTagSchema.optional(),
+  /** AI 搜索生成的搜索词语言。 */
+  keywordLanguage: SearchLanguageTagSchema.default(DEFAULT_SEARCH_KEYWORD_LANGUAGE),
+});
+export type SearchSettings = z.infer<typeof SearchSettingsSchema>;
+
 export const SettingsSchema = z.object({
   schemaVersion: z.literal(SETTINGS_SCHEMA_VERSION),
   sourceLanguage: z.string().max(20).default('auto'),
@@ -87,6 +101,8 @@ export const SettingsSchema = z.object({
   provider: ProviderSettingsSchema.default(ProviderSettingsSchema.parse({})),
   asr: AsrSettingsSchema.default(AsrSettingsSchema.parse({})),
   tts: TtsSettingsSchema.default(TtsSettingsSchema.parse({})),
+  /** 旧设置没有此字段时取默认值，无需迁移。 */
+  search: SearchSettingsSchema.default(SearchSettingsSchema.parse({})),
   prefetch: z.boolean().default(true),
   /** 录播先准备译文再播放；连续模式保留边播边译的行为。 */
   playbackMode: z.enum(['buffered', 'continuous']).default('buffered'),
@@ -97,6 +113,8 @@ export const SettingsSchema = z.object({
   /** 默认保存在扩展专属 IndexedDB；主动取消后仅存于临时浏览器会话。 */
   rememberCredentials: z.boolean().default(true),
   layout: z.enum(['sidebar']).default('sidebar'),
+  /** 界面语言：auto 跟随浏览器界面语言。只影响界面文案，不进入翻译指纹。 */
+  uiLocale: UiLocaleSchema.default('auto'),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
@@ -113,7 +131,7 @@ export function initialSettings(uiLanguage: string | undefined): Settings {
   return defaultSettings(defaultTargetLanguageFor(uiLanguage));
 }
 
-type NestedSettingsKey = 'captions' | 'audio' | 'provider' | 'asr' | 'tts';
+type NestedSettingsKey = 'captions' | 'audio' | 'provider' | 'asr' | 'tts' | 'search';
 
 /** 深层部分更新，用于 settings/update 命令。缺失的键表示「不修改」。 */
 export type SettingsPatch = Partial<Omit<Settings, 'schemaVersion' | NestedSettingsKey>> & {
@@ -148,6 +166,7 @@ export function applySettingsPatch(base: Settings, patch: SettingsPatch): Settin
     provider: { ...base.provider, ...patch.provider },
     asr: { ...base.asr, ...patch.asr },
     tts: { ...base.tts, ...patch.tts },
+    search: { ...base.search, ...patch.search },
     schemaVersion: SETTINGS_SCHEMA_VERSION,
   };
   // 服务地址或协议选择变化时，旧的协议检测结果不再可信。

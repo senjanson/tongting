@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { t } from '../i18n';
 
 export const ErrorCategorySchema = z.enum([
   'config', // 未配置或配置无效
@@ -61,7 +62,7 @@ export function cancelledError(detail?: string): AppError {
     code: 'cancelled',
     category: 'cancelled',
     retryable: false,
-    message: '操作已取消',
+    message: t('background.errors.cancelled'),
     detail,
   });
 }
@@ -74,7 +75,7 @@ export function toAppErrorInfo(error: unknown, fallback?: Partial<AppErrorInfo>)
     code: fallback?.code ?? 'internal',
     category: fallback?.category ?? 'internal',
     retryable: fallback?.retryable ?? false,
-    message: fallback?.message ?? '发生内部错误，请重试；若持续出现请查看扩展日志。',
+    message: fallback?.message ?? t('background.errors.internal'),
     detail:
       fallback?.detail ??
       (error instanceof Error ? redactSecrets(error.message).slice(0, 200) : undefined),

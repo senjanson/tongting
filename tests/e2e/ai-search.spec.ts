@@ -115,9 +115,39 @@ test('A sidebar: cancel aborts HTTP and switching tabs preserves input without l
   expect(await fc!.ui.ok({ kind: 'search/history' })).toEqual({ records: [] });
   fc!.mock.setDefault('responses', { kind: 'status', status: 200, body: searchEnvelope([]) });
   await page.getByRole('button', { name: '生成英文搜索词', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('需要第一条原文直译和两条简短英文搜索词');
+  await expect(page.getByRole('alert')).toContainText('需要第一条原文直译和两条简短搜索词');
   fc!.mock.setDefault('responses', { kind: 'status', status: 200, body: searchEnvelope() });
   await page.getByRole('button', { name: '生成英文搜索词', exact: true }).click();
   await expect(page.getByRole('article')).toHaveCount(3);
+  expect(errors).toEqual([]);
+});
+
+test('A sidebar: choose languages, persist them across reload and send them to the model; 320px fit', async () => {
+  const { page, errors } = await openSearch();
+  await expect(page.getByRole('heading', { name: '用中文，搜英文' })).toBeVisible();
+  await page.getByLabel('搜索语言', { exact: true }).selectOption('ja');
+  await expect(page.getByRole('heading', { name: '用中文，搜日文' })).toBeVisible();
+  await noOverflow(page);
+  const items = [
+    {
+      label: '原文直译',
+      keyword: '初心者がAIでYouTube動画を編集する方法',
+      annotation: '新手如何用 AI 剪辑 YouTube 视频',
+    },
+    { label: '入门教程', keyword: 'AI 動画編集 入門', annotation: 'AI 视频剪辑入门' },
+    { label: '工具选择', keyword: 'AI 動画編集 ツール', annotation: 'AI 视频剪辑工具' },
+  ];
+  fc!.mock.setDefault('responses', { kind: 'status', status: 200, body: searchEnvelope(items) });
+  await page.getByLabel('你想在 YouTube 上找什么？').fill(searchRecord.query);
+  await page.getByRole('button', { name: '生成日文搜索词', exact: true }).click();
+  await expect(page.getByText(items[0]!.keyword, { exact: true })).toBeVisible();
+  const request = fc!.mock.requests.find((r) => r.endpoint === 'responses')!;
+  expect((request.body as { instructions: string }).instructions).toContain(
+    'users who write in Simplified Chinese search YouTube in Japanese',
+  );
+  await page.reload();
+  await page.getByRole('tab', { name: '搜索', exact: true }).click();
+  await expect(page.getByLabel('搜索语言', { exact: true })).toHaveValue('ja');
+  await expect(page.getByLabel('我的语言', { exact: true })).toHaveValue('zh-CN');
   expect(errors).toEqual([]);
 });

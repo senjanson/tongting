@@ -8,6 +8,7 @@
  */
 import { AppError } from '../../domain/errors';
 import { streamInterruptedError } from './http-errors';
+import { t } from '../../i18n';
 
 export interface SseEvent {
   /** 事件类型；未指定时为 'message'。 */
@@ -191,7 +192,7 @@ export async function readSseStream(
           code: 'response-too-large',
           category: 'format',
           retryable: false,
-          message: '服务返回的流式内容过大，已停止读取。',
+          message: t('background.textHttp.streamTooLarge'),
         });
       }
       for (const event of parser.push(decoder.decode(value, { stream: true }))) {

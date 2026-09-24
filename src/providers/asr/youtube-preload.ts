@@ -9,6 +9,7 @@ import {
   normalizeLoopbackBaseUrl,
   redactUrl,
 } from './http';
+import { t } from '../../i18n';
 
 const ResultSchema = TranscriptionSchema.extend({
   startMs: z.number().int().min(0).max(MAX_MEDIA_TIME_MS),
@@ -57,7 +58,7 @@ export async function preloadYoutubeAudio(
       code: 'preload-config',
       category: 'config',
       retryable: false,
-      message: '音频预读需要有效的 YouTube 视频和本地识别配对。',
+      message: t('background.preload.needVideoAndPairing'),
     });
   }
   const json = await guardedRequest(
@@ -80,7 +81,7 @@ export async function preloadYoutubeAudio(
           code: 'preload-upgrade-required',
           category: 'config',
           retryable: false,
-          message: '本地识别服务需要更新并启用音频预读。也可切换为「连续播放」。',
+          message: t('background.preload.needUpdate'),
         });
       if (!response.ok) {
         const error = await httpError(response, body, 'local-asr', origin, Date.now());
@@ -105,7 +106,7 @@ export async function preloadYoutubeAudio(
       code: 'preload-bad-response',
       category: 'format',
       retryable: false,
-      message: '音频预读返回的时间范围无效，已停止以避免字幕错位。',
+      message: t('background.preload.badRange'),
     });
   }
   return parsed.data;

@@ -16,6 +16,7 @@ import type { AsrProvider, AsrTranscription } from './types';
 import { guardedRequest, httpError, joinApiPath, normalizeServiceBaseUrl, redactUrl } from './http';
 import { asrLanguageParam } from './local-client';
 import { wavDurationMs } from '../../audio/wav';
+import { t } from '../../i18n';
 
 /** OpenAI 兼容接口的上传上限为 25 MB。 */
 export const SUB2API_ASR_MAX_BYTES = 25 * 1024 * 1024;
@@ -74,14 +75,14 @@ export function createSub2apiAsrProvider(params: {
       code: 'auth-missing',
       category: 'config',
       retryable: false,
-      message: '尚未设置 API Key',
+      message: t('background.sub2apiAsr.noKey'),
     });
   if (!params.model.trim()) {
     throw new AppError({
       code: 'asr-model-missing',
       category: 'config',
       retryable: false,
-      message: '尚未选择语音识别模型',
+      message: t('background.sub2apiAsr.noModel'),
     });
   }
 
@@ -93,7 +94,7 @@ export function createSub2apiAsrProvider(params: {
           code: 'audio-too-large',
           category: 'format',
           retryable: false,
-          message: '识别分段过大',
+          message: t('background.sub2apiAsr.segmentTooLarge'),
         });
       }
       const verbose = supportsVerboseJson(params.model);
@@ -149,8 +150,7 @@ export function createSub2apiAsrProvider(params: {
           code: 'health-not-supported',
           category: 'unsupported',
           retryable: false,
-          message:
-            'sub2api 语音识别没有免费的健康检查接口，需要在连接检查中显式进行一次（可能计费的）识别测试。',
+          message: t('background.sub2apiAsr.noHealthCheck'),
           at: Date.now(),
         },
       };
@@ -164,7 +164,7 @@ function badResponse(origin: string, cause?: unknown): AppError {
       code: 'sub2api-asr-bad-response',
       category: 'format',
       retryable: false,
-      message: 'sub2api 语音识别返回的数据格式无法识别',
+      message: t('background.sub2apiAsr.badResponse'),
       detail: origin,
     },
     { cause },

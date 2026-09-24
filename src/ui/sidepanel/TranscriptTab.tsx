@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { PageInfo, SessionSnapshot } from '../../domain/session';
 import type { TranscriptRecord } from '../../storage/db';
+import { useLocale, useT } from '../../i18n/react';
 import { SelectField } from '../components/controls';
 import { Callout, EmptyState } from '../components/layout';
 import { formatDateTime, languageLabel } from '../format';
@@ -65,6 +66,7 @@ function LiveTranscript({
 }) {
   const cues = useCues(session.identity.sessionId);
   const { run } = useCommandRunner();
+  const t = useT();
   const time = usePlayerClock(page.player ?? session.player);
   const source = useMemo(
     () => ({
@@ -90,7 +92,10 @@ function LiveTranscript({
       captionOffsetMs={captionOffsetMs}
       demo={demo}
       onSeek={(timeMs) =>
-        void run({ kind: 'player/seek', tabId: page.tabId, timeMs }, { errorPrefix: '跳转失败' })
+        void run(
+          { kind: 'player/seek', tabId: page.tabId, timeMs },
+          { errorPrefix: t('sidepanel.transcript.seekFailed') },
+        )
       }
       backfill={
         session.sourceMode === 'full-track' && !demo
@@ -106,7 +111,11 @@ function LiveTranscript({
                     sessionId: session.identity.sessionId,
                     enabled,
                   },
-                  { errorPrefix: enabled ? '无法开始全片翻译' : '无法停止全片翻译' },
+                  {
+                    errorPrefix: enabled
+                      ? t('sidepanel.transcript.backfillStartFailed')
+                      : t('sidepanel.transcript.backfillStopFailed'),
+                  },
                 ),
             }
           : undefined
@@ -129,6 +138,8 @@ function SavedTranscript({
 }) {
   const { transcripts } = useRepos();
   const { run } = useCommandRunner();
+  const locale = useLocale();
+  const t = useT();
   const time = usePlayerClock(page.player);
   const videoId = page.videoId;
   const [loaded, setLoaded] = useState<{
@@ -179,14 +190,14 @@ function SavedTranscript({
     [selected, page.title],
   );
 
-  if (!current) return <EmptyState title="正在读取本地字幕记录…" />;
+  if (!current) return <EmptyState title={t('sidepanel.transcript.loading')} />;
   if (current.failed) {
-    return <Callout tone="danger">读取本地字幕记录失败。开始翻译后仍会显示实时字幕。</Callout>;
+    return <Callout tone="danger">{t('sidepanel.transcript.loadFailed')}</Callout>;
   }
   if (!selected || !source) {
     return (
-      <EmptyState title="还没有这个视频的字幕">
-        在「翻译」标签开始翻译后，已获得的字幕会实时显示在这里，并保存为本地记录。
+      <EmptyState title={t('sidepanel.transcript.emptyTitle')}>
+        {t('sidepanel.transcript.emptyBody')}
       </EmptyState>
     );
   }
@@ -195,12 +206,12 @@ function SavedTranscript({
       {records.length > 1 && (
         <div style={{ marginBottom: 8 }}>
           <SelectField
-            label="本地记录"
+            label={t('sidepanel.transcript.records')}
             value={selected.recordId}
             onChange={setSelectedId}
             options={records.map((r) => ({
               value: r.recordId,
-              label: `${languageLabel(r.targetLanguage)} · ${sourceModeShortLabel(r.sourceMode)} · ${formatDateTime(r.updatedAt)}`,
+              label: `${languageLabel(r.targetLanguage, locale)} · ${sourceModeShortLabel(r.sourceMode, locale)} · ${formatDateTime(r.updatedAt, locale)}`,
             }))}
           />
         </div>
@@ -213,7 +224,10 @@ function SavedTranscript({
         currentTimeMs={time}
         captionOffsetMs={captionOffsetMs}
         onSeek={(timeMs) =>
-          void run({ kind: 'player/seek', tabId: page.tabId, timeMs }, { errorPrefix: '跳转失败' })
+          void run(
+            { kind: 'player/seek', tabId: page.tabId, timeMs },
+            { errorPrefix: t('sidepanel.transcript.seekFailed') },
+          )
         }
       />
     </>

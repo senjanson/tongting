@@ -4,6 +4,7 @@
 import { ArrowRight, Plus, Save, Undo2, X } from 'lucide-react';
 import { useState } from 'react';
 import type { GlossaryEntry } from '../../domain/settings';
+import { useLocale, useT } from '../../i18n/react';
 import { Button, controlStyles, Hint, IconButton } from '../components/controls';
 import { useSettingsUpdater } from '../shared/hooks';
 import { Section } from './common';
@@ -15,12 +16,14 @@ function toRows(entries: readonly GlossaryEntry[], startKey = 1): GlossaryDraftR
 }
 
 export function GlossarySection({ glossary }: { glossary: readonly GlossaryEntry[] }) {
+  const t = useT();
+  const locale = useLocale();
   const update = useSettingsUpdater();
   const [draft, setDraft] = useState<{ rows: GlossaryDraftRow[]; nextKey: number } | null>(null);
   const [showErrors, setShowErrors] = useState(false);
   const rows = draft?.rows ?? toRows(glossary);
   const nextKey = draft?.nextKey ?? glossary.length + 1;
-  const validation = validateGlossary(rows);
+  const validation = validateGlossary(rows, locale);
 
   const edit = (next: GlossaryDraftRow[], key = nextKey) => setDraft({ rows: next, nextKey: key });
 
@@ -36,11 +39,11 @@ export function GlossarySection({ glossary }: { glossary: readonly GlossaryEntry
   return (
     <Section
       id="glossary"
-      title="术语表"
-      description="固定人名、产品名等译法。术语表会随翻译请求发送给模型；修改后旧的缓存译文不会用于新配置。"
+      title={t('options.section.glossary')}
+      description={t('options.glossary.description')}
     >
       <div className={styles.glossary}>
-        {rows.length === 0 && <Hint>还没有术语。</Hint>}
+        {rows.length === 0 && <Hint>{t('options.glossary.empty')}</Hint>}
         {rows.map((row, index) => {
           const error = showErrors && !validation.ok ? validation.errors.get(row.key) : undefined;
           return (
@@ -48,8 +51,8 @@ export function GlossarySection({ glossary }: { glossary: readonly GlossaryEntry
               <div className={styles.glossaryRow}>
                 <input
                   className={controlStyles.input}
-                  aria-label={`第 ${index + 1} 条原文`}
-                  placeholder="原文"
+                  aria-label={t('options.glossary.sourceAria', { n: index + 1 })}
+                  placeholder={t('options.glossary.sourcePlaceholder')}
                   value={row.source}
                   maxLength={200}
                   aria-invalid={error ? true : undefined}
@@ -61,8 +64,8 @@ export function GlossarySection({ glossary }: { glossary: readonly GlossaryEntry
                 <ArrowRight size={14} aria-hidden="true" />
                 <input
                   className={controlStyles.input}
-                  aria-label={`第 ${index + 1} 条译文`}
-                  placeholder="译文"
+                  aria-label={t('options.glossary.targetAria', { n: index + 1 })}
+                  placeholder={t('options.glossary.targetPlaceholder')}
                   value={row.target}
                   maxLength={200}
                   aria-invalid={error ? true : undefined}
@@ -73,7 +76,7 @@ export function GlossarySection({ glossary }: { glossary: readonly GlossaryEntry
                 />
                 <IconButton
                   bare
-                  label={`删除第 ${index + 1} 条术语`}
+                  label={t('options.glossary.deleteAria', { n: index + 1 })}
                   icon={<X size={15} aria-hidden="true" />}
                   onClick={() => edit(rows.filter((r) => r.key !== row.key))}
                 />
@@ -88,7 +91,7 @@ export function GlossarySection({ glossary }: { glossary: readonly GlossaryEntry
           icon={<Plus size={15} aria-hidden="true" />}
           onClick={() => edit([...rows, { key: nextKey, source: '', target: '' }], nextKey + 1)}
         >
-          添加术语
+          {t('options.glossary.add')}
         </Button>
         <Button
           variant="primary"
@@ -96,7 +99,7 @@ export function GlossarySection({ glossary }: { glossary: readonly GlossaryEntry
           disabled={!draft}
           onClick={() => void save()}
         >
-          保存术语表
+          {t('options.glossary.save')}
         </Button>
         {draft && (
           <Button
@@ -107,7 +110,7 @@ export function GlossarySection({ glossary }: { glossary: readonly GlossaryEntry
               setShowErrors(false);
             }}
           >
-            放弃修改
+            {t('options.glossary.discard')}
           </Button>
         )}
       </div>

@@ -1,0 +1,22 @@
+{
+  "extName": {
+    "message": "同听 Tongting",
+    "description": "扩展名称。"
+  },
+  "extDescription": {
+    "message": "YouTube 视频翻译字幕与配音，支持多种目标语言（使用你自己的 sub2api 服务）",
+    "description": "扩展说明。"
+  },
+  "actionTitle": {
+    "message": "同听",
+    "description": "工具栏按钮的提示文字。"
+  },
+  "commandToggleTranslation": {
+    "message": "暂停 / 继续翻译",
+    "description": "快捷键说明。"
+  },
+  "commandToggleCaptions": {
+    "message": "显示 / 隐藏翻译字幕",
+    "description": "快捷键说明。"
+  }
+}

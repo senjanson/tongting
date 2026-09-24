@@ -18,7 +18,7 @@ import {
 import { CueSchema } from '../domain/cue';
 import { PageInfoSchema, SessionSnapshotSchema } from '../domain/session';
 import { SettingsPatchSchema, SettingsSchema } from '../domain/settings';
-import { SearchInputSchema, type SearchRecord } from '../domain/search';
+import { SearchInputSchema, SearchLanguageSchema, type SearchRecord } from '../domain/search';
 
 export const UI_PROTOCOL_VERSION = 1;
 
@@ -61,6 +61,12 @@ export const UiCommandSchema = z.discriminatedUnion('kind', [
     kind: z.literal('search/generate'),
     operationId: RequestId,
     query: SearchInputSchema,
+    /**
+     * 界面当前显示的语言；省略时 worker 按设置解析。由界面携带，避免刚切换语言、
+     * 设置尚未写回时按旧语言生成。
+     */
+    userLanguage: SearchLanguageSchema.optional(),
+    keywordLanguage: SearchLanguageSchema.optional(),
   }),
   z.object({ kind: z.literal('search/cancel'), operationId: RequestId }),
   z.object({ kind: z.literal('search/history') }),

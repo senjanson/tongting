@@ -10,6 +10,7 @@ import { AppError } from '../domain/errors';
 import type { GlossaryEntry, TranslationStyle } from '../domain/settings';
 import type { TranslationCache } from '../translation/types';
 import { openTongtingDb, type TongtingDb } from './db';
+import { t as tr } from '../i18n';
 
 export const TRANSLATION_CACHE_KEY_VERSION = 1;
 export const DEFAULT_CACHE_MAX_ENTRIES = 5_000;
@@ -58,10 +59,10 @@ function storageError(code: string, message: string, cause?: unknown): AppError 
 
 function assertCacheValue(value: string): string {
   if (typeof value !== 'string' || !value.trim()) {
-    throw storageError('cache-empty-value', '空译文不能写入缓存。');
+    throw storageError('cache-empty-value', tr('background.cache.emptyValue'));
   }
   if (value.length > MAX_CACHE_VALUE_LENGTH) {
-    throw storageError('cache-value-too-large', '译文过长，未写入缓存。');
+    throw storageError('cache-value-too-large', tr('background.cache.tooLarge'));
   }
   return value;
 }
@@ -172,7 +173,7 @@ export function createIdbTranslationCache(
         const db = await openDb();
         record = await db.get('translationCache', key);
       } catch (error) {
-        throw storageError('cache-read-failed', '读取翻译缓存失败，将直接请求翻译。', error);
+        throw storageError('cache-read-failed', tr('background.cache.readFailed'), error);
       }
       if (!record) return undefined;
       const t = now();
@@ -203,7 +204,7 @@ export function createIdbTranslationCache(
           size: text.length,
         });
       } catch (error) {
-        throw storageError('cache-write-failed', '写入翻译缓存失败，本次译文仍然可用。', error);
+        throw storageError('cache-write-failed', tr('background.cache.writeFailed'), error);
       }
       writes++;
       if (writes === 1 || writes % pruneEvery === 0) {
@@ -222,7 +223,7 @@ export function createIdbTranslationCache(
         const db = await openDb();
         await db.clear('translationCache');
       } catch (error) {
-        throw storageError('cache-clear-failed', '清空翻译缓存失败，请重试。', error);
+        throw storageError('cache-clear-failed', tr('background.cache.clearFailed'), error);
       }
     },
 

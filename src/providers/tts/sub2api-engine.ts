@@ -11,6 +11,7 @@ import { AppError, toAppErrorInfo, type AppErrorInfo } from '../../domain/errors
 import type { MediaOwner } from '../../messaging/offscreen-protocol';
 import type { OffscreenClient } from '../../audio/types';
 import type { TtsEngine, TtsEngineEvent, TtsVoice } from './types';
+import { t } from '../../i18n';
 
 export interface Sub2apiTtsRoute {
   baseUrl: string;
@@ -24,10 +25,7 @@ function configError(code: string, message: string): AppErrorInfo {
 }
 
 function notConfigured(): AppErrorInfo {
-  return configError(
-    'tts-not-configured',
-    '尚未配置云端配音服务（地址、Key、模型），配音不可用；字幕仍可正常使用。',
-  );
+  return configError('tts-not-configured', t('background.cloudTts.notConfigured'));
 }
 
 export function createSub2apiTtsEngine(params: {
@@ -83,7 +81,7 @@ export function createSub2apiTtsEngine(params: {
                 code: 'sub2api-tts-failed',
                 category: 'tts',
                 retryable: false,
-                message: '云端配音失败',
+                message: t('background.cloudTts.failed'),
               },
             }),
             true,
@@ -124,7 +122,7 @@ export function createSub2apiTtsEngine(params: {
           listener({
             type: 'error',
             utteranceId,
-            error: configError('tts-engine-disposed', '配音引擎已释放'),
+            error: configError('tts-engine-disposed', t('background.cloudTts.disposed')),
           }),
         );
         return;
@@ -140,7 +138,7 @@ export function createSub2apiTtsEngine(params: {
       const route = params.getRoute();
       if (!route) return failLater(notConfigured());
       const owner = params.getOwner();
-      if (!owner) return failLater(configError('tts-no-owner', '当前没有可以播放配音的会话'));
+      if (!owner) return failLater(configError('tts-no-owner', t('background.cloudTts.noOwner')));
       params.offscreen
         .request(
           {
@@ -173,7 +171,7 @@ export function createSub2apiTtsEngine(params: {
               error: toAppErrorInfo(error, {
                 category: 'tts',
                 code: 'sub2api-tts-request-failed',
-                message: '云端配音请求失败',
+                message: t('background.cloudTts.requestFailed'),
               }),
             }),
             true,

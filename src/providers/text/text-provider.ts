@@ -30,6 +30,7 @@ import {
   parseTranslationPayload,
   validateTranslations,
 } from './validate';
+import { t } from '../../i18n';
 
 export type StreamEndKind = 'end-event' | 'finish-reason-only' | 'json-fallback';
 
@@ -95,12 +96,12 @@ export function createSub2apiTextProvider(
   const normalized = normalizeBaseUrl(config.baseUrl);
   if (!normalized.ok) throw new AppError(normalized.error);
   if (!config.apiKey || !config.apiKey.trim()) {
-    throw configError('api-key-missing', '尚未填写 API Key：请在设置页填写后再开始翻译。');
+    throw configError('api-key-missing', t('background.textProvider.apiKeyMissing'));
   }
   const model = config.model.trim();
-  if (!model) throw configError('model-missing', '尚未选择模型：请在设置页选择或手动填写模型 ID。');
+  if (!model) throw configError('model-missing', t('background.textProvider.modelMissing'));
   if (config.protocol !== 'responses' && config.protocol !== 'chat') {
-    throw configError('protocol-invalid', '协议必须是 Responses 或 Chat Completions。');
+    throw configError('protocol-invalid', t('background.textProvider.protocolInvalid'));
   }
 
   const now = options.now ?? (() => Date.now());
@@ -224,7 +225,7 @@ export function createSub2apiTextProvider(
     const ids = new Set<string>();
     for (const item of input.items) {
       if (!item.id || ids.has(item.id)) {
-        throw configError('batch-invalid-ids', '翻译批次中的字幕 ID 为空或重复。');
+        throw configError('batch-invalid-ids', t('background.textProvider.batchInvalidIds'));
       }
       ids.add(item.id);
     }
@@ -278,7 +279,7 @@ export function createSub2apiTextProvider(
     if (accepted.size === 0) {
       throw formatError(
         'translation-invalid',
-        '模型返回的译文未通过校验（缺少字幕 ID、重复或格式错误），本批已标记失败，可稍后重试。',
+        t('background.textProvider.outputInvalid'),
         lastProblem,
       );
     }

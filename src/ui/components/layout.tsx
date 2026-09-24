@@ -11,6 +11,8 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { translate } from '../../i18n';
+import { useLocale, useT } from '../../i18n/react';
 import type { StatusTone } from '../state/derive';
 import { Button, IconButton } from './controls';
 import { ToastRegion, useModalToasts } from './toast';
@@ -28,13 +30,14 @@ export function BrandMark({ className }: { className?: string }) {
   );
 }
 
-export function Brand({ note = 'TONGTING' }: { note?: string }) {
+export function Brand({ note }: { note?: string }) {
+  const t = useT();
   return (
     <div className={styles.brand}>
       <BrandMark />
       <div className={styles.brandText}>
-        <span className={styles.brandName}>同听</span>
-        <span className={styles.brandNote}>{note}</span>
+        <span className={styles.brandName}>{t('common.brand.name')}</span>
+        <span className={styles.brandNote}>{note ?? t('common.brand.note')}</span>
       </div>
     </div>
   );
@@ -254,16 +257,22 @@ export function Card({ children, className }: { children: ReactNode; className?:
   return <div className={cx(styles.card, className)}>{children}</div>;
 }
 
-export const DEMO_LABEL = '演示模式 · 示例数据，不连接视频与服务';
+/** 中文版本的演示标识（兼容旧引用）；界面请使用 common.demo.label。 */
+export const DEMO_LABEL = translate('zh-CN', 'common.demo.label');
 
 export function DemoBanner({ onExit }: { onExit?: () => void }) {
+  const t = useT();
   return (
-    <div className={cx(styles.banner, styles['banner-demo'])} role="note" aria-label="演示模式">
+    <div
+      className={cx(styles.banner, styles['banner-demo'])}
+      role="note"
+      aria-label={t('common.demo.aria')}
+    >
       <FlaskConical size={14} aria-hidden="true" />
-      <span className={styles.bannerText}>{DEMO_LABEL}</span>
+      <span className={styles.bannerText}>{t('common.demo.label')}</span>
       {onExit && (
         <Button size="sm" variant="ghost" onClick={onExit}>
-          退出演示
+          {t('common.demo.exit')}
         </Button>
       )}
     </div>
@@ -271,11 +280,12 @@ export function DemoBanner({ onExit }: { onExit?: () => void }) {
 }
 
 export function ReconnectBanner({ hasSnapshot }: { hasSnapshot: boolean }) {
+  const locale = useLocale();
   return (
     <div className={cx(styles.banner, styles['banner-warning'])} role="status" aria-live="polite">
       <WifiOff size={14} aria-hidden="true" />
       <span className={styles.bannerText}>
-        {hasSnapshot ? '正在重新连接后台服务，下方显示的可能不是最新状态。' : '正在连接后台服务…'}
+        {translate(locale, hasSnapshot ? 'common.reconnect.stale' : 'common.reconnect.connecting')}
       </span>
     </div>
   );
@@ -312,6 +322,7 @@ export function Dialog({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  const t = useT();
   useModalToasts(open);
   const onCloseRef = useRef(onClose);
   useEffect(() => {
@@ -349,7 +360,7 @@ export function Dialog({
             {title}
           </h2>
           <IconButton
-            label="关闭"
+            label={t('common.close')}
             icon={<X size={16} aria-hidden="true" />}
             bare
             onClick={onClose}

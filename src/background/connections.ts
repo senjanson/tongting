@@ -15,6 +15,7 @@ import {
 } from '../messaging/ui-protocol';
 import type { VerifiedContentSender, VerifiedExtensionSender } from '../messaging/ports';
 import { PendingRequests } from './port-rpc';
+import { t } from '../i18n';
 
 /** 测试可替换的最小端口接口。 */
 export interface PortLike {
@@ -144,7 +145,7 @@ export class UiConnection {
               code: 'invalid-command',
               category: 'internal',
               retryable: false,
-              message: '命令格式无效，已拒绝',
+              message: t('background.connections.invalidCommand'),
               at: Date.now(),
             },
           });

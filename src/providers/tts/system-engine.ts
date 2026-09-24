@@ -10,6 +10,7 @@
 import { browser } from 'wxt/browser';
 import { redactSecrets, type AppErrorInfo } from '../../domain/errors';
 import type { TtsEngine, TtsEngineEvent, TtsUtterance, TtsVoice } from './types';
+import { t } from '../../i18n';
 
 export interface ChromeTtsEventLike {
   type: string;
@@ -39,7 +40,7 @@ function systemTtsError(detail?: string, code = 'tts-system-error'): AppErrorInf
     code,
     category: 'tts',
     retryable: false,
-    message: '系统语音朗读失败，可尝试更换声音或改为仅字幕。',
+    message: t('background.systemTts.failed'),
     detail: detail ? redactSecrets(detail).slice(0, 200) : undefined,
     at: Date.now(),
   };

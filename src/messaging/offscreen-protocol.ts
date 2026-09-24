@@ -9,6 +9,7 @@
 import { z } from 'zod';
 import { AppErrorInfoSchema } from '../domain/errors';
 import { ResourceStateSchema } from '../domain/session';
+import { LocaleSchema } from '../domain/settings';
 
 export const OFFSCREEN_PROTOCOL_VERSION = 1;
 
@@ -209,7 +210,17 @@ export const OffscreenToBackgroundSchema = z.union([
 export type OffscreenToBackground = z.infer<typeof OffscreenToBackgroundSchema>;
 
 export const BackgroundToOffscreenSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('welcome'), workerInstanceId: z.string().max(64) }),
-  z.object({ type: z.literal('request'), requestId: RequestId, request: OffscreenRequestSchema }),
+  /** locale：offscreen 生成的错误提示使用的界面语言，随握手与每个请求下发，保持与 worker 一致。 */
+  z.object({
+    type: z.literal('welcome'),
+    workerInstanceId: z.string().max(64),
+    locale: LocaleSchema.optional(),
+  }),
+  z.object({
+    type: z.literal('request'),
+    requestId: RequestId,
+    request: OffscreenRequestSchema,
+    locale: LocaleSchema.optional(),
+  }),
 ]);
 export type BackgroundToOffscreen = z.infer<typeof BackgroundToOffscreenSchema>;

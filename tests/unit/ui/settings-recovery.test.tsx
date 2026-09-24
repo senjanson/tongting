@@ -3,12 +3,17 @@
  * 设置页：设置无法使用时的提示，以及「恢复默认设置」确认框与实际行为一致。
  */
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import type { AppSnapshot } from '@src/messaging/ui-protocol';
 import { OptionsApp } from '@src/ui/options/OptionsApp';
 import { makeSnapshot } from './fixtures';
 import { createFakeWorker } from './fake-worker-port';
+
+// 界面语言跟随浏览器（快照中 uiLocale 默认 auto）：本文件的断言使用中文界面。
+beforeEach(() => {
+  vi.spyOn(fakeBrowser.i18n, 'getUILanguage').mockReturnValue('zh-CN');
+});
 
 function renderOptions(snapshot: AppSnapshot) {
   const worker = createFakeWorker(snapshot, {

@@ -11,6 +11,7 @@
 import { AppError, cancelledError, isAbortError } from '../../domain/errors';
 import type { HttpTransport } from './types';
 import { errorFromHttpStatus, networkError, timeoutError } from './http-errors';
+import { t } from '../../i18n';
 
 /** 响应体读取上限，防止异常服务把超大内容塞进扩展内存。 */
 export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -96,7 +97,7 @@ export async function withRequestSignal<T>(
         code: 'request-failed',
         category: 'internal',
         retryable: false,
-        message: '请求处理失败，请重试。',
+        message: t('background.textHttp.failed'),
       },
       { cause: error },
     );
@@ -118,7 +119,7 @@ function assertOrigin(url: string, expectedOrigin: string): void {
       code: 'origin-mismatch',
       category: 'config',
       retryable: false,
-      message: '请求地址与已配置的服务地址不一致，已拒绝发送。',
+      message: t('background.textHttp.originMismatch'),
     });
   }
 }
@@ -177,7 +178,7 @@ export async function readTextLimited(
           code: 'response-too-large',
           category: 'format',
           retryable: false,
-          message: '服务返回的内容过大，已停止读取。',
+          message: t('background.textHttp.bodyTooLarge'),
         });
       }
       out += decoder.decode(value, { stream: true });
@@ -199,7 +200,7 @@ export async function readJsonResponse(response: Response): Promise<unknown> {
       code: 'invalid-json-response',
       category: 'format',
       retryable: true,
-      message: '服务返回的不是有效 JSON：请确认 Base URL 指向 API 根地址而不是网页。',
+      message: t('background.textHttp.notJson'),
     });
   }
 }

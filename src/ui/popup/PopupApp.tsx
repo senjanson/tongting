@@ -1,16 +1,18 @@
 /**
  * 工具栏弹窗：当前视频、目标语言、开始/暂停翻译、真实连接状态、打开侧栏与工作台。
- * 关闭弹窗不会停止翻译（会话由 worker 管理）。
+ * 关闭弹窗不会停止翻译（会话由 worker 管理）。界面语言按快照中的 settings.uiLocale 决定。
  */
 import { PanelRightOpen, PanelsTopLeft, Pause, Play, Settings } from 'lucide-react';
 import { useMemo } from 'react';
 import { browser } from 'wxt/browser';
 import { TARGET_LANGUAGES } from '../../domain/languages';
+import { useLocale, useT } from '../../i18n/react';
 import type { AppSnapshot } from '../../messaging/ui-protocol';
 import { Button, Hint, SelectField } from '../components/controls';
 import { Brand, ReconnectBanner, StatusPill } from '../components/layout';
 import { ToastProvider, useToast } from '../components/toast';
-import { capabilityStatusLabel, formatDateTime, formatMediaTime } from '../format';
+import { capabilityStatusLabel, formatDateTime, formatMediaTime, languageLabel } from '../format';
+import { SnapshotI18nProvider } from '../shared/LocaleRoot';
 import { useCommandRunner, usePlayerClock, useSettingsUpdater } from '../shared/hooks';
 import { openOptionsPage, openWorkspace, reloadTab } from '../shared/navigation';
 import { useActiveTab } from '../state/active-tab';
@@ -32,11 +34,13 @@ import styles from './popup.module.css';
 export function PopupApp() {
   const { client } = useBackground('popup');
   return (
-    <ToastProvider>
-      <UiClientProvider client={client}>
-        <PopupView />
-      </UiClientProvider>
-    </ToastProvider>
+    <UiClientProvider client={client}>
+      <SnapshotI18nProvider>
+        <ToastProvider>
+          <PopupView />
+        </ToastProvider>
+      </SnapshotI18nProvider>
+    </UiClientProvider>
   );
 }
 
@@ -46,6 +50,8 @@ function PopupView() {
   const notify = useToast();
   const update = useSettingsUpdater();
   const { run, isBusy } = useCommandRunner();
+  const locale = useLocale();
+  const t = useT();
   const activeTabId = activeTab.tab?.tabId;
   const hasPage = activeTabId !== undefined && !!findPageByTab(snapshot, activeTabId);
   const waking = usePageWake(activeTabId, hasPage, connection === 'connected' && !!snapshot);
@@ -53,16 +59,20 @@ function PopupView() {
     () => deriveTabContext(snapshot, activeTab.tab, activeTab.loading, waking),
     [snapshot, activeTab.tab, activeTab.loading, waking],
   );
-  const config = useMemo(() => deriveServiceConfig(snapshot), [snapshot]);
-  const status = deriveStatus({ connection, snapshot, tabContext, config });
+  const config = useMemo(() => deriveServiceConfig(snapshot, locale), [snapshot, locale]);
+  const status = deriveStatus({ connection, snapshot, tabContext, config, locale });
   const video = tabContext.kind === 'video' ? tabContext : undefined;
-  const action = derivePrimaryAction(video?.session, config, connection);
+  const action = derivePrimaryAction(video?.session, config, connection, locale);
+  const targetOptions = useMemo(
+    () => TARGET_LANGUAGES.map((l) => ({ value: l.code, label: languageLabel(l.code, locale) })),
+    [locale],
+  );
   const time = usePlayerClock(video?.page.player);
 
   const openSidePanel = () => {
     const tab = activeTab.tab;
     if (!tab) {
-      notify('无法确定当前标签页。', 'danger');
+      notify(t('sidepanel.popup.noTab'), 'danger');
       return;
     }
     let opening: Promise<void>;
@@ -70,12 +80,12 @@ function PopupView() {
       // 必须在点击处理中同步调用，保留用户手势。
       opening = browser.sidePanel.open({ tabId: tab.tabId });
     } catch {
-      notify('当前浏览器无法从弹窗打开侧栏，请点击浏览器侧边栏按钮后选择「同听」。', 'danger');
+      notify(t('sidepanel.popup.sidePanelUnsupported'), 'danger');
       return;
     }
     opening.then(
       () => window.close(),
-      () => notify('打开侧栏失败，请点击浏览器侧边栏按钮后选择「同听」。', 'danger'),
+      () => notify(t('sidepanel.popup.sidePanelFailed'), 'danger'),
     );
   };
 
@@ -84,74 +94,77 @@ function PopupView() {
     const tabId = video.page.tabId;
     const sessionId = video.session?.identity.sessionId;
     if (action.kind === 'start')
-      void run({ kind: 'session/start', tabId }, { key: 'primary', errorPrefix: '无法开始翻译' });
+      void run(
+        { kind: 'session/start', tabId },
+        { key: 'primary', errorPrefix: t('sidepanel.translate.startFailed') },
+      );
     if (action.kind === 'pause')
       void run(
         { kind: 'session/pause', tabId, sessionId },
-        { key: 'primary', errorPrefix: '无法暂停翻译' },
+        { key: 'primary', errorPrefix: t('sidepanel.translate.pauseFailed') },
       );
     if (action.kind === 'resume')
       void run(
         { kind: 'session/resume', tabId, sessionId },
-        { key: 'primary', errorPrefix: '无法继续翻译' },
+        { key: 'primary', errorPrefix: t('sidepanel.translate.resumeFailed') },
       );
   };
 
   const onNextStep = (next: NextStepAction) => {
     if (!video) return;
     if (next === 'open-settings')
-      openOptionsPage().catch(() => notify('无法打开设置页。', 'danger'));
+      openOptionsPage().catch(() => notify(t('common.openSettingsFailed'), 'danger'));
     if (next === 'reload-tab') {
-      reloadTab(video.page.tabId).catch(() => notify('无法刷新标签页，请手动刷新。', 'danger'));
+      reloadTab(video.page.tabId).catch(() => notify(t('common.reloadTabFailed'), 'danger'));
     }
     if (next === 'retry') {
       void run(
         { kind: 'session/start', tabId: video.page.tabId },
-        { key: 'primary', errorPrefix: '重试失败' },
+        { key: 'primary', errorPrefix: t('sidepanel.translate.retryFailed') },
       );
     }
   };
 
   return (
-    <div className={styles.app}>
+    <div className={styles.app} lang={locale}>
       <header className={styles.header}>
         <Brand />
         <StatusPill label={status.label} tone={status.tone} />
       </header>
       {connection !== 'connected' && <ReconnectBanner hasSnapshot={!!snapshot} />}
       <div className={styles.body}>
-        <section className={styles.videoCard} aria-label="当前标签页">
-          <span className={styles.videoLabel}>当前标签页</span>
+        <section className={styles.videoCard} aria-label={t('sidepanel.popup.currentTab')}>
+          <span className={styles.videoLabel}>{t('sidepanel.popup.currentTab')}</span>
           {video ? (
             <>
               <span className={styles.videoTitle}>
-                {video.page.title || video.page.player?.title || '（未获取到视频标题）'}
+                {video.page.title || video.page.player?.title || t('sidepanel.video.noTitle')}
               </span>
               <span className={styles.videoMeta}>
-                {playerStatusLabel(video.page.player)}
+                {playerStatusLabel(video.page.player, locale)}
                 {video.page.player ? ` · ${formatMediaTime(time)}` : ''}
               </span>
             </>
           ) : (
             <span className={styles.videoMeta}>
               {tabContext.kind === 'loading'
-                ? '正在读取…'
+                ? t('sidepanel.popup.reading')
                 : tabContext.kind === 'waking'
-                  ? '正在连接页面…'
+                  ? t('sidepanel.noVideo.waking')
                   : tabContext.kind === 'youtube-no-video'
-                    ? '这个 YouTube 页面没有正在播放的视频。'
+                    ? t('sidepanel.popup.ytNoVideo')
                     : !snapshot
-                      ? '等待后台服务…'
-                      : '不是 YouTube 视频页。打开视频后可开始翻译；刚打开的页面可能需要刷新。'}
+                      ? t('sidepanel.popup.waitingService')
+                      : t('sidepanel.popup.notYt')}
             </span>
           )}
         </section>
 
         {snapshot && (
           <SelectField
-            label="翻译为"
+            label={t('sidepanel.language.target')}
             value={snapshot.settings.targetLanguage}
-            options={TARGET_LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
+            options={targetOptions}
             disabled={connection !== 'connected'}
             onChange={(targetLanguage) => void update({ targetLanguage })}
           />
@@ -189,24 +202,26 @@ function PopupView() {
           icon={<PanelRightOpen size={15} aria-hidden="true" />}
           onClick={openSidePanel}
         >
-          打开侧栏
+          {t('sidepanel.popup.openSidePanel')}
         </Button>
         <div className={styles.links}>
           <Button
             icon={<PanelsTopLeft size={15} aria-hidden="true" />}
             onClick={() =>
               openWorkspace(video?.page.videoId ?? undefined).catch(() =>
-                notify('无法打开字幕工作台。', 'danger'),
+                notify(t('common.openWorkspaceFailed'), 'danger'),
               )
             }
           >
-            字幕工作台
+            {t('sidepanel.popup.workspace')}
           </Button>
           <Button
             icon={<Settings size={15} aria-hidden="true" />}
-            onClick={() => openOptionsPage().catch(() => notify('无法打开设置页。', 'danger'))}
+            onClick={() =>
+              openOptionsPage().catch(() => notify(t('common.openSettingsFailed'), 'danger'))
+            }
           >
-            设置
+            {t('common.settings')}
           </Button>
         </div>
       </div>
@@ -221,19 +236,34 @@ function ConnectionSummary({
   snapshot: AppSnapshot;
   config: ServiceConfigState;
 }) {
+  const locale = useLocale();
+  const t = useT();
   const cap = snapshot.capabilities.translation;
   let text: string;
   if (!config.ready) text = config.message;
   else if (cap?.status === 'verified') {
-    text = `最近一次检查实际翻译成功${cap.checkedAt ? `（${formatDateTime(Date.parse(cap.checkedAt))}）` : ''}`;
+    text = cap.checkedAt
+      ? t('sidepanel.popup.verifiedAt', {
+          time: formatDateTime(Date.parse(cap.checkedAt), locale),
+        })
+      : t('sidepanel.popup.verified');
   } else if (cap?.status === 'failed' || cap?.status === 'unsupported') {
-    text = `${capabilityStatusLabel(cap.status)}${cap.message ? `：${cap.message}` : ''}`;
+    const label = capabilityStatusLabel(cap.status, locale);
+    text = cap.message
+      ? t('common.errorWithDetail', { prefix: label, detail: cap.message })
+      : label;
   } else {
-    text = '尚未检查连接。可在设置页点击「检查连接」验证。';
+    text = t('sidepanel.popup.notChecked');
   }
   return (
     <div className={styles.connection} role="status">
-      <strong>翻译服务：{config.ready ? capabilityStatusLabel(cap?.status) : '未配置'}</strong>
+      <strong>
+        {t('sidepanel.popup.serviceTitle', {
+          status: config.ready
+            ? capabilityStatusLabel(cap?.status, locale)
+            : t('sidepanel.popup.notConfigured'),
+        })}
+      </strong>
       <span>{text}</span>
     </div>
   );

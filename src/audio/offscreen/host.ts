@@ -36,6 +36,7 @@ import type {
 } from './capture-session';
 import type { TtsPlayer } from './tts-player';
 import { OffscreenWakeSchema } from './wake';
+import { setLocale, t } from '../../i18n';
 
 type TimerHandle = unknown;
 
@@ -124,7 +125,7 @@ function leaseMismatch(): AppErrorInfo {
     code: 'lease-mismatch',
     category: 'capture',
     retryable: false,
-    message: '音频捕获租约已失效或不属于当前会话，需要重新开始。',
+    message: t('background.offscreen.leaseMismatch'),
   }).info;
 }
 
@@ -261,7 +262,7 @@ export function createOffscreenHost(deps: OffscreenHostDeps): OffscreenHost {
     code: 'lease-expired',
     category: 'capture',
     retryable: true,
-    message: '后台长时间没有确认音频会话，已自动停止捕获。',
+    message: t('background.offscreen.leaseExpired'),
     at: deps.now(),
   });
 
@@ -461,6 +462,7 @@ export function createOffscreenHost(deps: OffscreenHostDeps): OffscreenHost {
       return;
     }
     const message = parsed.data;
+    if (message.locale) setLocale(message.locale);
     if (message.type === 'welcome') {
       if (
         workerInstanceId !== undefined &&

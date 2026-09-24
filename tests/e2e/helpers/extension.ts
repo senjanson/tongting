@@ -35,6 +35,11 @@ export interface LaunchOptions {
    * 去掉后测试页与原声回放会从扬声器发声。
    */
   unmute?: boolean;
+  /**
+   * 启动后通过受信任扩展页面写入的界面语言。Playwright 的 Chromium 界面语言是英文，
+   * 现有用例按中文文案定位元素，因此默认写入 'zh-CN'；传 'auto' 保持跟随浏览器（不写入）。
+   */
+  uiLocale?: 'auto' | 'zh-CN' | 'en';
 }
 
 export async function launchExtension(options: LaunchOptions = {}): Promise<LaunchedExtension> {
@@ -57,6 +62,8 @@ export async function launchExtension(options: LaunchOptions = {}): Promise<Laun
     if (!serviceWorker)
       serviceWorker = await context.waitForEvent('serviceworker', { timeout: 30_000 });
     const extensionId = new URL(serviceWorker.url()).host;
+    const uiLocale = options.uiLocale ?? 'zh-CN';
+    if (uiLocale !== 'auto') await setUiLocale(context, extensionId, uiLocale);
     const launchedContext = context;
     return {
       context,
@@ -85,6 +92,73 @@ export async function launchExtension(options: LaunchOptions = {}): Promise<Laun
     await context?.close().catch(() => undefined);
     await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);
     throw error;
+  }
+}
+
+/**
+ * 以受信任扩展页面（options.html，不唤醒内容脚本）的 UI 端口发送 settings/update，
+ * 并等到快照中的 settings.uiLocale 生效后关闭页面。设置会落盘，同一 profile 重启后仍然有效。
+ */
+export async function setUiLocale(
+  context: BrowserContext,
+  extensionId: string,
+  uiLocale: 'auto' | 'zh-CN' | 'en',
+): Promise<void> {
+  const page = await context.newPage();
+  try {
+    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.evaluate(
+      (uiLocale) =>
+        new Promise<void>((resolve, reject) => {
+          type Port = {
+            postMessage(m: unknown): void;
+            disconnect(): void;
+            onMessage: { addListener(cb: (m: Record<string, unknown>) => void): void };
+          };
+          const chromeApi = (
+            globalThis as unknown as {
+              chrome: { runtime: { connect(info: { name: string }): Port } };
+            }
+          ).chrome;
+          const port = chromeApi.runtime.connect({ name: 'tongting:ui' });
+          const requestId = `e2e-locale-${Date.now()}`;
+          let accepted = false;
+          let latest: string | undefined;
+          const timer = setTimeout(() => {
+            port.disconnect();
+            reject(new Error(`uiLocale=${uiLocale} 未在快照中生效`));
+          }, 15_000);
+          const done = () => {
+            clearTimeout(timer);
+            port.disconnect();
+            resolve();
+          };
+          port.onMessage.addListener((m) => {
+            if (m.type === 'result' && m.requestId === requestId) {
+              if (!m.ok) {
+                clearTimeout(timer);
+                port.disconnect();
+                reject(new Error(`settings/update 失败：${JSON.stringify(m.error)}`));
+                return;
+              }
+              accepted = true;
+              if (latest === uiLocale) done();
+            } else if (m.type === 'snapshot') {
+              latest = (m.snapshot as { settings?: { uiLocale?: string } }).settings?.uiLocale;
+              if (accepted && latest === uiLocale) done();
+            }
+          });
+          port.postMessage({ type: 'subscribe', protocolVersion: 1, surface: 'options' });
+          port.postMessage({
+            type: 'command',
+            requestId,
+            command: { kind: 'settings/update', patch: { uiLocale } },
+          });
+        }),
+      uiLocale,
+    );
+  } finally {
+    await page.close();
   }
 }
 

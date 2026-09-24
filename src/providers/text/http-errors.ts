@@ -5,6 +5,7 @@
  * - 不把请求头、Key、完整 URL 或原始堆栈带进错误。
  */
 import { AppError, redactSecrets, redactUrl, type AppErrorInfo } from '../../domain/errors';
+import { t } from '../../i18n';
 
 export interface ParsedServiceError {
   message?: string;
@@ -169,8 +170,7 @@ export function errorFromHttpStatus(
       code: 'redirect-blocked',
       category: 'network',
       retryable: false,
-      message:
-        '服务返回了重定向，为避免把 API Key 发往其他地址已停止请求；请把 Base URL 改为最终的 API 地址。',
+      message: t('background.http.redirectBlocked'),
     });
   }
   if (status === 401) {
@@ -179,7 +179,7 @@ export function errorFromHttpStatus(
       code: 'auth-invalid',
       category: 'auth',
       retryable: false,
-      message: 'API Key 无效或已失效（401）：请在设置中重新填写 Key 后再试。',
+      message: t('background.http.authInvalid'),
     });
   }
   if (
@@ -192,7 +192,7 @@ export function errorFromHttpStatus(
       code: 'quota-exhausted',
       category: 'quota',
       retryable: false,
-      message: '服务提示余额或额度不足：请到 sub2api 后台确认余额与分组额度后再试。',
+      message: t('background.http.quota'),
     });
   }
   if (status === 403) {
@@ -201,7 +201,7 @@ export function errorFromHttpStatus(
       code: MODEL_PERMISSION_PATTERN.test(combined) ? 'model-forbidden' : 'forbidden',
       category: 'permission',
       retryable: false,
-      message: '没有使用该模型或接口的权限（403）：请检查 Key 所属分组的模型权限，或更换模型。',
+      message: t('background.http.permission'),
     });
   }
   const modelNotFound =
@@ -214,7 +214,7 @@ export function errorFromHttpStatus(
         code: 'model-not-found',
         category: 'config',
         retryable: false,
-        message: '服务找不到该模型（404）：请确认模型 ID 拼写，或从模型列表中重新选择。',
+        message: t('background.http.modelNotFound'),
       });
     }
     return info({
@@ -222,7 +222,7 @@ export function errorFromHttpStatus(
       code: 'endpoint-not-found',
       category: 'unsupported',
       retryable: false,
-      message: '服务不支持该接口（404）：请确认 Base URL 是否正确，或在设置中切换协议。',
+      message: t('background.http.endpointNotFound'),
     });
   }
   if (status === 405 || status === 501) {
@@ -231,7 +231,7 @@ export function errorFromHttpStatus(
       code: 'endpoint-unsupported',
       category: 'unsupported',
       retryable: false,
-      message: `服务不支持该接口（${status}）：请在设置中切换协议（Responses / Chat Completions）。`,
+      message: t('background.http.endpointUnsupported', { status }),
     });
   }
   if (status === 408) {
@@ -240,7 +240,7 @@ export function errorFromHttpStatus(
       code: 'timeout',
       category: 'timeout',
       retryable: true,
-      message: '服务处理超时（408），稍后会自动重试。',
+      message: t('background.http.requestTimeout'),
     });
   }
   if (status === 413) {
@@ -249,7 +249,7 @@ export function errorFromHttpStatus(
       code: 'payload-too-large',
       category: 'format',
       retryable: false,
-      message: '请求内容过大（413），请减少单批字幕数量。',
+      message: t('background.http.payloadTooLarge'),
     });
   }
   if (status === 429) {
@@ -262,8 +262,8 @@ export function errorFromHttpStatus(
       retryAfterMs,
       message:
         retryAfterMs !== undefined
-          ? `请求过于频繁（429），约 ${Math.ceil(retryAfterMs / 1000)} 秒后再试。`
-          : '请求过于频繁（429），已暂停预取并稍后重试。',
+          ? t('background.http.rateLimited', { seconds: Math.ceil(retryAfterMs / 1000) })
+          : t('background.http.rateLimitedNoRetryAfter'),
     });
   }
   if (status === 400 || status === 422) {
@@ -273,7 +273,7 @@ export function errorFromHttpStatus(
         code: 'model-not-found',
         category: 'config',
         retryable: false,
-        message: '服务不接受该模型 ID：请确认模型名称，或从模型列表中重新选择。',
+        message: t('background.http.modelIdRejected'),
       });
     }
     if (rejectsOptionalParameter(parsed)) {
@@ -282,8 +282,7 @@ export function errorFromHttpStatus(
         code: 'unsupported-parameter',
         category: 'unsupported',
         retryable: false,
-        message:
-          '服务不接受本次请求中的可选参数（推理参数或结构化输出）：如设置了推理参数，请改为「不发送」后重试。',
+        message: t('background.http.unsupportedParameter'),
       });
     }
     // 以下都只影响这一批/这一条字幕，不代表整个服务不可用。
@@ -294,7 +293,7 @@ export function errorFromHttpStatus(
         code: 'content-rejected',
         category: 'format',
         retryable: false,
-        message: '服务的内容审核拒绝了这段字幕，已跳过；其余字幕会继续翻译。',
+        message: t('background.http.contentRejected'),
       });
     }
     if (CONTEXT_LENGTH_PATTERN.test(text)) {
@@ -303,7 +302,7 @@ export function errorFromHttpStatus(
         code: 'context-too-long',
         category: 'format',
         retryable: false,
-        message: '这批字幕超出模型的上下文长度，将改为逐条翻译。',
+        message: t('background.http.contextTooLong'),
       });
     }
     return info({
@@ -311,7 +310,7 @@ export function errorFromHttpStatus(
       code: 'bad-request',
       category: 'format',
       retryable: false,
-      message: `服务拒绝了这次翻译请求（${status}），其余字幕会继续翻译；持续出现请检查模型与协议设置。`,
+      message: t('background.http.requestRejected', { status }),
     });
   }
   if (status >= 500) {
@@ -322,7 +321,7 @@ export function errorFromHttpStatus(
       category: 'server',
       retryable: true,
       retryAfterMs,
-      message: `服务暂时异常（${status}），稍后会自动重试；持续失败请检查 sub2api 上游状态。`,
+      message: t('background.http.serverError', { status }),
     });
   }
   return info({
@@ -330,7 +329,7 @@ export function errorFromHttpStatus(
     code: `http-${status}`,
     category: 'unsupported',
     retryable: false,
-    message: `服务返回了无法处理的状态（${status}）。`,
+    message: t('background.http.unexpectedStatus', { status }),
   });
 }
 
@@ -348,14 +347,13 @@ export function networkError(error?: unknown): AppError {
           code: 'redirect-blocked',
           category: 'network',
           retryable: false,
-          message:
-            '服务返回了重定向，为避免把 API Key 发往其他地址已停止请求；请把 Base URL 改为最终的 API 地址。',
+          message: t('background.http.redirectBlocked'),
         }
       : {
           code: 'network-error',
           category: 'network',
           retryable: true,
-          message: '无法连接到服务：请检查网络、Base URL 与证书，并确认已授予该地址的访问权限。',
+          message: t('background.http.networkError'),
           detail: sanitizeDetail(cause, 120),
         },
     { cause: error },
@@ -367,7 +365,7 @@ export function timeoutError(timeoutMs: number): AppError {
     code: 'timeout',
     category: 'timeout',
     retryable: true,
-    message: `服务在 ${Math.round(timeoutMs / 1000)} 秒内没有完成响应，稍后会自动重试；持续超时可在设置中调大超时时间。`,
+    message: t('background.http.timeout', { seconds: Math.round(timeoutMs / 1000) }),
   });
 }
 
@@ -391,7 +389,7 @@ export function streamInterruptedError(detail?: string): AppError {
     code: 'stream-interrupted',
     category: 'network',
     retryable: true,
-    message: '流式响应在结束前中断，本次结果已丢弃，稍后会自动重试。',
+    message: t('background.http.streamInterrupted'),
     detail: sanitizeDetail(detail),
   });
 }

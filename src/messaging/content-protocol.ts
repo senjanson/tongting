@@ -7,7 +7,7 @@
  * - 消息中不包含 API Key。
  */
 import { z } from 'zod';
-import { CaptionSettingsSchema } from '../domain/settings';
+import { CaptionSettingsSchema, LocaleSchema } from '../domain/settings';
 import { AppErrorInfoSchema } from '../domain/errors';
 import { CueSchema, RawCaptionCueSchema } from '../domain/cue';
 import {
@@ -189,11 +189,14 @@ export const BackgroundToContentSchema = z.discriminatedUnion('type', [
     type: z.literal('welcome'),
     protocolVersion: z.literal(CONTENT_PROTOCOL_VERSION),
     workerInstanceId: z.string().max(64),
+    /** 覆盖层等页面内文案使用的界面语言（由 worker 按设置与浏览器界面语言确定）。 */
+    locale: LocaleSchema,
   }),
   z.object({
     type: z.literal('display/settings'),
     captions: CaptionSettingsSchema,
     targetLanguage: z.string().max(20),
+    locale: LocaleSchema,
   }),
   z.object({
     type: z.literal('session/state'),

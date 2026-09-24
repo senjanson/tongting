@@ -8,12 +8,15 @@
  * - 属于未结束会话的记录不能删除：worker 在防抖保存与停止时会写回完整记录。
  * - 未显式选择时，首次隐式选中的记录会被固定，重新读取列表不会跳到别的记录。
  * - 笔记按 videoId 保存，与字幕记录独立；保存按 updatedAt 检测冲突，保存失败的内容保留为草稿。
+ * - 界面语言取自快照中的 settings.uiLocale；快照到达前按浏览器界面语言显示。
  */
 import { ExternalLink, MonitorPlay, Quote, RefreshCw, Trash } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { findActiveCue, type Cue } from '../../domain/cue';
 import type { PageInfo, SessionSnapshot } from '../../domain/session';
 import { describeCoverage, isCompleteCoverage } from '../../export';
+import type { MessageKey } from '../../i18n';
+import { useLocale, useT } from '../../i18n/react';
 import type { AppSnapshot } from '../../messaging/ui-protocol';
 import { getNote, NoteConflictError, saveNoteChecked } from '../../storage/notes';
 import {
@@ -29,6 +32,7 @@ import { Brand, Callout, EmptyState, ReconnectBanner } from '../components/layou
 import { ToastProvider, useToast } from '../components/toast';
 import { formatDateTime, languageLabel, sourceLanguageLabel } from '../format';
 import { useCommandRunner, usePlayerClock } from '../shared/hooks';
+import { SnapshotI18nProvider } from '../shared/LocaleRoot';
 import { focusTab } from '../shared/navigation';
 import { isSessionEnded, sourceModeShortLabel } from '../state/derive';
 import { UiClientProvider, useBackground, useClientState, useCues } from '../state/hooks';
@@ -41,7 +45,6 @@ import styles from './workspace.module.css';
 const RECORD_LIST_LIMIT = 200;
 /** 实时会话变化后，重新读取记录列表前的去抖时间。 */
 const LIVE_RELOAD_DEBOUNCE_MS = 300;
-export const DELETE_IN_USE_REASON = '翻译进行中，停止后才能删除这条记录。';
 const NOTES_CHANNEL = 'tongting:notes';
 
 function initialVideoId(): string | null {
@@ -56,11 +59,19 @@ function initialVideoId(): string | null {
 export function WorkspaceApp() {
   const { client } = useBackground('workspace');
   return (
-    <ToastProvider>
-      <UiClientProvider client={client}>
+    <UiClientProvider client={client}>
+      <LocalizedWorkspace />
+    </UiClientProvider>
+  );
+}
+
+function LocalizedWorkspace() {
+  return (
+    <SnapshotI18nProvider>
+      <ToastProvider>
         <WorkspaceView />
-      </UiClientProvider>
-    </ToastProvider>
+      </ToastProvider>
+    </SnapshotI18nProvider>
   );
 }
 
@@ -210,7 +221,14 @@ function buildEntries(
 
 function WorkspaceView() {
   const { connection, snapshot } = useClientState();
+  const t = useT();
   const notify = useToast();
+  const locale = useLocale();
+  const documentTitle = t('options.workspace.documentTitle');
+  useEffect(() => {
+    document.title = documentTitle;
+    document.documentElement.lang = locale;
+  }, [documentTitle, locale]);
   const [records, setRecords] = useState<RecordsState>({ status: 'loading' });
   const [reloadNonce, setReloadNonce] = useState(0);
   const [selection, setSelection] = useState<{ recordId: string | null; videoId: string | null }>(
@@ -299,17 +317,17 @@ function WorkspaceView() {
     if (!selected) return;
     if (isRecordInUse(snapshot, selected.recordId)) {
       // 确认期间开始了翻译：删除会被 worker 写回，不执行。
-      notify(DELETE_IN_USE_REASON, 'warning');
+      notify(t('options.workspace.deleteInUse'), 'warning');
       setConfirmDelete(false);
       return;
     }
     try {
       await deleteTranscript(selected.recordId);
-      notify('已删除字幕记录。该视频的笔记与收藏已保留。', 'success');
+      notify(t('options.workspace.deleted'), 'success');
       setSelection({ recordId: null, videoId: selected.videoId });
       setReloadNonce((n) => n + 1);
     } catch {
-      notify('删除字幕记录失败。', 'danger');
+      notify(t('options.workspace.deleteFailed'), 'danger');
     } finally {
       setConfirmDelete(false);
     }
@@ -320,17 +338,20 @@ function WorkspaceView() {
       <header className={styles.header}>
         <div className={styles.headerTitle}>
           <Brand />
-          <h1>字幕工作台</h1>
+          <h1>{t('options.workspace.title')}</h1>
         </div>
       </header>
       {connection !== 'connected' && <ReconnectBanner hasSnapshot={!!snapshot} />}
       <div className={styles.layout}>
-        <section className={`${styles.panel} ${styles.recordsPanel}`} aria-label="字幕记录">
+        <section
+          className={`${styles.panel} ${styles.recordsPanel}`}
+          aria-label={t('options.workspace.records')}
+        >
           <div className={styles.panelHead}>
-            <span className={styles.panelTitle}>字幕记录</span>
+            <span className={styles.panelTitle}>{t('options.workspace.records')}</span>
             <IconButton
               bare
-              label="刷新记录"
+              label={t('options.workspace.refresh')}
               icon={<RefreshCw size={15} aria-hidden="true" />}
               onClick={() => setReloadNonce((n) => n + 1)}
             />
@@ -343,7 +364,10 @@ function WorkspaceView() {
           />
         </section>
 
-        <section className={`${styles.panel} ${styles.mainPanel}`} aria-label="字幕">
+        <section
+          className={`${styles.panel} ${styles.mainPanel}`}
+          aria-label={t('options.workspace.subtitles')}
+        >
           {selected ? (
             <RecordDetail
               key={selected.recordId}
@@ -355,20 +379,29 @@ function WorkspaceView() {
           ) : (
             <EmptyState
               icon={<MonitorPlay size={20} aria-hidden="true" />}
-              title={records.status === 'loading' ? '正在读取字幕记录…' : '没有选中的字幕记录'}
+              title={t(
+                records.status === 'loading'
+                  ? 'options.workspace.loadingRecords'
+                  : 'options.workspace.noneSelected',
+              )}
             >
-              {records.status === 'error'
-                ? '读取本地字幕记录失败。'
-                : videoId
-                  ? '这个视频还没有保存的字幕记录。开始翻译后会自动保存；右侧笔记仍可使用。'
-                  : entries.length === 0
-                    ? '在 YouTube 视频上开始翻译后，字幕会保存为本地记录并出现在这里。'
-                    : '从左侧选择一条字幕记录。'}
+              {t(
+                records.status === 'error'
+                  ? 'options.workspace.readFailed'
+                  : videoId
+                    ? 'options.workspace.noRecordForVideo'
+                    : entries.length === 0
+                      ? 'options.workspace.emptyList'
+                      : 'options.workspace.pickOne',
+              )}
             </EmptyState>
           )}
         </section>
 
-        <section className={`${styles.panel} ${styles.notesPanel}`} aria-label="笔记">
+        <section
+          className={`${styles.panel} ${styles.notesPanel}`}
+          aria-label={t('options.workspace.notes')}
+        >
           {videoId ? (
             <NotesPanel
               key={videoId}
@@ -378,19 +411,21 @@ function WorkspaceView() {
               reloadNonce={reloadNonce}
             />
           ) : (
-            <EmptyState title="笔记">选择字幕记录后，可以为该视频记录笔记。</EmptyState>
+            <EmptyState title={t('options.workspace.notes')}>
+              {t('options.workspace.notesEmpty')}
+            </EmptyState>
           )}
         </section>
       </div>
       <ConfirmDialog
         open={confirmDelete}
-        title="删除字幕记录"
-        confirmLabel="删除记录"
+        title={t('options.workspace.deleteTitle')}
+        confirmLabel={t('options.workspace.deleteRecord')}
         danger
         onConfirm={() => void onDelete()}
         onCancel={() => setConfirmDelete(false)}
       >
-        只删除这条本地字幕记录。该视频的笔记与收藏会保留；重新翻译会产生新的记录。
+        {t('options.workspace.deleteBody')}
       </ConfirmDialog>
     </div>
   );
@@ -407,10 +442,13 @@ function RecordList({
   selectedId: string | undefined;
   onSelect(entry: ListEntry): void;
 }) {
-  if (state.status === 'loading') return <EmptyState icon={<Spinner />} title="正在读取…" />;
+  const t = useT();
+  const locale = useLocale();
+  if (state.status === 'loading')
+    return <EmptyState icon={<Spinner />} title={t('options.workspace.loading')} />;
   if (state.status === 'error')
-    return <Callout tone="danger">读取字幕记录失败，请稍后刷新。</Callout>;
-  if (entries.length === 0) return <EmptyState title="暂无字幕记录" />;
+    return <Callout tone="danger">{t('options.workspace.listFailed')}</Callout>;
+  if (entries.length === 0) return <EmptyState title={t('options.workspace.noRecords')} />;
   return (
     <ul className={styles.records}>
       {entries.map((entry) => (
@@ -423,15 +461,18 @@ function RecordList({
           >
             <span className={styles.recordTitle}>{entry.title || entry.videoId}</span>
             <span className={styles.recordMeta}>
-              {sourceLanguageLabel(entry.sourceLanguage)} → {languageLabel(entry.targetLanguage)} ·{' '}
-              {sourceModeShortLabel(entry.sourceMode)}
+              {sourceLanguageLabel(entry.sourceLanguage, locale)} →{' '}
+              {languageLabel(entry.targetLanguage, locale)} ·{' '}
+              {sourceModeShortLabel(entry.sourceMode, locale)}
             </span>
             <span className={styles.recordMeta}>
               {entry.liveOnly
-                ? entry.ended
-                  ? '翻译已结束 · 正在读取本地记录…'
-                  : '实时会话 · 尚未保存为本地记录'
-                : `${entry.complete ? '完整轨道' : '部分字幕'} · ${entry.cueCount ?? 0} 条 · ${formatDateTime(entry.updatedAt)}`}
+                ? t(
+                    entry.ended
+                      ? 'options.workspace.endedLoading'
+                      : 'options.workspace.liveUnsaved',
+                  )
+                : `${t(entry.complete ? 'options.workspace.completeTrack' : 'options.workspace.partial')} · ${t('options.workspace.cueCount', { count: entry.cueCount ?? 0 })} · ${formatDateTime(entry.updatedAt, locale)}`}
             </span>
           </button>
         </li>
@@ -501,6 +542,8 @@ function RecordDetail({
   reloadNonce: number;
   onDelete(): void;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const notify = useToast();
   const { run } = useCommandRunner();
   const session = findLiveSession(snapshot, entry.recordId);
@@ -531,19 +574,26 @@ function RecordDetail({
   const onSeek = useCallback(
     (timeMs: number) => {
       if (!page) return;
-      void run({ kind: 'player/seek', tabId: page.tabId, timeMs }, { errorPrefix: '跳转失败' });
+      void run(
+        { kind: 'player/seek', tabId: page.tabId, timeMs },
+        { errorPrefix: t('options.workspace.seekFailed') },
+      );
     },
-    [page, run],
+    [page, run, t],
   );
 
   if (loadState.status === 'loading' && !liveSession) {
-    return <EmptyState icon={<Spinner />} title="正在读取字幕…" />;
+    return <EmptyState icon={<Spinner />} title={t('options.workspace.loadingSubtitles')} />;
   }
   if (loadState.status === 'error' && !liveSession) {
-    return <Callout tone="danger">读取字幕记录失败。笔记不受影响。</Callout>;
+    return <Callout tone="danger">{t('options.workspace.recordReadFailed')}</Callout>;
   }
   if (!record && !liveSession) {
-    return <EmptyState title="这条字幕记录已不存在">可能已被删除。该视频的笔记仍保留。</EmptyState>;
+    return (
+      <EmptyState title={t('options.workspace.recordGone')}>
+        {t('options.workspace.recordGoneBody')}
+      </EmptyState>
+    );
   }
 
   const cues = useLive ? liveCues.cues : (record?.cues ?? []);
@@ -554,13 +604,18 @@ function RecordDetail({
         <div>
           <div className={styles.mainTitle}>{source.title || entry.videoId}</div>
           <div className={styles.mainMeta}>
-            {sourceLanguageLabel(source.sourceLanguage)} → {languageLabel(source.targetLanguage)} ·{' '}
-            {sourceModeShortLabel(source.sourceMode)}
-            {record?.sourceLabel ? `（${record.sourceLabel}）` : ''}
-            {record ? ` · 更新于 ${formatDateTime(record.updatedAt)}` : ' · 尚未保存为本地记录'}
+            {sourceLanguageLabel(source.sourceLanguage, locale)} →{' '}
+            {languageLabel(source.targetLanguage, locale)} ·{' '}
+            {sourceModeShortLabel(source.sourceMode, locale)}
+            {record?.sourceLabel
+              ? t('options.workspace.sourceLabel', { label: record.sourceLabel })
+              : ''}
+            {record
+              ? t('options.workspace.updatedAt', { time: formatDateTime(record.updatedAt, locale) })
+              : t('options.workspace.notSaved')}
           </div>
           <div className={styles.mainMeta}>
-            {describeCoverage(source.coverage, source.sourceMode)}
+            {describeCoverage(source.coverage, source.sourceMode, locale)}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -569,10 +624,12 @@ function RecordDetail({
               size="sm"
               icon={<ExternalLink size={14} aria-hidden="true" />}
               onClick={() =>
-                focusTab(page.tabId).catch(() => notify('无法切换到源标签页。', 'danger'))
+                focusTab(page.tabId).catch(() =>
+                  notify(t('options.workspace.focusFailed'), 'danger'),
+                )
               }
             >
-              切换到源标签页
+              {t('options.workspace.focusTab')}
             </Button>
           )}
           {record && (
@@ -581,22 +638,18 @@ function RecordDetail({
               variant="danger"
               icon={<Trash size={14} aria-hidden="true" />}
               disabled={loaded?.readOnly || inUse}
-              title={inUse ? DELETE_IN_USE_REASON : undefined}
+              title={inUse ? t('options.workspace.deleteInUse') : undefined}
               onClick={onDelete}
             >
-              删除记录
+              {t('options.workspace.deleteRecord')}
             </Button>
           )}
         </div>
       </div>
-      {record && inUse && <Hint>{DELETE_IN_USE_REASON}</Hint>}
-      {loaded?.readOnly && (
-        <Callout tone="warning">
-          这条记录由更新版本的同听创建，当前只读显示，部分内容可能无法识别。
-        </Callout>
-      )}
+      {record && inUse && <Hint>{t('options.workspace.deleteInUse')}</Hint>}
+      {loaded?.readOnly && <Callout tone="warning">{t('options.workspace.readOnly')}</Callout>}
       {!!loaded?.invalidCueCount && !useLive && (
-        <Hint>有 {loaded.invalidCueCount} 条字幕数据损坏或格式无法识别，已跳过显示与导出。</Hint>
+        <Hint>{t('options.workspace.invalidCues', { count: loaded.invalidCueCount })}</Hint>
       )}
       <div className={styles.transcript}>
         <TranscriptView
@@ -606,7 +659,7 @@ function RecordDetail({
           currentTimeMs={page ? time : undefined}
           captionOffsetMs={snapshot?.settings.captions.offsetMs ?? 0}
           onSeek={page ? onSeek : undefined}
-          seekUnavailableReason="源标签页已关闭，播放控制不可用。"
+          seekUnavailableReason={t('options.workspace.seekUnavailable')}
           onQuote={(cue) =>
             window.dispatchEvent(new CustomEvent<Cue>(QUOTE_EVENT, { detail: cue }))
           }
@@ -619,13 +672,13 @@ function RecordDetail({
 /** 字幕列表与笔记面板之间的「引用」事件（同一页面内）。 */
 const QUOTE_EVENT = 'tongting:quote-cue';
 
-const STATUS_TEXT: Record<NoteSaveStatus, string> = {
-  idle: '笔记会自动保存在本机',
-  pending: '有未保存的修改',
-  saving: '保存中…',
-  saved: '已保存',
-  error: '保存失败，内容仍在输入框中',
-  conflict: '笔记已在其他页面修改，未保存本页内容',
+const STATUS_TEXT: Record<NoteSaveStatus, MessageKey> = {
+  idle: 'options.workspace.noteStatus.idle',
+  pending: 'options.workspace.noteStatus.pending',
+  saving: 'options.workspace.noteStatus.saving',
+  saved: 'options.workspace.noteStatus.saved',
+  error: 'options.workspace.noteStatus.error',
+  conflict: 'options.workspace.noteStatus.conflict',
 };
 
 function isConflict(error: unknown): boolean {
@@ -643,6 +696,8 @@ function NotesPanel({
   recordId: string | undefined;
   reloadNonce: number;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const notify = useToast();
   const [load, setLoad] = useState<{ status: 'loading' | 'ready' | 'error'; nonce: number }>({
     status: 'loading',
@@ -735,7 +790,7 @@ function NotesPanel({
     channel.onmessage = (event: MessageEvent<{ videoId?: string; updatedAt?: number }>) => {
       if (event.data?.videoId !== videoId || event.data.updatedAt === baseUpdatedAt.current) return;
       if (saverRef.current?.hasUnsaved) {
-        notify('这条笔记已在其他页面修改。保存本页内容前请先决定保留哪一份。', 'warning');
+        notify(t('options.workspace.noteConflict'), 'warning');
       } else {
         setLoadNonce((n) => n + 1);
       }
@@ -744,7 +799,7 @@ function NotesPanel({
       channel.close();
       channelRef.current = null;
     };
-  }, [videoId, notify]);
+  }, [videoId, notify, t]);
 
   // 窗口重新获得焦点：没有未保存修改时重新读取，获取其他页面的最新内容。
   useEffect(() => {
@@ -837,33 +892,31 @@ function NotesPanel({
   return (
     <div className={styles.notes}>
       <div className={styles.panelHead} style={{ padding: 0, border: 0 }}>
-        <span className={styles.panelTitle}>笔记</span>
+        <span className={styles.panelTitle}>{t('options.workspace.notes')}</span>
         <Button
           size="sm"
           variant="ghost"
           icon={<Quote size={14} aria-hidden="true" />}
           disabled={!activeCue || loadStatus !== 'ready'}
-          title={
-            activeCue
-              ? '插入当前播放的字幕'
-              : '没有正在播放的字幕；可使用字幕列表中每条字幕的引用按钮'
-          }
+          title={t(activeCue ? 'options.workspace.quoteActive' : 'options.workspace.quoteNone')}
           onClick={() => activeCue && insertQuote(activeCue)}
         >
-          引用当前字幕
+          {t('options.workspace.quote')}
         </Button>
       </div>
-      {loadStatus === 'loading' && <EmptyState icon={<Spinner />} title="正在读取笔记…" />}
+      {loadStatus === 'loading' && (
+        <EmptyState icon={<Spinner />} title={t('options.workspace.loadingNote')} />
+      )}
       {loadStatus === 'error' && (
         <Callout
           tone="danger"
           actions={
             <Button size="sm" onClick={() => setLoadNonce((n) => n + 1)}>
-              重试读取
+              {t('options.workspace.retryLoad')}
             </Button>
           }
         >
-          读取笔记失败。为避免覆盖已有笔记，暂时不能编辑。
+          {t('options.workspace.noteLoadFailed')}
         </Callout>
       )}
       {loadStatus === 'ready' && (
@@ -871,11 +924,11 @@ function NotesPanel({
           {draft && (
             <Callout
               tone="warning"
-              title="发现未保存的笔记草稿"
+              title={t('options.workspace.draftTitle')}
               actions={
                 <>
                   <Button size="sm" onClick={restoreDraft}>
-                    恢复草稿
+                    {t('options.workspace.restoreDraft')}
                   </Button>
                   <Button
                     size="sm"
@@ -885,19 +938,19 @@ function NotesPanel({
                       setDraft(undefined);
                     }}
                   >
-                    丢弃草稿
+                    {t('options.workspace.discardDraft')}
                   </Button>
                 </>
               }
             >
-              {formatDateTime(draft.savedAt)} 有一份笔记没能保存。恢复后会替换输入框内容并尝试保存。
+              {t('options.workspace.draftBody', { time: formatDateTime(draft.savedAt, locale) })}
             </Callout>
           )}
           <TextArea
             ref={textareaRef}
             className={styles.noteArea}
-            aria-label="视频笔记"
-            placeholder="记下这个视频里值得记住的内容。可以用字幕旁的引用按钮插入带时间的字幕。"
+            aria-label={t('options.workspace.noteAria')}
+            placeholder={t('options.workspace.notePlaceholder')}
             value={text}
             onChange={(e) => onChange(e.currentTarget.value)}
           />
@@ -907,16 +960,16 @@ function NotesPanel({
             aria-live="polite"
           >
             {saveStatus === 'saving' && <Spinner />}
-            <span>{STATUS_TEXT[saveStatus]}</span>
+            <span>{t(STATUS_TEXT[saveStatus])}</span>
             {saveStatus === 'error' && (
               <Button size="sm" onClick={() => void saverRef.current?.retry()}>
-                重试保存
+                {t('options.workspace.retrySave')}
               </Button>
             )}
             {saveStatus === 'conflict' && (
               <>
                 <Button size="sm" onClick={() => void overwrite()}>
-                  用本页内容覆盖
+                  {t('options.workspace.overwrite')}
                 </Button>
                 <Button
                   size="sm"
@@ -926,12 +979,12 @@ function NotesPanel({
                     setLoadNonce((n) => n + 1);
                   }}
                 >
-                  载入最新版本（放弃本页修改）
+                  {t('options.workspace.loadLatest')}
                 </Button>
               </>
             )}
           </div>
-          <Hint>笔记按视频保存在本机，删除字幕记录或字幕获取失败不会清空笔记。</Hint>
+          <Hint>{t('options.workspace.notesHint')}</Hint>
         </>
       )}
     </div>

@@ -15,6 +15,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { useT } from '../../i18n/react';
 import { IconButton } from './controls';
 import { cx } from './cx';
 import styles from './layout.module.css';
@@ -113,6 +114,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 /** 提示列表（根部或对话框内部）。 */
 export function ToastRegion() {
   const { items, dismiss } = useContext(ToastContext);
+  const t = useT();
   return (
     <div className={styles.toasts} role="status" aria-live="polite">
       {items.map((item) => (
@@ -123,7 +125,7 @@ export function ToastRegion() {
           <span className={styles.toastText}>{item.message}</span>
           <IconButton
             bare
-            label="关闭提示"
+            label={t('common.toast.dismiss')}
             icon={<X size={14} aria-hidden="true" />}
             onClick={() => dismiss(item.id)}
           />

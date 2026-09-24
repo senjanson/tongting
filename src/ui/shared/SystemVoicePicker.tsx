@@ -1,6 +1,8 @@
 import { Check, RefreshCw, Square, Volume2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Settings } from '../../domain/settings';
+import { getLocale, translate, type Locale } from '../../i18n';
+import { useLocale, useT } from '../../i18n/react';
 import type { AppSnapshot, TtsVoiceInfo } from '../../messaging/ui-protocol';
 import { normalizeLangTag, selectVoice } from '../../providers/tts/voices';
 import { Button, Hint, SelectField } from '../components/controls';
@@ -14,21 +16,33 @@ import { useSettingsUpdater, useVoiceList } from './hooks';
 import styles from './voices.module.css';
 
 /** 只简化显示名，保存与朗读始终使用 Chrome 返回的原始名称。 */
-export function systemVoiceLabel(voice: TtsVoiceInfo): string {
+export function systemVoiceLabel(voice: TtsVoiceInfo, locale: Locale = getLocale()): string {
   const name = voice.voiceName.replace(/ \(Chinese \((China mainland|Taiwan)\)\)$/, '');
   const lang = normalizeLangTag(voice.lang);
   const language =
     lang === 'zh-cn' || lang === 'zh-hans'
-      ? '普通话'
+      ? translate(locale, 'common.voice.mandarin')
       : lang === 'zh-tw' || lang === 'zh-hant'
-        ? '国语（台湾）'
-        : languageLabel(voice.lang);
+        ? translate(locale, 'common.voice.mandarinTaiwan')
+        : languageLabel(voice.lang, locale);
   return `${name} · ${language}`;
 }
 
-function voiceSource(voice: TtsVoiceInfo): string {
-  return voice.remote === true ? '联网声音' : voice.remote === false ? '本机声音' : '系统声音';
+function voiceSource(voice: TtsVoiceInfo, locale: Locale): string {
+  return translate(
+    locale,
+    voice.remote === true
+      ? 'common.voice.remote'
+      : voice.remote === false
+        ? 'common.voice.local'
+        : 'common.voice.system',
+  );
 }
+
+const APPLE_VOICE_HELP: Record<Locale, string> = {
+  'zh-CN': 'https://support.apple.com/zh-cn/guide/mac-help-cn/mh27448/mac',
+  en: 'https://support.apple.com/guide/mac-help/mh27448/mac',
+};
 
 export function hasActiveDubbing(snapshot: AppSnapshot): boolean {
   return snapshot.sessions.some(
@@ -44,9 +58,11 @@ export function hasActiveDubbing(snapshot: AppSnapshot): boolean {
 export function SystemVoiceSettings({ snapshot }: { snapshot: AppSnapshot }) {
   const { settings } = snapshot;
   const voices = useVoiceList(settings.tts.backend === 'system', settings.tts.backend);
+  const locale = useLocale();
+  const t = useT();
   return (
     <Group
-      title="VOICE / 配音声音"
+      title={t('common.voice.groupTitle')}
       aside={
         <Button
           size="sm"
@@ -54,13 +70,13 @@ export function SystemVoiceSettings({ snapshot }: { snapshot: AppSnapshot }) {
           icon={<RefreshCw size={13} aria-hidden="true" />}
           onClick={voices.reload}
         >
-          刷新声音
+          {t('common.voice.refresh')}
         </Button>
       }
     >
       <SystemVoicePicker
         settings={settings}
-        availability={deriveVoiceAvailability(snapshot, voices.state)}
+        availability={deriveVoiceAvailability(snapshot, voices.state, locale)}
         dubbingActive={hasActiveDubbing(snapshot)}
         rate={settings.audio.rate}
       />
@@ -82,6 +98,8 @@ export function SystemVoicePicker({
   const client = useUiClient();
   const notify = useToast();
   const update = useSettingsUpdater();
+  const locale = useLocale();
+  const t = useT();
   const attempt = useRef(0);
   const [pending, setPending] = useState<string | null>(null);
   useEffect(
@@ -98,16 +116,16 @@ export function SystemVoicePicker({
     !!settings.audio.voiceName &&
     !voices.some((voice) => voice.voiceName === settings.audio.voiceName);
   const options = [
-    { value: '', label: '自动选择（优先本机声音）' },
+    { value: '', label: t('common.voice.auto') },
     ...voices.map((voice) => ({
       value: voice.voiceName,
-      label: `${systemVoiceLabel(voice)} · ${voiceSource(voice)}`,
+      label: `${systemVoiceLabel(voice, locale)} · ${voiceSource(voice, locale)}`,
     })),
   ];
   if (settings.audio.voiceName && !voices.some((v) => v.voiceName === settings.audio.voiceName)) {
     options.push({
       value: settings.audio.voiceName,
-      label: `${settings.audio.voiceName}（暂不可用）`,
+      label: t('common.voice.unavailableName', { name: settings.audio.voiceName }),
     });
   }
 
@@ -117,10 +135,10 @@ export function SystemVoicePicker({
     try {
       await client.sendCommand({ kind: 'tts/preview', voiceName: voice.voiceName, rate });
       if (id === attempt.current && client.mode === 'demo')
-        notify('演示模式不会播放声音。', 'info');
+        notify(t('common.voice.demoPreview'), 'info');
     } catch (error) {
       if (id === attempt.current && errorInfoOf(error)?.category !== 'cancelled') {
-        notify(`试听失败：${errorMessageOf(error)}`, 'danger');
+        notify(t('common.voice.previewFailed', { detail: errorMessageOf(error) }), 'danger');
       }
     } finally {
       if (id === attempt.current) setPending(null);
@@ -132,28 +150,28 @@ export function SystemVoicePicker({
     try {
       await client.sendCommand({ kind: 'tts/stop-preview' });
     } catch (error) {
-      notify(`停止试听失败：${errorMessageOf(error)}`, 'danger');
+      notify(t('common.voice.stopFailed', { detail: errorMessageOf(error) }), 'danger');
     }
   };
 
   return (
     <div className={styles.picker}>
       <SelectField
-        label="配音声音"
+        label={t('common.voice.label')}
         value={settings.audio.voiceName}
         options={options}
         disabled={availability.state !== 'available'}
         onChange={(voiceName) => void update({ audio: { voiceName } })}
         hint={
           availability.state === 'available'
-            ? `${voices.length} 个可用声音 · 选择会自动保存到本机`
+            ? t('common.voice.count', { count: voices.length })
             : availability.reason
         }
       />
       {effective && (
         <p className={styles.current}>
-          {missing ? '原声音暂不可用，自动使用：' : '当前使用：'}
-          <strong>{systemVoiceLabel(effective)}</strong>
+          {missing ? t('common.voice.fallbackCurrent') : t('common.voice.current')}
+          <strong>{systemVoiceLabel(effective, locale)}</strong>
         </p>
       )}
       <div className={styles.actions}>
@@ -163,19 +181,19 @@ export function SystemVoicePicker({
           busy={pending !== null}
           onClick={() => effective && void preview(effective)}
         >
-          试听
+          {t('common.voice.preview')}
         </Button>
         <Button icon={<Square size={13} aria-hidden="true" />} onClick={() => void stop()}>
-          停止试听
+          {t('common.voice.stopPreview')}
         </Button>
       </div>
-      {dubbingActive && <Hint>配音进行中。请先暂停翻译，再试听其他声音。</Hint>}
+      {dubbingActive && <Hint>{t('common.voice.dubbingActive')}</Hint>}
       {voices.length > 0 && (
         <details className={styles.details}>
-          <summary>浏览并试听全部 {voices.length} 个声音</summary>
-          <ul className={styles.list} aria-label="可用配音声音">
+          <summary>{t('common.voice.browseAll', { count: voices.length })}</summary>
+          <ul className={styles.list} aria-label={t('common.voice.listAria')}>
             {voices.map((voice) => {
-              const label = systemVoiceLabel(voice);
+              const label = systemVoiceLabel(voice, locale);
               const chosen = settings.audio.voiceName === voice.voiceName;
               return (
                 <li
@@ -186,58 +204,47 @@ export function SystemVoicePicker({
                   <button
                     type="button"
                     className={styles.choose}
-                    aria-label={`使用 ${label}`}
+                    aria-label={t('common.voice.use', { name: label })}
                     aria-pressed={chosen}
                     onClick={() => void update({ audio: { voiceName: voice.voiceName } })}
                   >
                     <span className={styles.name}>{label}</span>
                     <span className={styles.meta}>
-                      {voiceSource(voice)}
-                      {chosen ? ' · 已选用' : ''}
+                      {voiceSource(voice, locale)}
+                      {chosen ? ` · ${t('common.voice.selected')}` : ''}
                     </span>
                     {chosen && <Check size={14} aria-hidden="true" className={styles.check} />}
                   </button>
                   <Button
                     size="sm"
                     variant="ghost"
-                    aria-label={`试听 ${label}`}
+                    aria-label={t('common.voice.previewNamed', { name: label })}
                     disabled={dubbingActive}
                     busy={pending === voice.voiceName}
                     icon={<Volume2 size={14} aria-hidden="true" />}
                     onClick={() => void preview(voice)}
                   >
-                    试听
+                    {t('common.voice.preview')}
                   </Button>
                 </li>
               );
             })}
           </ul>
-          <Hint>试听不会改变选择；点击声音名称可选用。</Hint>
+          <Hint>{t('common.voice.previewHint')}</Hint>
         </details>
       )}
-      <Hint>系统配音不消耗 sub2api 额度；字幕翻译仍使用模型额度。联网声音需要网络。</Hint>
+      <Hint>{t('common.voice.quotaHint')}</Hint>
       {availability.state !== 'unknown' && voices.length <= 1 && (
         <Hint>
-          当前浏览器{voices.length === 1 ? '只提供一个' : '未提供'}
-          适用于目标语言的声音，可在系统中添加。
+          {voices.length === 1 ? t('common.voice.onlyOne') : t('common.voice.noneForTarget')}
         </Hint>
       )}
       <details className={styles.details}>
-        <summary>如何添加更多声音？</summary>
-        <p>
-          Mac：系统设置 → 辅助功能 → 阅读与朗读（旧版为“朗读内容”）→ 系统声音 →
-          管理声音，下载目标语言的声音。
-        </p>
-        <p>
-          安装完成后点击“刷新声音”。若仍未出现，请重新打开
-          Chrome。可用声音取决于系统和浏览器，部分系统音色可能不会提供给扩展。
-        </p>
-        <a
-          href="https://support.apple.com/zh-cn/guide/mac-help-cn/mh27448/mac"
-          target="_blank"
-          rel="noreferrer"
-        >
-          查看 Apple 声音设置说明 ↗
+        <summary>{t('common.voice.howTo')}</summary>
+        <p>{t('common.voice.howToMac')}</p>
+        <p>{t('common.voice.howToRefresh')}</p>
+        <a href={APPLE_VOICE_HELP[locale]} target="_blank" rel="noreferrer">
+          {t('common.voice.appleLink')}
         </a>
       </details>
     </div>

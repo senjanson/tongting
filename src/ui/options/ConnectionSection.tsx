@@ -6,6 +6,7 @@
 import { Eye, EyeOff, Save, Trash } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { ProviderSettings, TextProtocol } from '../../domain/settings';
+import { useLocale, useT } from '../../i18n/react';
 import type { AppSnapshot } from '../../messaging/ui-protocol';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import {
@@ -32,11 +33,12 @@ export function ConnectionSection({ snapshot }: { snapshot: AppSnapshot }) {
   const provider = snapshot.settings.provider;
   const [addressDirty, setAddressDirty] = useState(false);
   const [keyDirty, setKeyDirty] = useState(false);
+  const t = useT();
   return (
     <Section
       id="connection"
-      title="模型连接"
-      description="填写你自己的 sub2api 服务。所有能力以「检查连接」的实际请求结果为准。"
+      title={t('options.section.connection')}
+      description={t('options.connection.description')}
     >
       <AddressFields snapshot={snapshot} onDirtyChange={setAddressDirty} />
       <KeyFields snapshot={snapshot} onDirtyChange={setKeyDirty} />
@@ -45,19 +47,19 @@ export function ConnectionSection({ snapshot }: { snapshot: AppSnapshot }) {
         provider={provider}
         routeDirty={addressDirty || keyDirty}
       />
-      <div className={styles.subhead}>检查连接</div>
+      <div className={styles.subhead}>{t('options.connection.check')}</div>
       <CheckRunner
         snapshot={snapshot}
         scope="text"
         keys={TEXT_CHECK_KEYS}
-        buttonLabel="检查连接"
-        resultLabel="连接检查结果"
+        buttonLabel={t('options.connection.check')}
+        resultLabel={t('options.connection.checkResult')}
         disabledReason={
           !snapshot.settings.provider.baseUrl.trim() || !snapshot.credential.configured
-            ? '请先保存服务地址与 API Key。'
+            ? t('options.connection.checkDisabled')
             : undefined
         }
-        emptyHint="尚未检查。检查会依次验证地址/权限、认证、模型列表、选定模型、小规模翻译与流式返回。语音识别与语音合成在「识别与播放」中单独检查。"
+        emptyHint={t('options.connection.checkEmpty')}
       />
     </Section>
   );
@@ -70,14 +72,16 @@ function AddressFields({
   snapshot: AppSnapshot;
   onDirtyChange(dirty: boolean): void;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const update = useSettingsUpdater();
   const saved = snapshot.settings.provider.baseUrl;
   const [draft, setDraft] = useState<Draft>({ value: saved, dirty: false });
   const value = draftValue(draft, saved);
-  const check = value.trim() ? checkServiceUrl(value) : undefined;
+  const check = value.trim() ? checkServiceUrl(value, locale) : undefined;
   const dirty = draft.dirty && draft.value.trim() !== saved;
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
-  const savedCheck = saved.trim() ? checkServiceUrl(saved) : undefined;
+  const savedCheck = saved.trim() ? checkServiceUrl(saved, locale) : undefined;
   const permission = snapshot.hostPermission;
   const granted =
     !!savedCheck?.ok &&
@@ -86,35 +90,39 @@ function AddressFields({
 
   const save = async () => {
     const trimmed = value.trim();
-    if (trimmed && !checkServiceUrl(trimmed).ok) return;
+    if (trimmed && !checkServiceUrl(trimmed, locale).ok) return;
     if (await update({ provider: { baseUrl: trimmed } }))
       setDraft((current) => (current === draft ? { value: trimmed, dirty: false } : current));
   };
 
   let hint: string;
-  if (!check) hint = '只支持 https；本机调试服务可用 http://127.0.0.1:<端口>。';
+  if (!check) hint = t('options.connection.addressHintEmpty');
   else if (!check.ok) hint = '';
   else if (dirty)
-    hint = `请先保存地址，保存成功后再授予访问 ${check.pattern} 的权限。${
+    hint = `${t('options.connection.addressHintSaveFirst', { pattern: check.pattern })}${
       granted && savedCheck?.ok && !sameOrigin(savedCheck.origin, check.origin)
-        ? `保存后，不再使用的旧地址 ${savedCheck.origin} 的访问权限会被移除。`
+        ? t('options.connection.addressHintOldRevoked', { origin: savedCheck.origin })
         : ''
     }`;
-  else if (granted) hint = `已授予访问 ${check.origin} 的权限。`;
-  else hint = `尚未授予访问 ${check.pattern} 的权限，扩展无法向该地址发送请求。`;
+  else if (granted) hint = t('options.connection.addressHintGranted', { origin: check.origin });
+  else hint = t('options.connection.addressHintNotGranted', { pattern: check.pattern });
 
   return (
     <div className={styles.row}>
       <TextField
         className={styles.grow}
-        label="sub2api 服务地址（Base URL）"
+        label={t('options.connection.addressLabel')}
         placeholder="https://your-sub2api.example.com/v1"
         inputMode="url"
         autoComplete="off"
         spellCheck={false}
         value={value}
         onChange={(v) => setDraft({ value: v, dirty: true })}
-        error={check && !check.ok ? `地址无效：${check.reason}` : undefined}
+        error={
+          check && !check.ok
+            ? t('options.connection.addressInvalid', { reason: check.reason })
+            : undefined
+        }
         hint={hint || undefined}
       />
       <Button
@@ -122,7 +130,7 @@ function AddressFields({
         onClick={() => void save()}
         disabled={!dirty || (check && !check.ok)}
       >
-        保存地址
+        {t('options.connection.saveAddress')}
       </Button>
       {/* 先保存成功再申请权限：申请必须在点击中同步发起，不能先等待保存。 */}
       {check?.ok && !granted && <GrantPermissionButton url={value} disabled={dirty} />}
@@ -137,6 +145,8 @@ function KeyFields({
   snapshot: AppSnapshot;
   onDirtyChange(dirty: boolean): void;
 }) {
+  const t = useT();
+  const locale = useLocale();
   const notify = useToast();
   const { run, isBusy } = useCommandRunner();
   const credential = snapshot.credential;
@@ -154,25 +164,34 @@ function KeyFields({
     if (!apiKey) return;
     const result = await run(
       { kind: 'credentials/set', apiKey, remember: rememberValue },
-      { errorPrefix: '保存 Key 失败' },
+      { errorPrefix: t('options.connection.saveKeyFailed') },
     );
     if (!result) return;
     if (!result.persisted) {
-      notify('Key 未能完整保存，请重试保存后再重新加载扩展。', 'warning');
+      notify(t('options.connection.keyNotPersisted'), 'warning');
     } else {
       setKeyDraft((current) => (current === keyDraft ? { value: '' } : current));
       setVisible(false);
       notify(
-        `Key 已保存（${result.storage === 'local' ? '本机扩展存储' : '仅本次浏览器会话'}）。尚未验证，请点击「检查连接」。`,
+        t('options.connection.keySaved', {
+          where: t(
+            result.storage === 'local'
+              ? 'options.connection.keyWhereLocal'
+              : 'options.connection.keyWhereSession',
+          ),
+        }),
         'success',
       );
     }
   };
 
   const clear = async () => {
-    const result = await run({ kind: 'credentials/clear' }, { errorPrefix: '删除 Key 失败' });
+    const result = await run(
+      { kind: 'credentials/clear' },
+      { errorPrefix: t('options.connection.deleteKeyFailed') },
+    );
     setConfirmClear(false);
-    if (result) notify('已删除 Key。使用旧 Key 的请求会被中止。', 'success');
+    if (result) notify(t('options.connection.keyDeleted'), 'success');
   };
 
   return (
@@ -180,30 +199,35 @@ function KeyFields({
       <div className={styles.row}>
         <TextField
           className={styles.grow}
-          label="API Key"
+          label={t('options.connection.keyLabel')}
           type={visible ? 'text' : 'password'}
           autoComplete="off"
           spellCheck={false}
           placeholder={
-            credential.configured ? '输入新 Key 以替换当前 Key' : '在此粘贴你的 sub2api Key'
+            credential.configured
+              ? t('options.connection.keyPlaceholderReplace')
+              : t('options.connection.keyPlaceholderNew')
           }
           value={key}
           onChange={(value) => setKeyDraft({ value })}
           hint={
             credential.configured
-              ? `当前 Key：${credential.masked ?? '（已隐藏）'}，${credentialStorageText(credential.storage)}。`
-              : '尚未保存 Key。'
+              ? t('options.connection.keyCurrent', {
+                  masked: credential.masked ?? t('options.connection.keyHidden'),
+                  storage: credentialStorageText(credential.storage, locale),
+                })
+              : t('options.connection.keyNone')
           }
           error={
             credential.cleanupPending
-              ? '旧存储清理失败，请重试清理。已撤销的 Key 不会再用于请求。'
+              ? t('options.connection.keyCleanupPending')
               : credential.configured && credential.storage === 'none'
-                ? '未保存：Key 仅在本次后台运行期间有效，可能随时丢失，请重新保存。'
+                ? t('options.connection.keyNotStored')
                 : undefined
           }
           trailing={
             <IconButton
-              label={visible ? '隐藏 Key' : '显示 Key'}
+              label={t(visible ? 'options.connection.hideKey' : 'options.connection.showKey')}
               pressed={visible}
               icon={
                 visible ? (
@@ -223,7 +247,7 @@ function KeyFields({
           disabled={!key.trim()}
           onClick={() => void save()}
         >
-          保存 Key
+          {t('options.connection.saveKey')}
         </Button>
         {(credential.configured || credential.cleanupPending) && (
           <Button
@@ -231,29 +255,35 @@ function KeyFields({
             icon={<Trash size={15} aria-hidden="true" />}
             onClick={() => setConfirmClear(true)}
           >
-            {credential.cleanupPending ? '重试清理 Key' : '删除 Key'}
+            {t(
+              credential.cleanupPending
+                ? 'options.connection.retryKeyCleanup'
+                : 'options.connection.deleteKey',
+            )}
           </Button>
         )}
       </div>
-      <Checkbox label="记住在本机" checked={rememberValue} onChange={setRemember} />
+      <Checkbox
+        label={t('options.connection.remember')}
+        checked={rememberValue}
+        onChange={setRemember}
+      />
       <Hint>
-        默认勾选「记住在本机」，重新加载扩展或重启浏览器后仍保留。主动取消后仅临时保存，重新加载或关闭浏览器会清空。不会同步到其他设备；
-        它不是安全保险箱，能访问这台电脑浏览器配置的人或程序可能读取。Key
-        不会出现在页面、字幕消息或导出的设置中。
+        {t('options.connection.rememberHint')}
         {credential.configured && rememberValue !== (credential.storage === 'local')
-          ? ' 修改保存位置需要重新输入并保存 Key。'
+          ? t('options.connection.rememberChange')
           : ''}
       </Hint>
       <ConfirmDialog
         open={confirmClear}
-        title="删除 API Key"
-        confirmLabel="删除"
+        title={t('options.connection.deleteKeyTitle')}
+        confirmLabel={t('options.action.delete')}
         danger
         busy={isBusy('credentials/clear')}
         onConfirm={() => void clear()}
         onCancel={() => setConfirmClear(false)}
       >
-        删除后翻译会停止使用该 Key，正在进行的请求会被中止。需要时可重新输入。
+        {t('options.connection.deleteKeyBody')}
       </ConfirmDialog>
     </div>
   );
@@ -268,6 +298,7 @@ function ProtocolAndModel({
   provider: ProviderSettings;
   routeDirty: boolean;
 }) {
+  const t = useT();
   const update = useSettingsUpdater();
   const savingRef = useRef(false);
   const [saving, setSaving] = useState(false);
@@ -300,45 +331,51 @@ function ProtocolAndModel({
     <>
       <div className={styles.grid2}>
         <SelectField<TextProtocol>
-          label="接口协议"
+          label={t('options.connection.protocol')}
           value={provider.protocol}
           onChange={(protocol) => void update({ provider: { protocol } })}
           options={[
-            { value: 'auto', label: '自动检测' },
+            { value: 'auto', label: t('options.connection.protocolAuto') },
             { value: 'responses', label: 'Responses' },
             { value: 'chat', label: 'Chat Completions' },
           ]}
           hint={
             provider.protocol === 'auto'
               ? provider.detectedProtocol
-                ? `已检测为 ${provider.detectedProtocol === 'responses' ? 'Responses' : 'Chat Completions'}。`
-                : '尚未检测，检查连接时会确定。'
+                ? t('options.connection.protocolDetected', {
+                    protocol:
+                      provider.detectedProtocol === 'responses' ? 'Responses' : 'Chat Completions',
+                  })
+                : t('options.connection.protocolNotDetected')
               : undefined
           }
         />
         <SelectField
-          label="推理参数"
+          label={t('options.connection.reasoning')}
           value={provider.reasoningEffort}
           onChange={(reasoningEffort) => void update({ provider: { reasoningEffort } })}
           options={[
-            { value: 'omit', label: '不发送（默认）' },
+            { value: 'omit', label: t('options.connection.reasoningOmit') },
             { value: 'none', label: 'none' },
             { value: 'low', label: 'low' },
           ]}
-          hint="服务或模型可能不接受该参数，需检查连接实测。"
+          hint={t('options.connection.reasoningHint')}
         />
       </div>
 
-      <div className={styles.subhead}>翻译模型</div>
+      <div className={styles.subhead}>{t('options.connection.modelHeading')}</div>
       <ModelSelector
         snapshot={snapshot}
         value={modelValue}
         onChange={(value) => setModelDraft({ value, dirty: true })}
-        disabledReason={routeDirty ? '请先保存服务地址与 Key，再获取模型列表。' : undefined}
+        disabledReason={routeDirty ? t('options.connection.modelDisabled') : undefined}
       />
       <Hint>
-        当前使用：<span className={styles.mono}>{provider.model || '未填写'}</span> ·{' '}
-        <CapabilityStatusText status={modelCap?.status} message={modelCap?.message} />
+        {t('options.connection.modelCurrent')}
+        <span className={styles.mono}>
+          {provider.model || t('options.connection.modelUnset')}
+        </span>{' '}
+        · <CapabilityStatusText status={modelCap?.status} message={modelCap?.message} />
       </Hint>
       <Button
         icon={<Save size={15} aria-hidden="true" />}
@@ -346,24 +383,24 @@ function ProtocolAndModel({
         disabled={saving || !modelDraft.dirty || !modelValue.trim()}
         onClick={() => void saveModel(modelValue)}
       >
-        保存模型
+        {t('options.connection.saveModel')}
       </Button>
 
       <div className={styles.grid2}>
         <SwitchRow
-          label="流式返回"
-          description="需服务支持；检查连接会单独验证流式结果。"
+          label={t('options.connection.streaming')}
+          description={t('options.connection.streamingDescription')}
           checked={provider.streaming}
           onChange={(streaming) => void update({ provider: { streaming } })}
         />
         <RangeField
-          label="单次请求超时"
+          label={t('options.connection.timeout')}
           min={3_000}
           max={120_000}
           step={1_000}
           value={timeout}
           onChange={setTimeoutMs}
-          format={(v) => `${Math.round(v / 1000)} 秒`}
+          format={(v) => t('options.connection.seconds', { n: Math.round(v / 1000) })}
         />
       </div>
     </>

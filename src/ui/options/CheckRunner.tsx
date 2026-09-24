@@ -12,6 +12,8 @@
 import { PlugZap } from 'lucide-react';
 import { useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { CapabilityKey } from '../../domain/capability';
+import { translate, type Locale, type MessageKey } from '../../i18n';
+import { useLocale, useT } from '../../i18n/react';
 import type {
   AppSnapshot,
   ConnectionCheckItem,
@@ -26,20 +28,9 @@ import { useUiClient } from '../state/hooks';
 import { StatusIcon } from './common';
 import styles from './options.module.css';
 
-export const CHECK_LABELS: Record<CapabilityKey, string> = {
-  reachability: '地址可达',
-  hostPermission: '访问权限',
-  auth: '认证',
-  modelList: '模型列表',
-  model: '选定模型',
-  translation: '小规模翻译',
-  streaming: '流式返回',
-  asr: 'sub2api 语音识别',
-  tts: 'sub2api 语音合成',
-  realtimeTranslate: '实时翻译',
-  localAsr: '本地识别服务',
-  systemTts: '系统语音',
-};
+export function checkLabel(key: CapabilityKey, locale: Locale = 'zh-CN'): string {
+  return translate(locale, `options.check.label.${key}`);
+}
 
 export const TEXT_CHECK_KEYS: readonly CapabilityKey[] = [
   'reachability',
@@ -54,24 +45,30 @@ export const TEXT_CHECK_KEYS: readonly CapabilityKey[] = [
 export const ASR_CHECK_KEYS: readonly CapabilityKey[] = ['localAsr', 'asr'];
 export const TTS_CHECK_KEYS: readonly CapabilityKey[] = ['systemTts', 'tts'];
 
-export function checkItemText(item: ConnectionCheckItem): string {
-  let word: string;
+/** 检查项结果文字。item.message 由 worker 按当前界面语言生成，原样显示。 */
+export function checkItemText(item: ConnectionCheckItem, locale: Locale = 'zh-CN'): string {
+  let word: MessageKey;
   switch (item.status) {
     case 'verified':
-      word = '通过';
+      word = 'options.check.verified';
       break;
     case 'failed':
-      word = '失败';
+      word = 'options.check.failed';
       break;
     case 'unsupported':
-      word = '不支持';
+      word = 'options.check.unsupported';
       break;
     default:
-      word = item.reasonCode === 'not-probed' ? '未检测（需要允许实际调用）' : '未检测';
+      word = item.reasonCode === 'not-probed' ? 'options.check.notProbed' : 'options.check.unknown';
   }
-  const parts = [word];
+  const parts = [translate(locale, word)];
   if (item.message) parts.push(item.message);
-  if (item.latencyMs !== undefined) parts.push(`往返 ${formatLatency(item.latencyMs)}`);
+  if (item.latencyMs !== undefined)
+    parts.push(
+      translate(locale, 'options.check.roundTrip', {
+        latency: formatLatency(item.latencyMs, locale),
+      }),
+    );
   return parts.join(' · ');
 }
 
@@ -176,6 +173,8 @@ export function CheckRunner({
   emptyHint,
   billable = false,
 }: CheckRunnerProps) {
+  const t = useT();
+  const locale = useLocale();
   const [allowBilled, setAllowBilled] = useState(false);
   const client = useUiClient();
   const notify = useToast();
@@ -240,7 +239,7 @@ export function CheckRunner({
       // 本次检查已被更新的检查取代（例如另一页面发起了同类检查）：新结果会随快照到达，
       // 不提示失败，也不改动已有结果。
       if (errorInfoOf(error)?.code === CHECK_REPLACED_CODE) return;
-      notify(`检查失败：${errorMessageOf(error)}`, 'danger');
+      notify(t('options.check.failedToast', { message: errorMessageOf(error) }), 'danger');
     } finally {
       finish();
     }
@@ -263,12 +262,12 @@ export function CheckRunner({
         {disabledReason ? (
           <Hint>{disabledReason}</Hint>
         ) : (
-          otherChecking && <Hint>另一项检查正在进行，完成后可再检查。</Hint>
+          otherChecking && <Hint>{t('options.check.otherRunning')}</Hint>
         )}
       </div>
       {billable && (
         <Checkbox
-          label="允许实际调用 sub2api 音频接口（可能产生少量费用，仅本次检查）"
+          label={t('options.check.allowBilled')}
           checked={allowBilled}
           disabled={!!disabledReason}
           onChange={setAllowBilled}
@@ -279,25 +278,24 @@ export function CheckRunner({
       ) : (
         <>
           <Hint>
-            最近检查：{formatDateTime(report.checkedAt)}
+            {t('options.check.lastChecked', { time: formatDateTime(report.checkedAt, locale) })}
             {scope === 'text' && report.detectedProtocol && !stale
-              ? ` · 协议 ${report.detectedProtocol === 'responses' ? 'Responses' : 'Chat Completions'}`
+              ? t('options.check.protocol', {
+                  protocol:
+                    report.detectedProtocol === 'responses' ? 'Responses' : 'Chat Completions',
+                })
               : ''}
           </Hint>
-          {stale && (
-            <Callout tone="warning">
-              结果已过期，请重新检查（检查之后 Key、配置或访问权限已变化）。
-            </Callout>
-          )}
+          {stale && <Callout tone="warning">{t('options.check.staleCallout')}</Callout>}
           <ul className={styles.checks} aria-label={resultLabel}>
             {items.map((item) => (
               <li key={item.key} className={styles.check}>
                 <span className={styles.checkIcon}>
                   <StatusIcon status={stale ? 'unknown' : item.status} />
                 </span>
-                <span className={styles.checkName}>{CHECK_LABELS[item.key]}</span>
+                <span className={styles.checkName}>{checkLabel(item.key, locale)}</span>
                 <span className={styles.checkMessage}>
-                  {stale ? '已过期，请重新检查' : checkItemText(item)}
+                  {stale ? t('options.check.staleItem') : checkItemText(item, locale)}
                 </span>
               </li>
             ))}

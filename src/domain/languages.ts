@@ -30,20 +30,64 @@ export const TARGET_LANGUAGES: readonly LanguageOption[] = [
   { code: 'es', label: 'Español', promptName: 'Spanish', ttsLangPrefixes: ['es'] },
   { code: 'fr', label: 'Français', promptName: 'French', ttsLangPrefixes: ['fr'] },
   { code: 'de', label: 'Deutsch', promptName: 'German', ttsLangPrefixes: ['de'] },
+  { code: 'it', label: 'Italiano', promptName: 'Italian', ttsLangPrefixes: ['it'] },
+  {
+    code: 'pt',
+    label: 'Português',
+    promptName: 'Portuguese',
+    ttsLangPrefixes: ['pt-BR', 'pt-PT', 'pt'],
+  },
+  { code: 'nl', label: 'Nederlands', promptName: 'Dutch', ttsLangPrefixes: ['nl'] },
+  { code: 'pl', label: 'Polski', promptName: 'Polish', ttsLangPrefixes: ['pl'] },
+  { code: 'tr', label: 'Türkçe', promptName: 'Turkish', ttsLangPrefixes: ['tr'] },
+  { code: 'ru', label: 'Русский', promptName: 'Russian', ttsLangPrefixes: ['ru'] },
+  { code: 'uk', label: 'Українська', promptName: 'Ukrainian', ttsLangPrefixes: ['uk'] },
+  { code: 'ar', label: 'العربية', promptName: 'Arabic', ttsLangPrefixes: ['ar'] },
+  { code: 'hi', label: 'हिन्दी', promptName: 'Hindi', ttsLangPrefixes: ['hi'] },
+  { code: 'th', label: 'ไทย', promptName: 'Thai', ttsLangPrefixes: ['th'] },
+  { code: 'vi', label: 'Tiếng Việt', promptName: 'Vietnamese', ttsLangPrefixes: ['vi'] },
+  {
+    code: 'id',
+    label: 'Bahasa Indonesia',
+    promptName: 'Indonesian',
+    ttsLangPrefixes: ['id', 'in'],
+  },
 ] as const;
 
-export const SOURCE_LANGUAGES: readonly { code: string; label: string }[] = [
-  { code: 'auto', label: '自动识别' },
-  { code: 'en', label: '英语' },
-  { code: 'ja', label: '日语' },
-  { code: 'ko', label: '韩语' },
-  { code: 'es', label: '西班牙语' },
-  { code: 'fr', label: '法语' },
-  { code: 'de', label: '德语' },
-  { code: 'zh', label: '中文' },
-  { code: 'ru', label: '俄语' },
-  { code: 'pt', label: '葡萄牙语' },
+/** 源语言选项：label 为中文名，labelEn 为英文界面使用的名称（见 sourceLanguageLabel）。 */
+export interface SourceLanguageOption {
+  code: string;
+  label: string;
+  labelEn: string;
+}
+
+export const SOURCE_LANGUAGES: readonly SourceLanguageOption[] = [
+  { code: 'auto', label: '自动识别', labelEn: 'Auto-detect' },
+  { code: 'en', label: '英语', labelEn: 'English' },
+  { code: 'ja', label: '日语', labelEn: 'Japanese' },
+  { code: 'ko', label: '韩语', labelEn: 'Korean' },
+  { code: 'es', label: '西班牙语', labelEn: 'Spanish' },
+  { code: 'fr', label: '法语', labelEn: 'French' },
+  { code: 'de', label: '德语', labelEn: 'German' },
+  { code: 'zh', label: '中文', labelEn: 'Chinese' },
+  { code: 'ru', label: '俄语', labelEn: 'Russian' },
+  { code: 'pt', label: '葡萄牙语', labelEn: 'Portuguese' },
+  { code: 'it', label: '意大利语', labelEn: 'Italian' },
+  { code: 'nl', label: '荷兰语', labelEn: 'Dutch' },
+  { code: 'pl', label: '波兰语', labelEn: 'Polish' },
+  { code: 'tr', label: '土耳其语', labelEn: 'Turkish' },
+  { code: 'uk', label: '乌克兰语', labelEn: 'Ukrainian' },
+  { code: 'ar', label: '阿拉伯语', labelEn: 'Arabic' },
+  { code: 'hi', label: '印地语', labelEn: 'Hindi' },
+  { code: 'th', label: '泰语', labelEn: 'Thai' },
+  { code: 'vi', label: '越南语', labelEn: 'Vietnamese' },
+  { code: 'id', label: '印尼语', labelEn: 'Indonesian' },
 ] as const;
+
+/** 按界面语言取源语言名称；目标语言表使用各语言的自称，无需按界面语言切换。 */
+export function sourceLanguageLabel(option: SourceLanguageOption, locale: 'zh-CN' | 'en'): string {
+  return locale === 'en' ? option.labelEn : option.label;
+}
 
 export const DEFAULT_TARGET_LANGUAGE = 'zh-CN';
 

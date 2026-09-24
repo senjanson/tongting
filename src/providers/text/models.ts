@@ -9,6 +9,7 @@ import { apiEndpoint, normalizeBaseUrl } from './base-url';
 import { createFetchTransport, readJsonResponse, sendApiRequest, withRequestSignal } from './http';
 import { asRecord } from './protocol';
 import type { HttpTransport } from './types';
+import { t } from '../../i18n';
 
 export const DEFAULT_MODELS_TIMEOUT_MS = 15_000;
 const MAX_MODELS = 1_000;
@@ -22,7 +23,7 @@ export function parseModelList(json: unknown): string[] {
       code: 'model-list-invalid',
       category: 'format',
       retryable: false,
-      message: '服务返回的模型列表格式无法识别，可手动填写模型 ID。',
+      message: t('background.models.unrecognized'),
     });
   }
   const ids = new Set<string>();

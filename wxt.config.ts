@@ -13,9 +13,11 @@ export default defineConfig({
   alias: {
     '@src': resolve(__dirname, 'src'),
   },
+  // 名称、说明、按钮提示与快捷键说明按浏览器语言显示，文案见 public/_locales/*/messages.json。
   manifest: {
-    name: '同听 Tongting',
-    description: 'YouTube 中文翻译字幕与配音（使用你自己的 sub2api 服务）',
+    default_locale: 'en',
+    name: '__MSG_extName__',
+    description: '__MSG_extDescription__',
     minimum_chrome_version: '116',
     permissions: ['storage', 'sidePanel', 'activeTab', 'tabCapture', 'offscreen', 'tts'],
     // 用户配置的服务 origin 在设置页按需申请，只申请单一 origin。
@@ -23,17 +25,23 @@ export default defineConfig({
     ...(isE2E ? { host_permissions: ['http://127.0.0.1/*'] } : {}),
     homepage_url: 'https://github.com/senjanson/tongting',
     action: {
-      default_title: '同听',
+      default_title: '__MSG_actionTitle__',
     },
     commands: {
       'toggle-translation': {
         suggested_key: { default: 'Alt+T' },
-        description: '暂停 / 继续翻译',
+        description: '__MSG_commandToggleTranslation__',
       },
       'toggle-captions': {
         suggested_key: { default: 'Alt+C' },
-        description: '显示 / 隐藏翻译字幕',
+        description: '__MSG_commandToggleCaptions__',
       },
+    },
+  },
+  hooks: {
+    // WXT 默认用弹窗页面的 <title> 作为按钮提示，这里改回按浏览器语言显示的文案。
+    'build:manifestGenerated': (_wxt, manifest) => {
+      if (manifest.action) manifest.action.default_title = '__MSG_actionTitle__';
     },
   },
   webExt: {

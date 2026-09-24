@@ -1,5 +1,6 @@
 import { Eye, EyeOff, Save } from 'lucide-react';
 import { useRef, useState } from 'react';
+import { useLocale, useT } from '../../i18n/react';
 import type { AppSnapshot } from '../../messaging/ui-protocol';
 import { Button, Checkbox, Hint, IconButton, TextField } from '../components/controls';
 import { Group } from '../components/layout';
@@ -20,6 +21,8 @@ export function ConnectionControls({ snapshot }: { snapshot: AppSnapshot }) {
   const update = useSettingsUpdater();
   const { run } = useCommandRunner();
   const notify = useToast();
+  const locale = useLocale();
+  const t = useT();
   const savingRef = useRef(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<{
@@ -33,7 +36,7 @@ export function ConnectionControls({ snapshot }: { snapshot: AppSnapshot }) {
   const model = draft?.model ?? settings.provider.model;
   const apiKey = draft?.key ?? '';
   const remember = draft?.remember ?? settings.rememberCredentials;
-  const check = checkServiceUrl(url);
+  const check = checkServiceUrl(url, locale);
 
   const save = async () => {
     if (!draft || !check.ok || !model.trim() || savingRef.current) return;
@@ -64,17 +67,17 @@ export function ConnectionControls({ snapshot }: { snapshot: AppSnapshot }) {
             apiKey: apiKey.trim(),
             remember,
           },
-          { key: 'connection-save', errorPrefix: '保存 Key 失败' },
+          { key: 'connection-save', errorPrefix: t('sidepanel.connection.saveKeyFailed') },
         );
         if (!result) return;
         if (!result.persisted) {
-          notify('Key 未能完整保存，请重试保存后再重新加载扩展。', 'warning');
+          notify(t('sidepanel.connection.keyNotPersisted'), 'warning');
           return;
         }
         notify(
           result.storage === 'local'
-            ? 'Key 已保存在本机，重新加载扩展或重启浏览器后仍可使用。'
-            : 'Key 仅临时保存，重新加载扩展或重启浏览器后会清除。',
+            ? t('sidepanel.connection.keySavedLocal')
+            : t('sidepanel.connection.keySavedSession'),
           'success',
         );
       }
@@ -87,9 +90,9 @@ export function ConnectionControls({ snapshot }: { snapshot: AppSnapshot }) {
   };
 
   return (
-    <Group title="CONNECTION / 模型连接">
+    <Group title={t('sidepanel.group.connection')}>
       <TextField
-        label="sub2api 服务地址"
+        label={t('sidepanel.connection.url')}
         placeholder="https://your-service.com/v1"
         value={url}
         autoComplete="off"
@@ -106,30 +109,28 @@ export function ConnectionControls({ snapshot }: { snapshot: AppSnapshot }) {
           disabled={demo}
           placeholder={
             demo
-              ? '演示中请勿填写真实密钥'
+              ? t('sidepanel.connection.keyDemo')
               : credential.configured
-                ? '已保存，填写新 Key 可替换'
-                : '填写 sub2api API Key'
+                ? t('sidepanel.connection.keySaved')
+                : t('sidepanel.connection.keyEmpty')
           }
           value={apiKey}
           onChange={(value) => setDraft((current) => ({ ...current, key: value }))}
         />
         <IconButton
-          label={showKey ? '隐藏密钥' : '显示密钥'}
+          label={showKey ? t('sidepanel.connection.hideKey') : t('sidepanel.connection.showKey')}
           icon={showKey ? <EyeOff size={15} /> : <Eye size={15} />}
           onClick={() => setShowKey((value) => !value)}
         />
       </div>
       <Checkbox
-        label="记住在本机"
+        label={t('sidepanel.connection.remember')}
         checked={remember}
         disabled={demo}
         onChange={(value) => setDraft((current) => ({ ...current, remember: value }))}
       />
       <Hint>
-        {remember
-          ? '保存成功后，Key 会保留在本机；重新加载扩展或重启浏览器不会清除。'
-          : '临时保存：重新加载扩展或重启浏览器后需要重新输入 Key。'}
+        {remember ? t('sidepanel.connection.rememberHint') : t('sidepanel.connection.tempHint')}
       </Hint>
       <ModelSelector
         snapshot={snapshot}
@@ -137,7 +138,7 @@ export function ConnectionControls({ snapshot }: { snapshot: AppSnapshot }) {
         onChange={(value) => setDraft((current) => ({ ...current, model: value }))}
         disabledReason={
           draft?.url !== undefined || !!draft?.key
-            ? '请先保存服务地址与 Key，再获取模型列表。'
+            ? t('sidepanel.connection.modelBlocked')
             : undefined
         }
       />
@@ -149,7 +150,7 @@ export function ConnectionControls({ snapshot }: { snapshot: AppSnapshot }) {
           disabled={saving || !check.ok || !model.trim()}
           onClick={() => void save()}
         >
-          保存连接设置
+          {t('sidepanel.connection.save')}
         </Button>
       )}
       {!demo && !snapshot.hostPermission.granted && settings.provider.baseUrl && (
@@ -163,25 +164,23 @@ export function ConnectionControls({ snapshot }: { snapshot: AppSnapshot }) {
         snapshot={snapshot}
         scope="text"
         keys={TEXT_CHECK_KEYS}
-        buttonLabel="检查连接"
-        resultLabel="连接检查结果"
+        buttonLabel={t('sidepanel.connection.check')}
+        resultLabel={t('sidepanel.connection.checkResult')}
         disabledReason={
           draft
-            ? '请先保存连接设置。'
+            ? t('sidepanel.connection.checkNeedSave')
             : !settings.provider.baseUrl || !credential.configured
-              ? '请先填写服务地址与 Key。'
+              ? t('sidepanel.connection.checkNeedCredentials')
               : undefined
         }
-        emptyHint={
-          demo ? '演示模式不连接服务。' : '模型列表不代表实际调用成功，请选择模型后检查连接。'
-        }
+        emptyHint={demo ? t('sidepanel.connection.checkDemo') : t('sidepanel.connection.checkHint')}
       />
       {!demo && credential.configured && (
         <Hint>
-          {credential.masked} · {credentialStorageText(credential.storage)}
+          {credential.masked} · {credentialStorageText(credential.storage, locale)}
         </Hint>
       )}
-      {credential.cleanupPending && <Hint>旧密钥存储清理失败，请在完整设置中重试清理。</Hint>}
+      {credential.cleanupPending && <Hint>{t('sidepanel.connection.cleanupPending')}</Hint>}
     </Group>
   );
 }

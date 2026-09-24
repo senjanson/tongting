@@ -7,8 +7,10 @@
  * - 命令带 requestId、超时与结果校验；端口断开时在途命令立即以「结果未知」失败，
  *   迟到的结果被忽略。未连接时拒绝发送，不在后台排队以免执行过期意图。
  * - 字幕订阅同一时刻只有一个会话（协议限制）；重连后自动重新订阅并等待完整基线。
+ * - 客户端自行生成的错误文案使用当前页面语言（页面根组件通过 setLocale 同步）。
  */
 import { AppError, type AppErrorInfo } from '../../domain/errors';
+import { t } from '../../i18n';
 import { PORT_UI, randomId } from '../../messaging/ports';
 import {
   UI_PROTOCOL_VERSION,
@@ -92,7 +94,7 @@ export function notConnectedError(): AppError {
     code: 'ui-not-connected',
     category: 'internal',
     retryable: true,
-    message: '正在连接后台服务，请稍后重试。',
+    message: t('common.client.notConnected'),
   });
 }
 
@@ -101,7 +103,7 @@ function disconnectedDuringCommandError(): AppError {
     code: 'ui-port-disconnected',
     category: 'internal',
     retryable: true,
-    message: '与后台的连接中断，操作结果未知。请查看当前状态后再决定是否重试。',
+    message: t('common.client.disconnected'),
   });
 }
 
@@ -110,7 +112,7 @@ function timeoutError(ms: number): AppError {
     code: 'ui-command-timeout',
     category: 'timeout',
     retryable: true,
-    message: `后台在 ${Math.round(ms / 1000)} 秒内没有响应，操作结果未知。请查看当前状态后再决定是否重试。`,
+    message: t('common.client.timeout', { seconds: Math.round(ms / 1000) }),
   });
 }
 
@@ -119,7 +121,7 @@ function invalidResultError(): AppError {
     code: 'ui-invalid-result',
     category: 'format',
     retryable: false,
-    message: '后台返回了无法识别的结果，请更新扩展或重新加载后重试。',
+    message: t('common.client.invalidResult'),
   });
 }
 
@@ -128,14 +130,14 @@ function invalidCommandError(): AppError {
     code: 'ui-invalid-command',
     category: 'config',
     retryable: false,
-    message: '输入的值不在允许范围内，请检查后重试。',
+    message: t('common.client.invalidCommand'),
   });
 }
 
 /** 把任意异常转为可展示的错误文案（不包含堆栈）。 */
 export function errorMessageOf(error: unknown): string {
   if (error instanceof AppError) return error.info.message;
-  return '操作失败，请重试。';
+  return t('common.client.failed');
 }
 
 export function errorInfoOf(error: unknown): AppErrorInfo | undefined {

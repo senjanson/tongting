@@ -13,6 +13,7 @@
 import { AppError, toAppErrorInfo } from '../../domain/errors';
 import type { OffscreenEvent, OffscreenRequest } from '../../messaging/offscreen-protocol';
 import { releaseAllSync } from '../cleanup';
+import { t } from '../../i18n';
 
 export type TtsPlayRequest = Extract<OffscreenRequest, { kind: 'tts/play' }>;
 
@@ -145,7 +146,7 @@ export class TtsPlayer {
         code: 'tts-utterance-stopped',
         category: 'cancelled',
         retryable: false,
-        message: '该配音句已被停止，忽略迟到的播放请求。',
+        message: t('background.offscreen.ttsStopped'),
       });
     }
     if (this.cacheSessionId !== req.owner.sessionId) {
@@ -197,7 +198,7 @@ export class TtsPlayer {
             code: 'tts-decode-failed',
             category: 'tts',
             retryable: false,
-            message: '无法解码云端配音音频',
+            message: t('background.offscreen.ttsDecodeFailed'),
           },
           { cause: error },
         );
@@ -238,7 +239,7 @@ export class TtsPlayer {
         error: toAppErrorInfo(error, {
           code: 'tts-play-failed',
           category: 'tts',
-          message: '云端配音播放失败',
+          message: t('background.offscreen.ttsPlayFailed'),
         }),
       });
       this.scheduleIdleClose();

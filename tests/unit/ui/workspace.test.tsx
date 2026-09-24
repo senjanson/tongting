@@ -9,6 +9,11 @@ import { WorkspaceApp } from '@src/ui/workspace/WorkspaceApp';
 import { makeCue, makePage, makeSession, makeSnapshot, TAB_ID, VIDEO_ID } from './fixtures';
 import { createFakeWorker, type FakeWorker } from './fake-worker-port';
 
+// 界面语言跟随浏览器（快照中 uiLocale 默认 auto）：本文件的断言使用中文界面。
+beforeEach(() => {
+  vi.spyOn(fakeBrowser.i18n, 'getUILanguage').mockReturnValue('zh-CN');
+});
+
 const notes = vi.hoisted(() => ({
   NoteConflictError: class NoteConflictError extends Error {},
   saveNoteChecked: vi.fn(),

@@ -4,17 +4,19 @@
  * - sub2api 地址直接复用 worker 使用的 normalizeBaseUrl，保证 UI 申请的权限与 worker 核对的一致。
  * - 本地识别服务只允许 http://127.0.0.1:<端口>：服务只监听 IPv4，localhost 可能解析到 ::1 上的其他进程。
  */
+import { getLocale, translate, type Locale } from '../../i18n';
 import { normalizeBaseUrl } from '../../providers/text/base-url';
 
 export type OriginCheck =
   { ok: true; origin: string; pattern: string; baseUrl: string } | { ok: false; reason: string };
 
 /** sub2api 服务地址校验（与 worker 规则一致）。 */
-export function checkServiceUrl(input: string): OriginCheck {
+export function checkServiceUrl(input: string, locale: Locale = getLocale()): OriginCheck {
   const result = normalizeBaseUrl(input);
   if (!result.ok) return { ok: false, reason: result.error.message };
   // 通配主机名会申请过宽的权限，一律拒绝（与 worker 规则保持一致的防御）。
-  if (result.origin.includes('*')) return { ok: false, reason: '服务地址的主机名不能包含 *。' };
+  if (result.origin.includes('*'))
+    return { ok: false, reason: translate(locale, 'common.url.wildcardHost') };
   return {
     ok: true,
     origin: result.origin,
@@ -24,14 +26,14 @@ export function checkServiceUrl(input: string): OriginCheck {
 }
 
 /** 本地识别服务地址校验：只允许 http://127.0.0.1:<端口>，不带路径、查询或凭证。 */
-export function checkLocalAsrUrl(input: string): OriginCheck {
+export function checkLocalAsrUrl(input: string, locale: Locale = getLocale()): OriginCheck {
   const value = input.trim();
   const match = /^http:\/\/127\.0\.0\.1:(\d{1,5})\/?$/.exec(value);
   const port = match ? Number(match[1]) : NaN;
   if (!match || !Number.isInteger(port) || port < 1 || port > 65_535) {
     return {
       ok: false,
-      reason: '本地识别服务地址只允许 http://127.0.0.1:<端口>，例如 http://127.0.0.1:8765。',
+      reason: translate(locale, 'common.url.localAsrOnly'),
     };
   }
   const origin = `http://127.0.0.1:${port}`;

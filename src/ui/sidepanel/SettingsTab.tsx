@@ -2,6 +2,8 @@
  * 侧栏「设置」标签：常用项与服务状态摘要；完整设置在设置页。
  */
 import { ExternalLink, FlaskConical, PanelsTopLeft } from 'lucide-react';
+import { LOCALE_PREFERENCES, type LocalePreference } from '../../i18n';
+import { useT } from '../../i18n/react';
 import type { AppSnapshot } from '../../messaging/ui-protocol';
 import { Button, Hint, Kbd, RangeField, SelectField, SwitchRow } from '../components/controls';
 import { Group } from '../components/layout';
@@ -26,6 +28,7 @@ export function SettingsTab({ snapshot, onEnterDemo, onExitDemo }: SettingsTabPr
   const client = useUiClient();
   const notify = useToast();
   const update = useSettingsUpdater();
+  const t = useT();
   const demo = client.mode === 'demo';
   const { settings } = snapshot;
   const [opacity, setOpacity] = useDraftValue(
@@ -35,58 +38,72 @@ export function SettingsTab({ snapshot, onEnterDemo, onExitDemo }: SettingsTabPr
 
   return (
     <div className={styles.pane}>
+      <Group title={t('sidepanel.group.interface')}>
+        <SelectField<LocalePreference>
+          label={t('common.localePreference.label')}
+          value={settings.uiLocale ?? 'auto'}
+          options={LOCALE_PREFERENCES.map((value) => ({
+            value,
+            label: t(`common.localePreference.${value}`),
+          }))}
+          onChange={(uiLocale) => void update({ uiLocale })}
+        />
+      </Group>
+
       <ConnectionControls snapshot={snapshot} />
 
-      <Group title="PROCESSING / 识别与播放">
+      <Group title={t('sidepanel.group.processing')}>
         <SelectField
-          label="字幕来源"
+          label={t('sidepanel.settings.sourceStrategy')}
           value={settings.sourceStrategy}
           onChange={(sourceStrategy) => void update({ sourceStrategy })}
           options={[
-            { value: 'captions-first', label: '优先视频字幕，缺失时识别语音' },
-            { value: 'captions-only', label: '仅使用视频已有字幕' },
-            { value: 'asr-only', label: '始终识别视频声音' },
+            { value: 'captions-first', label: t('sidepanel.settings.captionsFirst') },
+            { value: 'captions-only', label: t('sidepanel.settings.captionsOnly') },
+            { value: 'asr-only', label: t('sidepanel.settings.asrOnly') },
           ]}
           hint={
-            settings.asr.backend === 'none'
-              ? '尚未配置语音识别服务，没有可读字幕的视频无法翻译。'
-              : undefined
+            settings.asr.backend === 'none' ? t('sidepanel.settings.asrMissingHint') : undefined
           }
         />
         <SelectField
-          label="语音识别服务"
+          label={t('sidepanel.settings.asrBackend')}
           value={settings.asr.backend}
           onChange={(backend) => void update({ asr: { backend } })}
           options={[
-            { value: 'none', label: '不使用（未配置）' },
-            { value: 'local', label: '本地识别服务' },
-            { value: 'sub2api', label: 'sub2api 语音接口（需检测）' },
+            { value: 'none', label: t('sidepanel.settings.asrNone') },
+            { value: 'local', label: t('sidepanel.settings.asrLocal') },
+            { value: 'sub2api', label: t('sidepanel.settings.sub2apiAudio') },
           ]}
         />
         <SelectField
-          label="语音合成服务"
+          label={t('sidepanel.settings.ttsBackend')}
           value={settings.tts.backend}
           onChange={(backend) => void update({ tts: { backend } })}
           options={[
-            { value: 'system', label: '系统语音' },
-            { value: 'sub2api', label: 'sub2api 语音接口（需检测）' },
-            { value: 'none', label: '不使用' },
+            { value: 'system', label: t('sidepanel.settings.ttsSystem') },
+            { value: 'sub2api', label: t('sidepanel.settings.sub2apiAudio') },
+            { value: 'none', label: t('sidepanel.settings.ttsNone') },
           ]}
         />
         <SwitchRow
-          label="预翻译后续字幕"
-          description={settings.playbackMode === 'buffered' ? '同步优先会持续预读。' : undefined}
+          label={t('sidepanel.settings.prefetch')}
+          description={
+            settings.playbackMode === 'buffered'
+              ? t('sidepanel.settings.prefetchBuffered')
+              : undefined
+          }
           checked={settings.playbackMode === 'buffered' || settings.prefetch}
           disabled={settings.playbackMode === 'buffered'}
           onChange={(prefetch) => void update({ prefetch })}
         />
         <SwitchRow
-          label="暂停视频时暂停配音"
+          label={t('sidepanel.settings.pauseDub')}
           checked={settings.pauseDubWithVideo}
           onChange={(pauseDubWithVideo) => void update({ pauseDubWithVideo })}
         />
         <SwitchRow
-          label="缓存翻译结果"
+          label={t('sidepanel.settings.cache')}
           checked={settings.cacheTranslations}
           onChange={(cacheTranslations) => void update({ cacheTranslations })}
         />
@@ -94,17 +111,19 @@ export function SettingsTab({ snapshot, onEnterDemo, onExitDemo }: SettingsTabPr
 
       {settings.tts.backend === 'system' && <SystemVoiceSettings snapshot={snapshot} />}
 
-      <Group title="更多设置">
+      <Group title={t('sidepanel.group.more')}>
         <Button
           block
           variant="primary"
           icon={<ExternalLink size={15} aria-hidden="true" />}
-          onClick={() => openOptionsPage().catch(() => notify('无法打开设置页。', 'danger'))}
+          onClick={() =>
+            openOptionsPage().catch(() => notify(t('common.openSettingsFailed'), 'danger'))
+          }
         >
-          打开完整设置
+          {t('sidepanel.settings.openFull')}
         </Button>
         <RangeField
-          label="背景不透明度"
+          label={t('sidepanel.settings.opacity')}
           min={0}
           max={1}
           step={0.05}
@@ -116,13 +135,15 @@ export function SettingsTab({ snapshot, onEnterDemo, onExitDemo }: SettingsTabPr
           block
           icon={<PanelsTopLeft size={15} aria-hidden="true" />}
           disabled={demo}
-          onClick={() => openWorkspace().catch(() => notify('无法打开字幕工作台。', 'danger'))}
+          onClick={() =>
+            openWorkspace().catch(() => notify(t('common.openWorkspaceFailed'), 'danger'))
+          }
         >
-          打开字幕工作台
+          {t('sidepanel.settings.openWorkspace')}
         </Button>
         {demo ? (
           <Button block icon={<FlaskConical size={15} aria-hidden="true" />} onClick={onExitDemo}>
-            退出演示模式
+            {t('sidepanel.settings.exitDemo')}
           </Button>
         ) : (
           onEnterDemo && (
@@ -132,19 +153,19 @@ export function SettingsTab({ snapshot, onEnterDemo, onExitDemo }: SettingsTabPr
               icon={<FlaskConical size={15} aria-hidden="true" />}
               onClick={onEnterDemo}
             >
-              查看演示模式（示例数据）
+              {t('sidepanel.settings.enterDemo')}
             </Button>
           )
         )}
         <div className={styles.shortcut}>
-          <span>暂停 / 继续翻译</span>
+          <span>{t('sidepanel.settings.shortcutToggle')}</span>
           <Kbd>Alt + T</Kbd>
         </div>
         <div className={styles.shortcut}>
-          <span>显示 / 隐藏翻译字幕</span>
+          <span>{t('sidepanel.settings.shortcutCaptions')}</span>
           <Kbd>Alt + C</Kbd>
         </div>
-        <Hint>快捷键可在 chrome://extensions/shortcuts 修改。</Hint>
+        <Hint>{t('sidepanel.settings.shortcutHint')}</Hint>
       </Group>
     </div>
   );

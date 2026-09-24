@@ -11,6 +11,7 @@
  * - 拒绝带用户名密码、query、fragment 的地址，避免凭证或签名参数混入配置。
  */
 import type { AppErrorInfo } from '../../domain/errors';
+import { t } from '../../i18n';
 
 export type NormalizeBaseUrlResult =
   | { ok: true; baseUrl: string; origin: string; originPattern: string }
@@ -37,22 +38,16 @@ function configError(code: string, message: string): { ok: false; error: AppErro
 export function normalizeBaseUrl(input: string): NormalizeBaseUrlResult {
   const raw = (input ?? '').trim();
   if (!raw) {
-    return configError(
-      'base-url-empty',
-      '请填写 sub2api 服务地址（Base URL），例如 https://api.example.com。',
-    );
+    return configError('base-url-empty', t('background.baseUrl.empty'));
   }
   if (raw.length > 500) {
-    return configError('base-url-too-long', '服务地址过长，请只填写 API 根地址。');
+    return configError('base-url-too-long', t('background.baseUrl.tooLong'));
   }
   if (/\s/.test(raw)) {
-    return configError('base-url-invalid', '服务地址中包含空白字符，请检查后重新填写。');
+    return configError('base-url-invalid', t('background.baseUrl.whitespace'));
   }
   if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
-    return configError(
-      'base-url-no-scheme',
-      '服务地址需要以 https:// 开头，例如 https://api.example.com。',
-    );
+    return configError('base-url-no-scheme', t('background.baseUrl.noScheme'));
   }
   // 原始输入中的 authority 部分（scheme:// 之后、第一个 / ? # 之前）。
   const rawAuthority = raw.slice(raw.indexOf('//') + 2).split(/[/?#]/)[0] ?? '';
@@ -61,52 +56,34 @@ export function normalizeBaseUrl(input: string): NormalizeBaseUrlResult {
   try {
     url = new URL(raw);
   } catch {
-    return configError(
-      'base-url-invalid',
-      '服务地址格式无效，请填写类似 https://api.example.com 的地址。',
-    );
+    return configError('base-url-invalid', t('background.baseUrl.invalid'));
   }
 
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    return configError(
-      'base-url-scheme',
-      '服务地址只支持 https://（本机调试可使用 http://127.0.0.1）。',
-    );
+    return configError('base-url-scheme', t('background.baseUrl.scheme'));
   }
   if (!url.hostname) {
-    return configError('base-url-invalid', '服务地址缺少主机名，请检查后重新填写。');
+    return configError('base-url-invalid', t('background.baseUrl.noHost'));
   }
   if (url.username || url.password || rawAuthority.includes('@')) {
-    return configError(
-      'base-url-credentials',
-      '服务地址不能包含用户名或密码，API Key 请在「API Key」输入框填写。',
-    );
+    return configError('base-url-credentials', t('background.baseUrl.credentials'));
   }
   // URL 解析会丢弃空的 `?` / `#`，因此同时检查原始字符串。
   if (url.search || raw.includes('?')) {
-    return configError(
-      'base-url-query',
-      '服务地址不能包含查询参数（? 之后的内容），请只填写 API 根地址。',
-    );
+    return configError('base-url-query', t('background.baseUrl.query'));
   }
   if (url.hash || raw.includes('#')) {
-    return configError('base-url-fragment', '服务地址不能包含 # 片段，请只填写 API 根地址。');
+    return configError('base-url-fragment', t('background.baseUrl.fragment'));
   }
   if (
     rawAuthority.includes('*') ||
     rawAuthority.includes('%') ||
     !CONCRETE_HOST.test(url.hostname)
   ) {
-    return configError(
-      'base-url-host-invalid',
-      '服务地址的主机名无效：请填写具体的域名或 IP，不能包含 * 等通配符或编码字符。',
-    );
+    return configError('base-url-host-invalid', t('background.baseUrl.hostInvalid'));
   }
   if (url.protocol === 'http:' && url.hostname !== LOOPBACK_HTTP_HOST) {
-    return configError(
-      'base-url-insecure',
-      '为保护 API Key，服务地址必须使用 https://；http 仅允许本机调试地址 127.0.0.1。',
-    );
+    return configError('base-url-insecure', t('background.baseUrl.insecure'));
   }
 
   let path = url.pathname.replace(/\/{2,}/g, '/').replace(/\/+$/, '');

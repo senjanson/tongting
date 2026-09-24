@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
 import type { PlayerState } from '../../domain/session';
 import type { SettingsPatch } from '../../domain/settings';
+import { useT } from '../../i18n/react';
 import type { UiCommand } from '../../messaging/ui-protocol';
 import { useToast } from '../components/toast';
 import { errorInfoOf, errorMessageOf, type ResultOf } from '../state/client';
@@ -18,6 +19,7 @@ import { useClientState, useUiClient } from '../state/hooks';
 export function useCommandRunner() {
   const client = useUiClient();
   const notify = useToast();
+  const t = useT();
   const [busy, setBusy] = useState<Record<string, number>>({});
 
   const run = useCallback(
@@ -32,13 +34,16 @@ export function useCommandRunner() {
       } catch (error) {
         if (errorInfoOf(error)?.code === 'stale-session') {
           // 命令针对的会话已被替换（例如换视频）：快照会随之刷新，不当作错误弹窗。
-          notify('状态已变化，已刷新。', 'info');
+          notify(t('common.stateChanged'), 'info');
           return undefined;
         }
         if (!options.quiet) {
           notify(
             options.errorPrefix
-              ? `${options.errorPrefix}：${errorMessageOf(error)}`
+              ? t('common.errorWithDetail', {
+                  prefix: options.errorPrefix,
+                  detail: errorMessageOf(error),
+                })
               : errorMessageOf(error),
             'danger',
           );
@@ -54,7 +59,7 @@ export function useCommandRunner() {
         });
       }
     },
-    [client, notify],
+    [client, notify, t],
   );
 
   const isBusy = useCallback((key: string) => (busy[key] ?? 0) > 0, [busy]);
@@ -65,19 +70,19 @@ export function useCommandRunner() {
 export function useSettingsUpdater() {
   const client = useUiClient();
   const notify = useToast();
+  const t = useT();
   return useCallback(
     async (patch: SettingsPatch): Promise<boolean> => {
       try {
         const result = await client.sendCommand({ kind: 'settings/update', patch });
-        if (!result.persisted)
-          notify('仅本次生效，保存失败。设置将在浏览器重启后丢失。', 'warning');
+        if (!result.persisted) notify(t('common.settingsNotPersisted'), 'warning');
         return true;
       } catch (error) {
-        notify(`设置未生效：${errorMessageOf(error)}`, 'danger');
+        notify(t('common.settingsFailed', { detail: errorMessageOf(error) }), 'danger');
         return false;
       }
     },
-    [client, notify],
+    [client, notify, t],
   );
 }
 

@@ -66,6 +66,7 @@ import { voiceLanguageRank } from '../providers/tts/voices';
 import type { CoordinatorDeps } from './deps';
 import { toPageInfo, type PageState } from './pages';
 import { SearchController } from './search-controller';
+import { resolveSearchLanguages } from '../domain/search';
 import {
   generateSearchKeywords,
   type SearchGenerationParams,
@@ -84,6 +85,7 @@ import {
   saveSettings,
   type SecretState,
 } from './settings-store';
+import { getLocale, resolveLocale, setLocale, t, type Locale } from '../i18n';
 
 const RECORDS_KEY = 'sessionRecords';
 const CONFIG_REVISION_KEY = 'configRevision';
@@ -221,6 +223,8 @@ export class Coordinator implements SessionHost {
   };
 
   constructor(readonly deps: CoordinatorDeps) {
+    // 设置读取完成前先按浏览器界面语言生成提示；读取后以 settings.uiLocale 为准。
+    this.applyUiLocale();
     this.search = new SearchController({
       route: (signal) => this.searchRoute(signal),
       generate: (params) => (deps.generateSearchKeywords ?? generateSearchKeywords)(params),
@@ -254,6 +258,7 @@ export class Coordinator implements SessionHost {
     const { deps } = this;
     const loaded = await loadSettings(deps.storage.local, deps.logger, deps.uiLanguage);
     this.settingsValue = loaded.settings;
+    this.applyUiLocale();
     if (loaded.status === 'unreadable') this.unreadableEdits = [];
     if (loaded.status === 'recovered' || loaded.status === 'unreadable')
       this.settingsRecovery = loaded.status;
@@ -358,6 +363,21 @@ export class Coordinator implements SessionHost {
     ]);
   }
 
+  /**
+   * 按 settings.uiLocale 与浏览器界面语言确定 worker 的界面语言（提示、错误、覆盖层状态文字）。
+   * 未提供浏览器界面语言（测试环境）且设置为跟随浏览器时保持当前语言。返回语言是否变化。
+   */
+  private applyUiLocale(): boolean {
+    const preference = this.settingsValue.uiLocale;
+    const next: Locale =
+      preference === 'auto' && this.deps.uiLanguage === undefined
+        ? getLocale()
+        : resolveLocale(preference, this.deps.uiLanguage);
+    if (next === getLocale()) return false;
+    setLocale(next);
+    return true;
+  }
+
   /** 影响会话启动结果的配置指纹：不含字幕外观、音量类设置、协议探测结果与凭证存储位置，含凭证代数。 */
   private startFingerprint(): string {
     const s = this.settingsValue;
@@ -369,6 +389,10 @@ export class Coordinator implements SessionHost {
         rememberCredentials: undefined,
         pauseDubWithVideo: undefined,
         layout: undefined,
+        // AI 搜索语言只影响搜索页，不影响翻译会话。
+        search: undefined,
+        // 界面语言只影响文案，切换时不能重启翻译会话。
+        uiLocale: undefined,
         provider: { ...s.provider, detectedProtocol: undefined },
       },
       this.credentialGeneration,
@@ -595,8 +619,7 @@ export class Coordinator implements SessionHost {
         code: 'host-permission-revoked',
         category: 'permission',
         retryable: true,
-        message:
-          '服务访问权限已被撤回，翻译、捕获与配音已停止。请在设置页重新授权后点击「开始翻译」。',
+        message: t('background.coordinator.hostPermissionRevoked'),
       });
     }
     this.publish();
@@ -687,11 +710,13 @@ export class Coordinator implements SessionHost {
       type: 'welcome',
       protocolVersion: CONTENT_PROTOCOL_VERSION,
       workerInstanceId: this.workerInstanceId,
+      locale: getLocale(),
     });
     conn.send({
       type: 'display/settings',
       captions: this.settingsValue.captions,
       targetLanguage: this.settingsValue.targetLanguage,
+      locale: getLocale(),
     });
     const slot = this.slots.get(tabId);
     if (slot?.session && slot.session.identity.documentId === documentId) {
@@ -806,8 +831,7 @@ export class Coordinator implements SessionHost {
               code: 'worker-restarted-paused',
               category: 'internal',
               retryable: true,
-              message:
-                '扩展后台已重启，暂停中的翻译无法自动恢复。请点击「开始翻译」重新开始，已保存的字幕记录不受影响。',
+              message: t('background.coordinator.workerRestartedPaused'),
               at: this.deps.now(),
             },
           );
@@ -1154,7 +1178,7 @@ export class Coordinator implements SessionHost {
               error: undefined,
               notice: {
                 code: 'moved-to-other-tab',
-                message: '翻译已切换到另一个标签页，本页已停止。',
+                message: t('background.coordinator.movedToOtherTab'),
                 level: 'info',
               },
             };
@@ -1185,8 +1209,7 @@ export class Coordinator implements SessionHost {
               code: 'other-session-stuck',
               category: 'internal',
               retryable: true,
-              message:
-                '另一个标签页的翻译未能及时停止，为避免重复占用音频与请求，本次未开始。请关闭或刷新另一个标签页后重试。',
+              message: t('background.coordinator.otherTabNotStopped'),
               at: this.deps.now(),
             },
           );
@@ -1258,8 +1281,7 @@ export class Coordinator implements SessionHost {
         code: 'start-retry-exhausted',
         category: 'internal',
         retryable: true,
-        message:
-          '翻译多次启动未能完成，已停止。请刷新页面后重新开始；若反复出现，请在设置页检查服务配置。',
+        message: t('background.coordinator.startRetriesExhausted'),
         at: this.deps.now(),
       };
       const lastPage = this.pages.get(slot.tabId);
@@ -1359,7 +1381,7 @@ export class Coordinator implements SessionHost {
         code: 'offscreen-lost',
         category: 'audio',
         retryable: true,
-        message: '音频处理组件意外中断，已停止语音识别。请重新开始翻译。',
+        message: t('background.coordinator.offscreenLost'),
         at: this.deps.now(),
       });
     }
@@ -1380,7 +1402,7 @@ export class Coordinator implements SessionHost {
           code: 'offscreen-lost',
           category: 'audio',
           retryable: true,
-          message: '音频处理组件意外中断，已停止语音识别。请重新开始翻译。',
+          message: t('background.coordinator.offscreenLost'),
           at: this.deps.now(),
         });
       }
@@ -1426,7 +1448,11 @@ export class Coordinator implements SessionHost {
     switch (command.kind) {
       case 'search/generate':
         if (owner instanceof UiConnection && !owner.isConnected) throw cancelledError();
-        return this.search.generate(owner, command.operationId, command.query);
+        return this.search.generate(owner, command.operationId, command.query, {
+          ...resolveSearchLanguages(this.settingsValue),
+          ...(command.userLanguage ? { userLanguage: command.userLanguage } : {}),
+          ...(command.keywordLanguage ? { keywordLanguage: command.keywordLanguage } : {}),
+        });
       case 'search/cancel':
         this.search.cancel(owner, command.operationId);
         return { cancelled: true };
@@ -1457,7 +1483,7 @@ export class Coordinator implements SessionHost {
             code: 'no-session',
             category: 'cancelled',
             retryable: false,
-            message: '当前标签页没有进行中的翻译。',
+            message: t('background.coordinator.noActiveSession'),
           });
         }
         session.setBackfill(command.enabled);
@@ -1470,7 +1496,7 @@ export class Coordinator implements SessionHost {
             code: 'no-source-tab',
             category: 'youtube',
             retryable: false,
-            message: '源视频标签页不可用，无法跳转。',
+            message: t('background.coordinator.sourceTabUnavailable'),
           });
         }
         await page.conn.request(
@@ -1551,7 +1577,7 @@ export class Coordinator implements SessionHost {
         code: 'stale-session',
         category: 'cancelled',
         retryable: false,
-        message: '翻译状态已变化，界面已刷新，请确认后重试。',
+        message: t('background.coordinator.stateChanged'),
       });
     }
   }
@@ -1573,8 +1599,7 @@ export class Coordinator implements SessionHost {
         code: 'no-video',
         category: 'youtube',
         retryable: false,
-        message:
-          '当前标签页不是可播放的 YouTube 视频页，或页面尚未连接。请打开视频页面后重试（必要时刷新页面）。',
+        message: t('background.coordinator.notYoutubeVideoTab'),
       });
     }
     const slot = this.ensureSlot(tabId);
@@ -1584,7 +1609,7 @@ export class Coordinator implements SessionHost {
         code: 'no-session',
         category: 'cancelled',
         retryable: false,
-        message: '当前标签页没有进行中的翻译，请点击「开始翻译」。',
+        message: t('background.coordinator.noActiveSessionStart'),
       });
     }
     if (explicitStart || desired === 'stopped') slot.errorSnapshot = undefined;
@@ -1631,7 +1656,7 @@ export class Coordinator implements SessionHost {
         code: 'invalid-settings',
         category: 'config',
         retryable: false,
-        message: '设置值无效，未应用。',
+        message: t('background.coordinator.invalidSettings'),
       });
     }
     this.unreadableEdits?.push(patch);
@@ -1693,6 +1718,8 @@ export class Coordinator implements SessionHost {
   private async replaceSettings(next: Settings): Promise<{ persisted: boolean }> {
     const prev = this.settingsValue;
     this.settingsValue = next;
+    // 先切换语言，之后生成的提示与错误都使用新语言；界面语言不影响翻译会话。
+    const localeChanged = this.applyUiLocale();
     const translationChanged = translationFingerprint(prev) !== translationFingerprint(next);
     const schedulingChanged =
       prev.prefetch !== next.prefetch ||
@@ -1773,6 +1800,7 @@ export class Coordinator implements SessionHost {
       this.persistCapabilities();
     }
     if (
+      localeChanged ||
       JSON.stringify(prev.captions) !== JSON.stringify(next.captions) ||
       prev.targetLanguage !== next.targetLanguage
     ) {
@@ -1781,9 +1809,12 @@ export class Coordinator implements SessionHost {
           type: 'display/settings',
           captions: next.captions,
           targetLanguage: next.targetLanguage,
+          locale: getLocale(),
         });
       }
     }
+    // 覆盖层状态文字由 worker 生成：语言变化后按新语言重发。
+    if (localeChanged) for (const slot of this.slots.values()) slot.session?.pushSessionState();
     // 会话已按新配置处理后再回收旧地址的权限；回收后重新核对当前地址，快照以回收后的状态为准。
     if (await this.revokeReleasedOrigins(prev, written)) await this.refreshHostPermission();
     this.publish();
@@ -1803,8 +1834,8 @@ export class Coordinator implements SessionHost {
       checkedAt: new Date(this.deps.now()).toISOString(),
       reasonCode: matching.length ? undefined : 'no-voice-for-language',
       message: matching.length
-        ? `系统语音中有 ${matching.length} 个可用于当前目标语言的声音（实际朗读效果请试听确认）。`
-        : '系统语音中没有当前目标语言的声音，配音将不可用，仅显示字幕。',
+        ? t('background.coordinator.systemVoicesCount', { count: matching.length })
+        : t('background.coordinator.systemVoicesNone'),
     };
   }
 
@@ -1871,8 +1902,7 @@ export class Coordinator implements SessionHost {
           code: 'config-invalid-while-running',
           category: 'config',
           retryable: false,
-          message:
-            '服务配置已变化且当前不可用（地址、Key、协议、模型或访问权限缺失），已停止翻译。请完成设置后重新开始。',
+          message: t('background.coordinator.configBecameInvalid'),
           at: this.deps.now(),
         });
         continue;
@@ -1893,7 +1923,7 @@ export class Coordinator implements SessionHost {
         code: 'empty-key',
         category: 'config',
         retryable: false,
-        message: 'API Key 不能为空。',
+        message: t('background.coordinator.emptyKey'),
       });
     const rememberChanged = remember !== this.settingsValue.rememberCredentials;
     if (rememberChanged) {
@@ -1933,8 +1963,7 @@ export class Coordinator implements SessionHost {
           code: 'config-invalid-while-running',
           category: 'config',
           retryable: false,
-          message:
-            '服务配置已变化且当前不可用（地址、Key、协议、模型或访问权限缺失），已停止翻译。请完成设置后重新开始。',
+          message: t('background.coordinator.configBecameInvalid'),
           at: this.deps.now(),
         });
         continue;
@@ -2190,7 +2219,7 @@ export class Coordinator implements SessionHost {
       return {
         key,
         status: 'failed',
-        message: '请先填写有效的 sub2api 服务地址。',
+        message: t('background.coordinator.needBaseUrlSub2api'),
         reasonCode: 'invalid-url',
       };
     const apiKey = this.apiKeyState.value;
@@ -2198,17 +2227,22 @@ export class Coordinator implements SessionHost {
       return {
         key,
         status: 'failed',
-        message: '请先填写 API Key。',
+        message: t('background.coordinator.needApiKey'),
         reasonCode: 'missing-api-key',
       };
     if (!model.trim())
-      return { key, status: 'failed', message: '请先填写模型 ID。', reasonCode: 'model-missing' };
+      return {
+        key,
+        status: 'failed',
+        message: t('background.coordinator.needModelId'),
+        reasonCode: 'model-missing',
+      };
     await this.refreshHostPermission();
     if (!this.hostPermission.granted) {
       return {
         key,
         status: 'failed',
-        message: '尚未授予访问服务地址的权限。',
+        message: t('background.coordinator.noHostPermission'),
         reasonCode: 'host-permission-missing',
       };
     }
@@ -2219,7 +2253,7 @@ export class Coordinator implements SessionHost {
     return {
       key,
       status: 'unknown',
-      message: `检查 sub2api ${what}需要一次实际调用（可能产生少量费用）；勾选「允许实际调用」后重新检查。`,
+      message: t('background.coordinator.notProbed', { what }),
       reasonCode: 'not-probed',
     };
   }
@@ -2228,7 +2262,7 @@ export class Coordinator implements SessionHost {
     signal: AbortSignal,
     allowBilled: boolean,
   ): Promise<ConnectionCheckItem> {
-    if (!allowBilled) return this.notProbed('asr', '语音识别');
+    if (!allowBilled) return this.notProbed('asr', t('background.coordinator.asrWhat'));
     const route = await this.sub2apiAudioRoute('asr', this.settingsValue.asr.sub2apiModel);
     if ('key' in route) return route;
     try {
@@ -2236,7 +2270,9 @@ export class Coordinator implements SessionHost {
       return {
         key: 'asr',
         status: 'verified',
-        message: `识别接口调用成功（测试音频为 1 秒合成音，只验证接口与认证，不代表识别准确度${result.text ? '' : '；返回文本为空属正常'}）。`,
+        message: t('background.coordinator.asrProbeOk', {
+          note: result.text ? '' : t('background.coordinator.asrProbeEmptyNote'),
+        }),
         latencyMs: result.latencyMs,
       };
     } catch (error) {
@@ -2249,7 +2285,7 @@ export class Coordinator implements SessionHost {
     signal: AbortSignal,
     allowBilled: boolean,
   ): Promise<ConnectionCheckItem> {
-    if (!allowBilled) return this.notProbed('tts', '语音合成');
+    if (!allowBilled) return this.notProbed('tts', t('background.coordinator.ttsWhat'));
     const s = this.settingsValue;
     const route = await this.sub2apiAudioRoute('tts', s.tts.sub2apiModel);
     if ('key' in route) return route;
@@ -2263,7 +2299,10 @@ export class Coordinator implements SessionHost {
       return {
         key: 'tts',
         status: 'verified',
-        message: `合成接口返回了 ${Math.round(result.bytes / 1024)} KB 音频（${result.contentType || '未知格式'}）；声音效果请在视频中试听确认。`,
+        message: t('background.coordinator.ttsProbeOk', {
+          kb: Math.round(result.bytes / 1024),
+          format: result.contentType || t('background.coordinator.unknownFormat'),
+        }),
         latencyMs: result.latencyMs,
       };
     } catch (error) {
@@ -2281,7 +2320,7 @@ export class Coordinator implements SessionHost {
       return {
         key: 'localAsr',
         status: 'unknown',
-        message: '未启用语音识别服务；无字幕视频将无法翻译。',
+        message: t('background.coordinator.asrNotEnabled'),
         reasonCode: 'not-configured',
       };
     }
@@ -2291,7 +2330,7 @@ export class Coordinator implements SessionHost {
       return {
         key: 'localAsr',
         status: 'failed',
-        message: '本地识别服务地址无效。',
+        message: t('background.coordinator.localAsrUrlInvalid'),
         reasonCode: 'invalid-url',
       };
     const granted = await this.deps.permissions
@@ -2301,7 +2340,7 @@ export class Coordinator implements SessionHost {
       return {
         key: 'localAsr',
         status: 'failed',
-        message: '尚未授予访问本地识别服务的权限。',
+        message: t('background.coordinator.localAsrNoPermission'),
         reasonCode: 'host-permission-missing',
       };
     }
@@ -2310,14 +2349,14 @@ export class Coordinator implements SessionHost {
     const latencyMs = this.deps.now() - started;
     if (health.status === 'ok' && health.ready) {
       // 模型与设备名来自服务返回，分别截短，保证后面的说明完整（整条说明写入时还会统一截断）。
-      const model = truncateText(health.model ?? '未知', 80);
-      const device = truncateText(health.device ?? '未知设备', 60);
+      const model = truncateText(health.model ?? t('background.coordinator.unknownModel'), 80);
+      const device = truncateText(health.device ?? t('background.coordinator.unknownDevice'), 60);
       return {
         key: 'localAsr',
         status: this.asrTokenState.value ? 'verified' : 'failed',
         message: this.asrTokenState.value
-          ? `本地识别服务可用（模型 ${model}，${device}）。配对令牌将在首次识别时验证。`
-          : '本地识别服务在线，但尚未填写配对令牌。',
+          ? t('background.coordinator.localAsrReady', { model, device })
+          : t('background.coordinator.localAsrNoToken'),
         latencyMs,
         reasonCode: this.asrTokenState.value ? undefined : 'token-missing',
       };
@@ -2326,7 +2365,7 @@ export class Coordinator implements SessionHost {
       return {
         key: 'localAsr',
         status: 'failed',
-        message: '本地识别服务正在加载模型，请稍后重试。',
+        message: t('background.coordinator.localAsrLoading'),
         latencyMs,
         reasonCode: 'loading',
       };
@@ -2336,7 +2375,7 @@ export class Coordinator implements SessionHost {
       status: 'failed',
       message:
         health.error?.message ??
-        `无法连接本地识别服务（${redactUrl(normalized.baseUrl)}），请确认已启动。`,
+        t('background.coordinator.localAsrUnreachable', { origin: redactUrl(normalized.baseUrl) }),
       latencyMs,
       reasonCode: health.status,
     };
@@ -2352,7 +2391,9 @@ export class Coordinator implements SessionHost {
 
   private async searchRoute(
     signal: AbortSignal,
-  ): Promise<Omit<SearchGenerationParams, 'query' | 'signal'>> {
+  ): Promise<
+    Omit<SearchGenerationParams, 'query' | 'signal' | 'userLanguage' | 'keywordLanguage'>
+  > {
     const provider = this.settingsValue.provider;
     const routeKey = this.providerRouteKey();
     const apiKey = this.apiKeyState.value;
@@ -2365,7 +2406,7 @@ export class Coordinator implements SessionHost {
         code: 'search-config-missing',
         category: 'config',
         retryable: false,
-        message: '请先在设置中保存 API Key 和翻译模型。',
+        message: t('background.coordinator.saveKeyAndModelFirst'),
       });
     const granted = await this.deps.permissions
       .contains(normalized.originPattern)
@@ -2382,7 +2423,7 @@ export class Coordinator implements SessionHost {
         code: 'host-permission-missing',
         category: 'permission',
         retryable: false,
-        message: '请先在设置中授予访问服务地址的权限。',
+        message: t('background.coordinator.grantHostPermissionInSettings'),
       });
     // 等待期间协议可能刚被会话启动或连接检查探测出来：直接使用，省去一次重复探测。
     const detected = this.settingsValue.provider.detectedProtocol;
@@ -2404,7 +2445,7 @@ export class Coordinator implements SessionHost {
         code: 'missing-base-url',
         category: 'config',
         retryable: false,
-        message: '请先填写有效的服务地址。',
+        message: t('background.coordinator.needValidBaseUrl'),
       });
     const apiKey = this.apiKeyState.value;
     if (!apiKey)
@@ -2412,7 +2453,7 @@ export class Coordinator implements SessionHost {
         code: 'missing-api-key',
         category: 'config',
         retryable: false,
-        message: '请先填写 API Key。',
+        message: t('background.coordinator.needApiKey'),
       });
     // 模型列表只取决于服务地址与 API Key：字幕外观、模型选择等无关设置或协议探测写回不作废结果。
     // 设置对象每次更新都会重建，不能按引用判断。
@@ -2426,7 +2467,7 @@ export class Coordinator implements SessionHost {
         code: 'host-permission-missing',
         category: 'permission',
         retryable: false,
-        message: '请先授予访问服务地址的权限。',
+        message: t('background.coordinator.grantHostPermission'),
       });
     }
     const previous = this.modelDiscoveryAbort;
@@ -2484,7 +2525,7 @@ export class Coordinator implements SessionHost {
           code: 'dubbing-active',
           category: 'tts',
           retryable: false,
-          message: '配音进行中，暂不能试听。请先暂停翻译。',
+          message: t('background.coordinator.dubbingActive'),
         });
       }
     }
@@ -2526,7 +2567,7 @@ export class Coordinator implements SessionHost {
             code: 'tts-start-timeout',
             category: 'tts',
             retryable: true,
-            message: '系统语音没有开始朗读，请检查所选声音。',
+            message: t('background.coordinator.previewNotStarted'),
           }),
         );
       }, 5_000);
@@ -2746,8 +2787,7 @@ function secretCleanupError(): AppError {
     code: 'secret-cleanup-incomplete',
     category: 'storage',
     retryable: true,
-    message:
-      '凭证已停止使用，但本机存储副本尚未全部清除。请点击「重试清理」；清理完成前不要把它视为已彻底删除。',
+    message: t('background.coordinator.secretCleanupIncomplete'),
   });
 }
 
@@ -2757,7 +2797,7 @@ function checkReplacedError(): AppError {
     code: 'check-replaced',
     category: 'cancelled',
     retryable: false,
-    message: '本次检查已被新的检查取代。',
+    message: t('background.coordinator.checkReplaced'),
   });
 }
 
@@ -2767,7 +2807,7 @@ function checkSupersededError(): AppError {
     code: 'check-superseded',
     category: 'cancelled',
     retryable: true,
-    message: '配置已变化，本次检查结果作废，请重新检查。',
+    message: t('background.coordinator.checkSuperseded'),
   });
 }
 
@@ -2776,7 +2816,7 @@ function discoverySupersededError(): AppError {
     code: 'discovery-superseded',
     category: 'cancelled',
     retryable: true,
-    message: '服务地址、Key 或访问权限已变化，本次模型列表作废，请重新获取。',
+    message: t('background.coordinator.discoverySuperseded'),
   });
 }
 
@@ -2785,7 +2825,7 @@ function discoveryReplacedError(): AppError {
     code: 'discovery-replaced',
     category: 'cancelled',
     retryable: false,
-    message: '本次获取已被新的获取请求取代。',
+    message: t('background.coordinator.discoveryReplaced'),
   });
 }
 

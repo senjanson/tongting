@@ -11,6 +11,7 @@
 import { cancelledError, toAppErrorInfo, type AppErrorInfo } from '../domain/errors';
 import type { CaptionSettings } from '../domain/settings';
 import type { PlayerState } from '../domain/session';
+import { getLocale, resolveLocale, setLocale, type Locale } from '../i18n';
 import {
   CONTENT_PROTOCOL_VERSION,
   type BackgroundToContent,
@@ -53,6 +54,11 @@ export interface YoutubeContentDeps {
   /** 注册上下文失效回调（WXT ctx.onInvalidated）。 */
   onInvalidated(cb: () => void): void;
   pageInstanceId: string;
+  /**
+   * 浏览器界面语言（browser.i18n.getUILanguage()）。收到 worker 下发的界面语言前按它显示覆盖层文案；
+   * 省略时保持当前语言。
+   */
+  uiLanguage?: string;
   timings?: Partial<ControllerTimings>;
 }
 
@@ -105,6 +111,7 @@ type ReplyBody = { ok: true; data?: unknown } | { ok: false; error: AppErrorInfo
 export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentController {
   const { win, doc } = deps;
   const timings: ControllerTimings = { ...DEFAULT_TIMINGS, ...deps.timings };
+  if (deps.uiLanguage !== undefined) setLocale(resolveLocale('auto', deps.uiLanguage));
   const setT = (fn: () => void, ms: number) => win.setTimeout(fn, ms);
   const clearT = (id: unknown) => win.clearTimeout(id as number);
 
@@ -582,10 +589,18 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
   // worker 消息
   // ---------------------------------------------------------------------------
 
+  /** worker 按设置确定的界面语言：覆盖层状态标签与页面侧错误提示随之切换。 */
+  function applyLocale(locale: Locale) {
+    if (locale === getLocale()) return;
+    setLocale(locale);
+    overlay.render();
+  }
+
   function handleWorkerMessage(msg: BackgroundToContent, generation: number) {
     if (disposed) return;
     switch (msg.type) {
       case 'welcome': {
+        applyLocale(msg.locale);
         playbackBuffer.reset();
         // worker 可能重启过：字幕版本基线重建，会话以随后到达的 session/state 为准。
         overlay.resetVersionBaseline();
@@ -599,6 +614,7 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
         return;
       }
       case 'display/settings':
+        applyLocale(msg.locale);
         settings = msg.captions;
         overlay.setSettings(msg.captions);
         updateNativeHiding();

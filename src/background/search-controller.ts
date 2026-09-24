@@ -1,13 +1,23 @@
 import { AppError, cancelledError } from '../domain/errors';
-import { SearchInputSchema, SearchRecordSchema, type SearchRecord } from '../domain/search';
+import {
+  SearchInputSchema,
+  SearchLanguageSchema,
+  SearchRecordSchema,
+  type SearchLanguages,
+  type SearchRecord,
+} from '../domain/search';
 import { withRequestSignal } from '../providers/text/http';
 import type {
   generateSearchKeywords,
   SearchGenerationParams,
 } from '../providers/text/search-keywords';
 import type { SearchHistoryRepo } from '../storage/search-history';
+import { t } from '../i18n';
 
-type SearchRoute = Omit<SearchGenerationParams, 'query' | 'signal'>;
+type SearchRoute = Omit<
+  SearchGenerationParams,
+  'query' | 'signal' | 'userLanguage' | 'keywordLanguage'
+>;
 export class SearchController {
   private readonly operations = new Map<object, { id: string; abort: AbortController }>();
   constructor(
@@ -35,15 +45,18 @@ export class SearchController {
     owner: object,
     id: string,
     input: string,
+    languages: SearchLanguages,
   ): Promise<{ record: SearchRecord; persisted: boolean }> {
     const query = SearchInputSchema.parse(input);
+    const userLanguage = SearchLanguageSchema.parse(languages.userLanguage);
+    const keywordLanguage = SearchLanguageSchema.parse(languages.keywordLanguage);
     this.cancel(owner);
     if (this.operations.size >= 4)
       throw new AppError({
         code: 'search-busy',
         category: 'config',
         retryable: true,
-        message: '已有多个搜索请求正在生成，请稍后再试。',
+        message: t('background.search.tooMany'),
       });
     const operation = { id, abort: new AbortController() };
     this.operations.set(owner, operation);
@@ -54,7 +67,13 @@ export class SearchController {
         };
         const route = await this.deps.route(signal);
         check();
-        const result = await this.deps.generate({ ...route, query, signal });
+        const result = await this.deps.generate({
+          ...route,
+          query,
+          userLanguage,
+          keywordLanguage,
+          signal,
+        });
         check();
         const record = SearchRecordSchema.parse({
           id: this.deps.randomId('search'),
@@ -62,6 +81,8 @@ export class SearchController {
           items: result.items,
           model: result.model,
           createdAt: this.deps.now(),
+          userLanguage,
+          keywordLanguage,
         });
         this.deps.detected(result.protocol);
         let persisted = true;

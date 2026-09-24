@@ -1,5 +1,6 @@
 /**
  * A 轻巧侧栏。真实模式通过 worker 快照工作；演示模式只从明确入口开启，并持续显示演示标识。
+ * 界面语言按快照中的 settings.uiLocale 决定（演示模式同样适用），快照到达前按浏览器界面语言显示。
  */
 import {
   AudioLines,
@@ -12,6 +13,8 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { PageInfo } from '../../domain/session';
+import { resolveLocale } from '../../i18n';
+import { browserUiLanguage, useLocale, useT } from '../../i18n/react';
 import { Button, Spinner } from '../components/controls';
 import { EmptyState, ReconnectBanner, StatusPill, TabPanel, Tabs } from '../components/layout';
 import { ToastProvider, useToast } from '../components/toast';
@@ -19,6 +22,7 @@ import { createDemoRepos, DemoClient } from '../demo/demo-client';
 import { DEMO_TAB_ID } from '../demo/demo-data';
 import { formatMediaTime } from '../format';
 import { usePlayerClock } from '../shared/hooks';
+import { SnapshotI18nProvider } from '../shared/LocaleRoot';
 import { reloadTab } from '../shared/navigation';
 import { useActiveTab, type ActiveTabState } from '../state/active-tab';
 import {
@@ -29,6 +33,7 @@ import {
   playerStatusLabel,
   type ActiveTabInfo,
 } from '../state/derive';
+import type { UiClient } from '../state/client';
 import { usePageWake } from '../state/page-wake';
 import { UiClientProvider, useBackground, useClientState } from '../state/hooks';
 import { indexedDbRepos, ReposProvider, type UiRepos } from '../state/repos';
@@ -53,40 +58,61 @@ export function SidePanelApp() {
   const activeTab = useActiveTab();
   const [demo, setDemo] = useState(initialDemoFlag);
 
-  return (
-    <ToastProvider>
-      {demo ? (
-        <DemoRoot onExit={() => setDemo(false)} />
-      ) : (
-        <UiClientProvider client={realClient}>
-          <ReposProvider repos={indexedDbRepos}>
+  return demo ? (
+    <DemoRoot realClient={realClient} onExit={() => setDemo(false)} />
+  ) : (
+    <UiClientProvider client={realClient}>
+      <ReposProvider repos={indexedDbRepos}>
+        <SnapshotI18nProvider>
+          <ToastProvider>
             <PanelView activeTab={activeTab} onEnterDemo={() => setDemo(true)} />
-          </ReposProvider>
-        </UiClientProvider>
-      )}
-    </ToastProvider>
+          </ToastProvider>
+        </SnapshotI18nProvider>
+      </ReposProvider>
+    </UiClientProvider>
   );
 }
 
-const DEMO_ACTIVE_TAB: ActiveTabState = {
-  loading: false,
-  tab: { tabId: DEMO_TAB_ID, windowId: -1, title: '演示' } satisfies ActiveTabInfo,
-};
-
-function DemoRoot({ onExit }: { onExit(): void }) {
-  const [client] = useState(() => new DemoClient());
+function DemoRoot({ realClient, onExit }: { realClient: UiClient; onExit(): void }) {
+  const [client] = useState(() => new DemoClient(resolveLocale(undefined, browserUiLanguage())));
   const [repos] = useState<UiRepos>(() => createDemoRepos());
   useEffect(() => {
     client.start();
     return () => client.stop();
   }, [client]);
+  // 演示不向 worker 发命令，但界面语言应与用户保存的设置一致：只读取真实快照中的 uiLocale。
+  useEffect(() => {
+    const adopt = () => client.adoptUiLocale(realClient.getState().snapshot?.settings.uiLocale);
+    adopt();
+    return realClient.subscribe(adopt);
+  }, [client, realClient]);
   return (
     <UiClientProvider client={client}>
       <ReposProvider repos={repos}>
-        <PanelView activeTab={DEMO_ACTIVE_TAB} onExitDemo={onExit} />
+        <SnapshotI18nProvider>
+          <ToastProvider>
+            <DemoPanel onExit={onExit} />
+          </ToastProvider>
+        </SnapshotI18nProvider>
       </ReposProvider>
     </UiClientProvider>
   );
+}
+
+function DemoPanel({ onExit }: { onExit(): void }) {
+  const t = useT();
+  const activeTab = useMemo<ActiveTabState>(
+    () => ({
+      loading: false,
+      tab: {
+        tabId: DEMO_TAB_ID,
+        windowId: -1,
+        title: t('sidepanel.demo.tabTitle'),
+      } satisfies ActiveTabInfo,
+    }),
+    [t],
+  );
+  return <PanelView activeTab={activeTab} onExitDemo={onExit} />;
 }
 
 export function PanelView({
@@ -99,7 +125,12 @@ export function PanelView({
   onExitDemo?: () => void;
 }) {
   const { connection, snapshot } = useClientState();
+  const locale = useLocale();
+  const t = useT();
   const [tab, setTab] = useState<PanelTab>('translate');
+  useEffect(() => {
+    document.title = t('common.brand.name');
+  }, [t]);
   const [searchDraft, setSearchDraft] = useState('');
   const demo = !!onExitDemo;
   const activeTabId = activeTab.tab?.tabId;
@@ -114,21 +145,23 @@ export function PanelView({
     () => deriveTabContext(snapshot, activeTab.tab, activeTab.loading, waking),
     [snapshot, activeTab.tab, activeTab.loading, waking],
   );
-  const config = useMemo(() => deriveServiceConfig(snapshot), [snapshot]);
-  const status = deriveStatus({ connection, snapshot, tabContext, config });
+  const config = useMemo(() => deriveServiceConfig(snapshot, locale), [snapshot, locale]);
+  const status = deriveStatus({ connection, snapshot, tabContext, config, locale });
 
   return (
-    <div className={styles.app} aria-label="同听">
+    <div className={styles.app} lang={locale} aria-label={t('common.brand.name')}>
       <header className={styles.header}>
-        <h1 className={styles.panelTitle}>{tab === 'search' ? '同听 · AI 搜索' : '实时翻译'}</h1>
+        <h1 className={styles.panelTitle}>
+          {tab === 'search' ? t('sidepanel.title.search') : t('sidepanel.title.translate')}
+        </h1>
         <div className={styles.headerRight}>
           {demo ? (
-            <StatusPill label="演示中" tone="accent" />
+            <StatusPill label={t('sidepanel.pill.demo')} tone="accent" />
           ) : (
             <StatusPill
               label={
                 tab === 'search' && config.ready && connection === 'connected'
-                  ? '可搜索'
+                  ? t('sidepanel.pill.searchReady')
                   : status.label
               }
               tone={
@@ -144,24 +177,36 @@ export function PanelView({
 
       {!snapshot ? (
         <div className={styles.surface}>
-          <EmptyState icon={<Spinner />} title="正在连接后台服务…">
-            如果长时间停留在这里，请在 chrome://extensions 中重新加载同听。
+          <EmptyState icon={<Spinner />} title={t('common.reconnect.connecting')}>
+            {t('sidepanel.connecting.body')}
           </EmptyState>
         </div>
       ) : (
         <>
           <Tabs<PanelTab>
             idPrefix="panel"
-            label="同听功能"
+            label={t('sidepanel.tabs.label')}
             value={tab}
             onChange={setTab}
             items={[
-              { id: 'translate', label: '翻译', icon: <AudioLines size={15} aria-hidden="true" /> },
-              { id: 'transcript', label: '字幕', icon: <Text size={15} aria-hidden="true" /> },
-              { id: 'search', label: '搜索', icon: <Search size={15} aria-hidden="true" /> },
+              {
+                id: 'translate',
+                label: t('sidepanel.tabs.translate'),
+                icon: <AudioLines size={15} aria-hidden="true" />,
+              },
+              {
+                id: 'transcript',
+                label: t('sidepanel.tabs.transcript'),
+                icon: <Text size={15} aria-hidden="true" />,
+              },
+              {
+                id: 'search',
+                label: t('sidepanel.tabs.search'),
+                icon: <Search size={15} aria-hidden="true" />,
+              },
               {
                 id: 'settings',
-                label: '设置',
+                label: t('sidepanel.tabs.settings'),
                 icon: <SlidersHorizontal size={15} aria-hidden="true" />,
               },
             ]}
@@ -243,9 +288,9 @@ export function PanelView({
       )}
       {demo && (
         <div className={styles.demoFooter} role="note">
-          <span>演示模式 · 示例数据，不连接视频与服务</span>
-          <button type="button" onClick={onExitDemo} aria-label="退出演示">
-            退出
+          <span>{t('common.demo.label')}</span>
+          <button type="button" onClick={onExitDemo} aria-label={t('common.demo.exit')}>
+            {t('sidepanel.demo.exitShort')}
           </button>
         </div>
       )}
@@ -256,10 +301,12 @@ export function PanelView({
 function VideoCard({ page, demo }: { page: PageInfo; demo: boolean }) {
   const player = page.player;
   const time = usePlayerClock(player);
-  const title = page.title || player?.title || '（未获取到视频标题）';
+  const locale = useLocale();
+  const t = useT();
+  const title = page.title || player?.title || t('sidepanel.video.noTitle');
   const paused = !!player && (player.paused || player.ended);
   return (
-    <section className={styles.video} aria-label="当前视频">
+    <section className={styles.video} aria-label={t('sidepanel.video.aria')}>
       <div className={styles.videoTitle} title={title}>
         {title}
       </div>
@@ -267,21 +314,22 @@ function VideoCard({ page, demo }: { page: PageInfo; demo: boolean }) {
         {player?.channel && <span>{player.channel}</span>}
         <span className={paused ? styles.playerPaused : undefined}>
           <MonitorPlay size={13} aria-hidden="true" />
-          {playerStatusLabel(player)}
+          {playerStatusLabel(player, locale)}
         </span>
         {player && (
           <span>
             <Clock size={13} aria-hidden="true" />
-            {formatMediaTime(time)} / {player.isLive ? '直播' : formatMediaTime(player.durationMs)}
+            {formatMediaTime(time)} /{' '}
+            {player.isLive ? t('sidepanel.video.live') : formatMediaTime(player.durationMs)}
           </span>
         )}
         {player && (
-          <span title="播放速度">
+          <span title={t('sidepanel.video.rate')}>
             <Gauge size={13} aria-hidden="true" />
             {player.playbackRate}×
           </span>
         )}
-        {demo && <span>示例视频</span>}
+        {demo && <span>{t('sidepanel.video.sample')}</span>}
       </div>
     </section>
   );
@@ -301,21 +349,20 @@ function NoVideoState({
   onOpenSettings?: () => void;
 }) {
   const notify = useToast();
+  const t = useT();
   if (kind === 'loading') {
-    return <EmptyState icon={<Spinner />} title="正在读取当前标签页…" />;
+    return <EmptyState icon={<Spinner />} title={t('sidepanel.noVideo.loadingTab')} />;
   }
   if (kind === 'waking') {
-    return <EmptyState icon={<Spinner />} title="正在连接页面…" />;
+    return <EmptyState icon={<Spinner />} title={t('sidepanel.noVideo.waking')} />;
   }
   const reload =
     maybeYoutube && tabId !== undefined ? (
       <Button
         size="sm"
-        onClick={() =>
-          reloadTab(tabId).catch(() => notify('无法刷新标签页，请手动刷新。', 'danger'))
-        }
+        onClick={() => reloadTab(tabId).catch(() => notify(t('common.reloadTabFailed'), 'danger'))}
       >
-        刷新该页面
+        {t('sidepanel.noVideo.reload')}
       </Button>
     ) : undefined;
   return (
@@ -323,28 +370,27 @@ function NoVideoState({
       {kind === 'youtube-no-video' ? (
         <EmptyState
           icon={<MonitorPlay size={20} aria-hidden="true" />}
-          title="这个 YouTube 页面没有正在播放的视频"
+          title={t('sidepanel.noVideo.ytTitle')}
         >
-          打开一个视频页面后，这里会显示翻译控制。
+          {t('sidepanel.noVideo.ytBody')}
         </EmptyState>
       ) : (
         <EmptyState
           icon={<MonitorPlay size={20} aria-hidden="true" />}
-          title="当前标签不是 YouTube 视频页"
+          title={t('sidepanel.noVideo.notYtTitle')}
           actions={reload}
         >
-          在 www.youtube.com 打开视频后即可开始翻译。如果当前就是刚打开或刚安装扩展前打开的 YouTube
-          页面，请刷新该页面。
+          {t('sidepanel.noVideo.notYtBody')}
         </EmptyState>
       )}
       {configMessage && (
         <div style={{ padding: '0 12px 12px' }}>
           <EmptyState
-            title="尚未配置翻译服务"
+            title={t('sidepanel.noVideo.configTitle')}
             actions={
               onOpenSettings ? (
                 <Button size="sm" onClick={onOpenSettings}>
-                  查看设置
+                  {t('sidepanel.noVideo.viewSettings')}
                 </Button>
               ) : undefined
             }

@@ -179,8 +179,20 @@ describe('defaultTargetLanguageFor', () => {
     expect(defaultTargetLanguageFor('de-AT')).toBe('de');
   });
 
+  it('扩充后的目标语言也按界面语言匹配', () => {
+    expect(defaultTargetLanguageFor('it-IT')).toBe('it');
+    expect(defaultTargetLanguageFor('pt-BR')).toBe('pt');
+    expect(defaultTargetLanguageFor('ru')).toBe('ru');
+    expect(defaultTargetLanguageFor('uk-UA')).toBe('uk');
+    expect(defaultTargetLanguageFor('ar')).toBe('ar');
+    expect(defaultTargetLanguageFor('hi-IN')).toBe('hi');
+    expect(defaultTargetLanguageFor('th')).toBe('th');
+    expect(defaultTargetLanguageFor('vi')).toBe('vi');
+    expect(defaultTargetLanguageFor('id-ID')).toBe('id');
+  });
+
   it('不受支持的界面语言退回英文，而不是中文', () => {
-    for (const ui of ['ru', 'pt-BR', 'ar', 'hi-IN', 'vi'])
+    for (const ui of ['sw', 'he-IL', 'fa', 'el', 'ms-MY'])
       expect(defaultTargetLanguageFor(ui)).toBe('en');
   });
 

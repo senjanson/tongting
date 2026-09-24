@@ -53,6 +53,10 @@ const SOURCE_NAMES: Record<string, string> = {
   id: 'Indonesian',
   ar: 'Arabic',
   hi: 'Hindi',
+  nl: 'Dutch',
+  pl: 'Polish',
+  tr: 'Turkish',
+  uk: 'Ukrainian',
 };
 
 export function languagePromptName(code: string): string {

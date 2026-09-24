@@ -5,6 +5,7 @@
  */
 import { KeyRound } from 'lucide-react';
 import { browser } from 'wxt/browser';
+import { useLocale, useT } from '../../i18n/react';
 import { Button, type ButtonProps } from '../components/controls';
 import { useToast } from '../components/toast';
 import { errorMessageOf } from '../state/client';
@@ -23,13 +24,16 @@ export function GrantPermissionButton({
   url,
   target = 'service',
   onGranted,
-  label = '授予访问权限',
+  label,
   disabled,
   ...rest
 }: GrantPermissionButtonProps) {
   const client = useUiClient();
   const notify = useToast();
-  const check = target === 'local-asr' ? checkLocalAsrUrl(url) : checkServiceUrl(url);
+  const locale = useLocale();
+  const t = useT();
+  const check =
+    target === 'local-asr' ? checkLocalAsrUrl(url, locale) : checkServiceUrl(url, locale);
   const demo = client.mode === 'demo';
 
   const onClick = () => {
@@ -39,7 +43,7 @@ export function GrantPermissionButton({
       // 同步调用，保持用户手势。
       request = browser.permissions.request({ origins: [check.pattern] });
     } catch {
-      notify('无法申请访问权限，请在扩展详情页手动授予。', 'danger');
+      notify(t('common.permission.requestUnavailable'), 'danger');
       return;
     }
     void request.then(
@@ -47,16 +51,16 @@ export function GrantPermissionButton({
         try {
           await client.sendCommand({ kind: 'permissions/changed' });
         } catch (error) {
-          notify(`权限状态同步失败：${errorMessageOf(error)}`, 'warning');
+          notify(t('common.permission.syncFailed', { detail: errorMessageOf(error) }), 'warning');
         }
         if (granted) {
-          notify(`已授予访问 ${check.origin} 的权限。`, 'success');
+          notify(t('common.permission.granted', { origin: check.origin }), 'success');
           onGranted?.();
         } else {
-          notify('未授予访问权限，扩展无法向该地址发送请求。', 'warning');
+          notify(t('common.permission.denied'), 'warning');
         }
       },
-      () => notify('申请访问权限失败，请检查地址后重试。', 'danger'),
+      () => notify(t('common.permission.requestFailed'), 'danger'),
     );
   };
 
@@ -65,10 +69,16 @@ export function GrantPermissionButton({
       icon={<KeyRound size={15} aria-hidden="true" />}
       onClick={onClick}
       disabled={disabled || !check.ok || demo}
-      title={demo ? '演示模式下不可用' : check.ok ? `申请访问 ${check.pattern}` : check.reason}
+      title={
+        demo
+          ? t('common.permission.demoDisabled')
+          : check.ok
+            ? t('common.permission.requestTitle', { pattern: check.pattern })
+            : check.reason
+      }
       {...rest}
     >
-      {label}
+      {label ?? t('common.permission.grant')}
     </Button>
   );
 }

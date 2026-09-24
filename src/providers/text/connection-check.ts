@@ -25,6 +25,7 @@ import { discoverModels } from './models';
 import type { FormatMode } from './protocol';
 import { createSub2apiTextProvider } from './text-provider';
 import type { ConnectionCheckResultItem, HttpTransport, TranslateBatchInput } from './types';
+import { t } from '../../i18n';
 
 export interface TextConnectionCheckParams {
   provider: ProviderSettings;
@@ -57,11 +58,16 @@ export const PROBE_INPUT: TranslateBatchInput = {
 
 const PROTOCOL_LABEL = { responses: 'Responses', chat: 'Chat Completions' } as const;
 
-const FORMAT_LABEL: Record<FormatMode, string> = {
-  json_schema: '结构化输出 json_schema（严格模式）',
-  json_object: 'JSON 模式（服务拒绝了 json_schema，已降级）',
-  prompt: '仅靠提示词约束 JSON（服务不支持结构化输出，已降级，格式错误风险更高）',
-};
+function formatLabel(mode: FormatMode): string {
+  switch (mode) {
+    case 'json_schema':
+      return t('background.check.formatJsonSchema');
+    case 'json_object':
+      return t('background.check.formatJsonObject');
+    case 'prompt':
+      return t('background.check.formatPrompt');
+  }
+}
 
 function clip(message: string): string {
   return message.length > 300 ? `${message.slice(0, 297)}…` : message;
@@ -69,7 +75,7 @@ function clip(message: string): string {
 
 function withDetail(message: string, error: AppErrorInfo): string {
   const detail = sanitizeDetail(error.detail, 80);
-  return clip(detail ? `${message}（服务返回：${detail}）` : message);
+  return clip(detail ? t('background.check.withDetail', { message, detail }) : message);
 }
 
 /** 这些格式错误说明模型确实返回了内容（只是不合格），可以据此确认 Key 与模型被接受。 */
@@ -113,7 +119,8 @@ export async function runTextConnectionCheck(
     extra: Omit<TextConnectionCheckResult, 'items'> = {},
   ): TextConnectionCheckResult => {
     const out: ConnectionCheckResultItem[] = order.map(
-      (key) => items.get(key) ?? { key, status: 'unknown', message: '未检查：前置检查未通过。' },
+      (key) =>
+        items.get(key) ?? { key, status: 'unknown', message: t('background.check.skippedPrereq') },
     );
     return { items: out, ...extra };
   };
@@ -130,19 +137,22 @@ export async function runTextConnectionCheck(
       message: normalized.error.message,
       reasonCode: normalized.error.code,
     });
-    set('hostPermission', { status: 'unknown', message: '未检查：请先填写有效的服务地址。' });
+    set('hostPermission', { status: 'unknown', message: t('background.check.skippedBaseUrl') });
     return finish();
   }
   const origin = normalized.origin;
   if (!params.hasHostPermission) {
     set('hostPermission', {
       status: 'failed',
-      message: `尚未授予访问 ${origin} 的权限：请在设置页点击「授权访问」后重新检查。`,
+      message: t('background.check.hostPermissionMissing', { origin }),
       reasonCode: 'host-permission-missing',
     });
     return finish();
   }
-  set('hostPermission', { status: 'verified', message: `已授予访问 ${origin} 的权限。` });
+  set('hostPermission', {
+    status: 'verified',
+    message: t('background.check.hostPermissionGranted', { origin }),
+  });
 
   const apiKey = params.apiKey?.trim() || '';
   const transport = params.transport ?? createFetchTransport();
@@ -164,15 +174,19 @@ export async function runTextConnectionCheck(
     });
     const latencyMs = Math.max(0, now() - listStart);
     reachable = true;
-    set('reachability', { status: 'verified', message: '服务可以连接。', latencyMs });
+    set('reachability', {
+      status: 'verified',
+      message: t('background.check.reachable'),
+      latencyMs,
+    });
     if (apiKey) {
       listAccepted = true;
       set('modelList', {
         status: models.length > 0 ? 'verified' : 'failed',
         message:
           models.length > 0
-            ? `服务列出了 ${models.length} 个模型；列表不代表每个模型都有权限，所选模型仍需实测。`
-            : '服务返回了空的模型列表，可手动填写模型 ID 继续检查。',
+            ? t('background.check.modelListCount', { count: models.length })
+            : t('background.check.modelListEmpty'),
         latencyMs,
         reasonCode: models.length > 0 ? undefined : 'model-list-empty',
       });
@@ -185,7 +199,7 @@ export async function runTextConnectionCheck(
       reachable = true;
       set('reachability', {
         status: 'verified',
-        message: '服务可以连接（收到了 HTTP 响应）。',
+        message: t('background.check.reachableHttp'),
         latencyMs,
       });
     } else {
@@ -194,9 +208,7 @@ export async function runTextConnectionCheck(
     if (info.httpStatus === 401) {
       set('auth', {
         status: 'failed',
-        message: apiKey
-          ? 'API Key 无效或已失效（401）：请重新填写 Key。'
-          : '尚未填写 API Key：请先填写 Key 再检查。',
+        message: apiKey ? t('background.check.keyInvalid') : t('background.check.keyMissing'),
         reasonCode: apiKey ? info.code : 'api-key-missing',
       });
       return finish();
@@ -206,7 +218,7 @@ export async function runTextConnectionCheck(
         set('modelList', {
           status: 'failed',
           message: withDetail(
-            `获取模型列表失败：${info.message} 下面仍会用手动填写的模型实测。`,
+            t('background.check.modelListFailedStillTest', { message: info.message }),
             info,
           ),
           reasonCode: info.code,
@@ -214,26 +226,28 @@ export async function runTextConnectionCheck(
       } else if (info.httpStatus === 404 || info.httpStatus === 405 || info.httpStatus === 501) {
         set('modelList', {
           status: 'unsupported',
-          message: '服务未提供模型列表接口：请手动填写模型 ID，下面的模型检查仍会实测。',
+          message: t('background.check.modelListUnsupported'),
           reasonCode: info.code,
         });
       } else if (info.httpStatus === 403) {
         set('modelList', {
           status: 'failed',
-          message: '当前 Key 无权读取模型列表（403）：可手动填写模型 ID，下面的模型检查仍会实测。',
+          message: t('background.check.modelListForbidden'),
           reasonCode: info.code,
         });
       } else if (info.category === 'format') {
         set('modelList', {
           status: 'failed',
-          message:
-            '返回的不是模型列表 JSON：请确认 Base URL 指向 API 根地址；可手动填写模型 ID 继续。',
+          message: t('background.check.modelListNotJson'),
           reasonCode: info.code,
         });
       } else {
         set('modelList', {
           status: 'failed',
-          message: withDetail(`获取模型列表失败：${info.message} 可手动填写模型 ID 继续。`, info),
+          message: withDetail(
+            t('background.check.modelListFailed', { message: info.message }),
+            info,
+          ),
           reasonCode: info.code,
         });
       }
@@ -242,7 +256,7 @@ export async function runTextConnectionCheck(
   if (!apiKey) {
     set('auth', {
       status: 'failed',
-      message: '尚未填写 API Key：请先填写 Key 再检查。',
+      message: t('background.check.keyMissing'),
       reasonCode: 'api-key-missing',
     });
     if (!reachable && unreachableError) {
@@ -257,7 +271,7 @@ export async function runTextConnectionCheck(
   if (listAccepted) {
     set('auth', {
       status: 'unknown',
-      message: '模型列表接口接受了该 Key；是否能调用翻译以下方翻译测试为准。',
+      message: t('background.check.authListOnly'),
     });
   }
 
@@ -267,14 +281,14 @@ export async function runTextConnectionCheck(
   if (!model) {
     set('model', {
       status: 'failed',
-      message: '尚未选择模型：请从列表选择或手动填写模型 ID。',
+      message: t('background.check.modelMissing'),
       reasonCode: 'model-missing',
     });
     if (!reachable && unreachableError) {
       set('reachability', {
         status: 'unknown',
         message: withDetail(
-          `模型列表请求未得到响应（${unreachableError.message}），且未填写模型，无法用翻译调用确认可达性。`,
+          t('background.check.reachabilityUnconfirmed', { message: unreachableError.message }),
           unreachableError,
         ),
         reasonCode: unreachableError.code,
@@ -333,53 +347,62 @@ export async function runTextConnectionCheck(
     if (detectedProtocol || (lastError && gotHttpResponse(lastError))) {
       set('reachability', {
         status: 'verified',
-        message: '服务可以连接（翻译接口有响应；模型列表请求未成功）。',
+        message: t('background.check.reachableViaTranslation'),
         latencyMs: translationLatency,
       });
     } else {
       const reason = lastError ?? unreachableError;
       set('reachability', {
         status: 'failed',
-        message: reason ? withDetail(reason.message, reason) : '无法连接到服务。',
+        message: reason ? withDetail(reason.message, reason) : t('background.check.unreachable'),
         reasonCode: reason?.code,
       });
-      set('auth', { status: 'unknown', message: '未能确认：服务不可达。' });
-      set('model', { status: 'unknown', message: '未能确认：服务不可达。' });
+      set('auth', { status: 'unknown', message: t('background.check.unconfirmedUnreachable') });
+      set('model', { status: 'unknown', message: t('background.check.unconfirmedUnreachable') });
       set('translation', {
         status: 'failed',
-        message: '翻译测试未完成：服务不可达。',
+        message: t('background.check.translationUnreachable'),
         reasonCode: reason?.code,
       });
       if (includeStreaming) {
-        set('streaming', { status: 'unknown', message: '未检查：需先通过翻译测试。' });
+        set('streaming', {
+          status: 'unknown',
+          message: t('background.check.skippedNeedsTranslation'),
+        });
       }
       return finish({ models });
     }
   }
 
   if (detectedProtocol) {
-    set('auth', { status: 'verified', message: 'API Key 已通过翻译调用验证。' });
+    set('auth', { status: 'verified', message: t('background.check.authVerified') });
     set('model', {
       status: 'verified',
       message:
         inList === false
-          ? `模型 ${model} 可以调用（未出现在模型列表中，但实测可用）。`
-          : `模型 ${model} 可以调用。`,
+          ? t('background.check.modelVerifiedNotListed', { model })
+          : t('background.check.modelVerified', { model }),
     });
     const keepsNumber = /3|三/.test(translatedText);
     const keepsNegation = /不|没|别|勿|未|无|莫/.test(translatedText);
-    const note =
-      keepsNumber && keepsNegation ? '' : '；注意：测试译文未保留数字或否定，建议对比其他模型';
+    const note = keepsNumber && keepsNegation ? '' : t('background.check.qualityNote');
     set('translation', {
       status: 'verified',
-      message: `翻译测试通过（${PROTOCOL_LABEL[detectedProtocol]}；${FORMAT_LABEL[formatMode]}；结果与目标语言校验通过${note}）。`,
+      message: t('background.check.translationPassed', {
+        protocol: PROTOCOL_LABEL[detectedProtocol],
+        format: formatLabel(formatMode),
+        note,
+      }),
       latencyMs: translationLatency,
       reasonCode: formatMode === 'json_schema' ? undefined : `format-${formatMode}`,
     });
   } else if (lastError) {
     applyTranslationError(set, lastError, model, protocols, unsupportedCount, listAccepted);
     if (includeStreaming) {
-      set('streaming', { status: 'unknown', message: '未检查：需先通过翻译测试。' });
+      set('streaming', {
+        status: 'unknown',
+        message: t('background.check.skippedNeedsTranslation'),
+      });
     }
     return finish({ models });
   }
@@ -412,20 +435,23 @@ export async function runTextConnectionCheck(
       if (end === 'json-fallback' || end === undefined) {
         set('streaming', {
           status: 'unsupported',
-          message: '服务忽略了流式参数并返回普通 JSON：请关闭「流式返回」。',
+          message: t('background.check.streamIgnored'),
           reasonCode: 'stream-ignored',
         });
       } else if (end === 'finish-reason-only') {
         set('streaming', {
           status: 'verified',
-          message: `流式返回内容完整，但只收到 finish_reason、没有收到 [DONE] 结束事件（部分结果 ${partials} 次）；如遇截断请关闭「流式返回」。`,
+          message: t('background.check.streamNoDone', { count: partials }),
           latencyMs: result.latencyMs,
           reasonCode: 'stream-no-done',
         });
       } else {
         set('streaming', {
           status: 'verified',
-          message: `流式返回正常（收到${detectedProtocol === 'chat' ? ' [DONE]' : ' response.completed'} 结束事件，部分结果 ${partials} 次）。`,
+          message: t('background.check.streamOk', {
+            end: detectedProtocol === 'chat' ? '[DONE]' : 'response.completed',
+            count: partials,
+          }),
           latencyMs: result.latencyMs,
         });
       }
@@ -435,19 +461,19 @@ export async function runTextConnectionCheck(
       if (info.code === 'unsupported-parameter' || isEndpointUnsupported(info)) {
         set('streaming', {
           status: 'unsupported',
-          message: withDetail('服务不接受流式请求：请关闭「流式返回」。', info),
+          message: withDetail(t('background.check.streamRejected'), info),
           reasonCode: info.code,
         });
       } else if (info.code === 'stream-interrupted') {
         set('streaming', {
           status: 'failed',
-          message: '流式响应没有正常结束（缺少结束事件或连接中断）：建议关闭「流式返回」。',
+          message: t('background.check.streamInterrupted'),
           reasonCode: info.code,
         });
       } else {
         set('streaming', {
           status: 'failed',
-          message: withDetail(`流式测试失败：${info.message}`, info),
+          message: withDetail(t('background.check.streamFailed', { message: info.message }), info),
           reasonCode: info.code,
         });
       }
@@ -470,8 +496,8 @@ function applyTranslationError(
     set('auth', {
       status: 'unknown',
       message: listAccepted
-        ? '模型列表接口接受了该 Key，但翻译调用没有成功，无法最终确认。'
-        : '未能单独确认 Key 是否有效：请参考下方模型与翻译检查结果。',
+        ? t('background.check.authListButTranslateFailed')
+        : t('background.check.authUnconfirmed'),
     });
   }
   if (unsupportedCount >= protocols.length) {
@@ -479,9 +505,11 @@ function applyTranslationError(
       status: 'unsupported',
       message:
         protocols.length > 1
-          ? '服务既不支持 Responses 也不支持 Chat Completions 接口：请确认 Base URL 是否为 sub2api 的 API 地址。'
+          ? t('background.check.noProtocol')
           : withDetail(
-              `服务不支持 ${PROTOCOL_LABEL[protocols[0]!]} 接口：请在设置中切换协议或改为自动检测。`,
+              t('background.check.protocolUnsupported', {
+                protocol: PROTOCOL_LABEL[protocols[0]!],
+              }),
               error,
             ),
       reasonCode: code,
@@ -492,81 +520,84 @@ function applyTranslationError(
     case 'auth':
       set('auth', {
         status: 'failed',
-        message: 'API Key 无效或已失效（401）：请重新填写 Key。',
+        message: t('background.check.keyInvalid'),
         reasonCode: code,
       });
-      set('model', { status: 'unknown', message: '未检查：认证未通过。' });
+      set('model', { status: 'unknown', message: t('background.check.skippedAuthFailed') });
       set('translation', {
         status: 'failed',
-        message: '翻译测试未通过：认证失败。',
+        message: t('background.check.translationAuthFailed'),
         reasonCode: code,
       });
       return;
     case 'permission':
       set('model', {
         status: 'failed',
-        message: withDetail(
-          `没有使用模型 ${model} 的权限（403）：请检查 Key 所属分组的模型权限，或更换模型。`,
-          error,
-        ),
+        message: withDetail(t('background.check.modelForbidden', { model }), error),
         reasonCode: code,
       });
       set('translation', {
         status: 'failed',
-        message: '翻译测试未通过：模型无权限。',
+        message: t('background.check.translationModelForbidden'),
         reasonCode: code,
       });
       return;
     case 'config':
       set('model', {
         status: 'failed',
-        message: withDetail(
-          `服务找不到模型 ${model}：请确认模型 ID 拼写，或从模型列表中选择。`,
-          error,
-        ),
+        message: withDetail(t('background.check.modelNotFound', { model }), error),
         reasonCode: code,
       });
       set('translation', {
         status: 'failed',
-        message: '翻译测试未通过：模型不可用。',
+        message: t('background.check.translationModelUnavailable'),
         reasonCode: code,
       });
       return;
     case 'format':
       if (MODEL_OUTPUT_ERROR_CODES.has(code)) {
         // 翻译接口返回了 200 但内容不合格：Key 与模型确实被接受了。
-        set('auth', { status: 'verified', message: 'API Key 已被翻译接口接受（返回了内容）。' });
+        set('auth', {
+          status: 'verified',
+          message: t('background.check.authAcceptedByTranslation'),
+        });
         set('model', {
           status: 'verified',
-          message: `模型 ${model} 可以调用，但返回内容未通过校验。`,
+          message: t('background.check.modelOutputInvalid', { model }),
         });
         set('translation', {
           status: 'failed',
-          message: withDetail(
-            '模型返回的译文未通过格式或语言校验：建议更换模型，或将推理参数改为「不发送」后重试。',
-            error,
-          ),
+          message: withDetail(t('background.check.translationOutputInvalid'), error),
           reasonCode: code,
         });
       } else {
         // 400 类拒绝（内容审核、上下文等）或响应不是 API JSON（例如网页）：不能据此确认 Key。
         set('auth', {
           status: 'unknown',
-          message: '服务拒绝了本次探测请求，无法据此确认 Key 是否可用于翻译。',
+          message: t('background.check.probeRejected'),
         });
-        set('model', { status: 'unknown', message: '未能确认：探测请求被拒绝。' });
+        set('model', {
+          status: 'unknown',
+          message: t('background.check.unconfirmedProbeRejected'),
+        });
         set('translation', {
           status: 'failed',
-          message: withDetail(`翻译测试未通过：${error.message}`, error),
+          message: withDetail(
+            t('background.check.translationRejected', { message: error.message }),
+            error,
+          ),
           reasonCode: code,
         });
       }
       return;
     default:
-      set('model', { status: 'unknown', message: '未能确认：翻译测试没有得到模型结果。' });
+      set('model', { status: 'unknown', message: t('background.check.unconfirmedNoResult') });
       set('translation', {
         status: 'failed',
-        message: withDetail(`翻译测试失败：${error.message}`, error),
+        message: withDetail(
+          t('background.check.translationFailed', { message: error.message }),
+          error,
+        ),
         reasonCode: code,
       });
   }

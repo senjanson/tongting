@@ -1,16 +1,19 @@
 /**
  * 演示模式数据。仅在用户明确开启演示模式时使用，界面持续显示演示标识。
  * 这里的视频、字幕、模型与声音全部是示例，不代表任何真实服务能力。
+ * 标题、频道、模型与声音名称随界面语言显示；示例字幕固定为英文原文 → 简体中文译文。
  */
 import type { Cue } from '../../domain/cue';
 import { defaultSettings, applySettingsPatch } from '../../domain/settings';
 import type { PageInfo, PlayerState, SessionSnapshot } from '../../domain/session';
+import { translate, type Locale } from '../../i18n';
 import type { AppSnapshot, TtsVoiceInfo } from '../../messaging/ui-protocol';
 
 export const DEMO_TAB_ID = 0;
 export const DEMO_VIDEO_ID = 'DEMO0000001';
 export const DEMO_SESSION_ID = 'demo-session-0001';
-export const DEMO_TITLE = '示例视频：留意身边的小细节（演示）';
+/** 中文界面的示例视频标题。 */
+export const DEMO_TITLE = translate('zh-CN', 'sidepanel.demo.videoTitle');
 export const DEMO_DURATION_MS = 96_000;
 
 const LINES: Array<[number, number, string, string | undefined]> = [
@@ -60,19 +63,23 @@ export function demoCues(): Cue[] {
   }));
 }
 
-export function demoVoices(): TtsVoiceInfo[] {
+export function demoVoices(locale: Locale = 'zh-CN'): TtsVoiceInfo[] {
   return [
-    { voiceName: '示例中文声音 A（演示）', lang: 'zh-CN' },
-    { voiceName: '示例中文声音 B（演示）', lang: 'zh-CN' },
-    { voiceName: '示例英文声音（演示）', lang: 'en-US' },
+    { voiceName: translate(locale, 'sidepanel.demo.voiceZhA'), lang: 'zh-CN' },
+    { voiceName: translate(locale, 'sidepanel.demo.voiceZhB'), lang: 'zh-CN' },
+    { voiceName: translate(locale, 'sidepanel.demo.voiceEn'), lang: 'en-US' },
   ];
 }
 
-export function demoPlayer(currentTimeMs: number, paused = false): PlayerState {
+export function demoPlayer(
+  currentTimeMs: number,
+  paused = false,
+  locale: Locale = 'zh-CN',
+): PlayerState {
   return {
     videoId: DEMO_VIDEO_ID,
-    title: DEMO_TITLE,
-    channel: '示例频道',
+    title: translate(locale, 'sidepanel.demo.videoTitle'),
+    channel: translate(locale, 'sidepanel.demo.channel'),
     currentTimeMs,
     durationMs: DEMO_DURATION_MS,
     paused,
@@ -90,21 +97,32 @@ export function demoPlayer(currentTimeMs: number, paused = false): PlayerState {
   };
 }
 
-export function demoPage(player: PlayerState): PageInfo {
+export function demoPage(player: PlayerState, locale: Locale = 'zh-CN'): PageInfo {
   return {
     tabId: DEMO_TAB_ID,
     documentId: 'demo-document',
     url: `https://www.youtube.com/watch?v=${DEMO_VIDEO_ID}`,
     videoId: DEMO_VIDEO_ID,
-    title: DEMO_TITLE,
+    title: translate(locale, 'sidepanel.demo.videoTitle'),
     player,
-    tracks: [{ trackKey: 'demo.en', languageCode: 'en', label: 'English（示例）', kind: 'manual' }],
+    tracks: [
+      {
+        trackKey: 'demo.en',
+        languageCode: 'en',
+        label: translate(locale, 'sidepanel.demo.track'),
+        kind: 'manual',
+      },
+    ],
     captionsAvailability: 'available',
     connectedAt: Date.now(),
   };
 }
 
-export function demoSession(player: PlayerState, cues: readonly Cue[]): SessionSnapshot {
+export function demoSession(
+  player: PlayerState,
+  cues: readonly Cue[],
+  locale: Locale = 'zh-CN',
+): SessionSnapshot {
   const done = cues.filter((c) => c.translationState === 'done').length;
   return {
     identity: {
@@ -123,7 +141,7 @@ export function demoSession(player: PlayerState, cues: readonly Cue[]): SessionS
     sourceTrack: {
       trackKey: 'demo.en',
       languageCode: 'en',
-      label: 'English（示例）',
+      label: translate(locale, 'sidepanel.demo.track'),
       kind: 'manual',
     },
     detectedSourceLanguage: 'en',
@@ -140,7 +158,7 @@ export function demoSession(player: PlayerState, cues: readonly Cue[]): SessionS
       pending: cues.length - done,
       running: 0,
       failed: 0,
-      model: '示例模型（演示）',
+      model: translate(locale, 'sidepanel.demo.model'),
     },
     resources: { capture: 'none', asr: 'idle', tts: 'idle', activeTracks: 0, pendingRequests: 0 },
     cueVersion: 1,
@@ -150,8 +168,8 @@ export function demoSession(player: PlayerState, cues: readonly Cue[]): SessionS
   };
 }
 
-export function demoSnapshot(version: number): AppSnapshot {
-  const player = demoPlayer(16_000);
+export function demoSnapshot(version: number, locale: Locale = 'zh-CN'): AppSnapshot {
+  const player = demoPlayer(16_000, false, locale);
   const cues = demoCues();
   const settings = applySettingsPatch(defaultSettings(), {
     provider: { baseUrl: 'https://sub2api.example.invalid' },
@@ -168,8 +186,8 @@ export function demoSnapshot(version: number): AppSnapshot {
     asrToken: { configured: false, generation: 0, storage: 'none' },
     hostPermission: { origin: 'https://sub2api.example.invalid', granted: true },
     capabilities: {},
-    pages: [demoPage(player)],
-    sessions: [demoSession(player, cues)],
+    pages: [demoPage(player, locale)],
+    sessions: [demoSession(player, cues, locale)],
     audioOwner: null,
   };
 }

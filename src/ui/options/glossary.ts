@@ -2,6 +2,7 @@
  * 术语表草稿校验（纯函数）。
  */
 import type { GlossaryEntry } from '../../domain/settings';
+import { translate, type Locale } from '../../i18n';
 
 export const MAX_GLOSSARY_ENTRIES = 500;
 export const MAX_GLOSSARY_TERM = 100;
@@ -17,7 +18,10 @@ export type GlossaryValidation =
   | { ok: false; errors: Map<number, string>; message: string };
 
 /** 去掉完全空白的行；半填写、超长、重复原文都视为错误。 */
-export function validateGlossary(rows: readonly GlossaryDraftRow[]): GlossaryValidation {
+export function validateGlossary(
+  rows: readonly GlossaryDraftRow[],
+  locale: Locale = 'zh-CN',
+): GlossaryValidation {
   const errors = new Map<number, string>();
   const entries: GlossaryEntry[] = [];
   const seen = new Map<string, number>();
@@ -26,24 +30,36 @@ export function validateGlossary(rows: readonly GlossaryDraftRow[]): GlossaryVal
     const target = row.target.trim();
     if (!source && !target) continue;
     if (!source || !target) {
-      errors.set(row.key, '原文与译文都需要填写。');
+      errors.set(row.key, translate(locale, 'options.glossary.bothRequired'));
       continue;
     }
     if (source.length > MAX_GLOSSARY_TERM || target.length > MAX_GLOSSARY_TERM) {
-      errors.set(row.key, `每项最多 ${MAX_GLOSSARY_TERM} 个字符。`);
+      errors.set(
+        row.key,
+        translate(locale, 'options.glossary.tooLong', { max: MAX_GLOSSARY_TERM }),
+      );
       continue;
     }
     const dupKey = source.toLowerCase();
     if (seen.has(dupKey)) {
-      errors.set(row.key, '原文与前面的条目重复。');
+      errors.set(row.key, translate(locale, 'options.glossary.duplicate'));
       continue;
     }
     seen.set(dupKey, row.key);
     entries.push({ source, target });
   }
   if (entries.length > MAX_GLOSSARY_ENTRIES) {
-    return { ok: false, errors, message: `术语表最多 ${MAX_GLOSSARY_ENTRIES} 条。` };
+    return {
+      ok: false,
+      errors,
+      message: translate(locale, 'options.glossary.tooMany', { max: MAX_GLOSSARY_ENTRIES }),
+    };
   }
-  if (errors.size > 0) return { ok: false, errors, message: `有 ${errors.size} 行需要修正。` };
+  if (errors.size > 0)
+    return {
+      ok: false,
+      errors,
+      message: translate(locale, 'options.glossary.rowsInvalid', { count: errors.size }),
+    };
   return { ok: true, entries };
 }

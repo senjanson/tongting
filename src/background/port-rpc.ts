@@ -3,6 +3,7 @@
  */
 import { AppError } from '../domain/errors';
 import type { AppErrorInfo } from '../domain/errors';
+import { t } from '../i18n';
 
 interface Pending {
   resolve(data: unknown): void;
@@ -29,7 +30,7 @@ export class PendingRequests {
             code: 'request-timeout',
             category: 'timeout',
             retryable: true,
-            message: '页面或后台组件响应超时',
+            message: t('background.rpc.timeout'),
           }),
         );
       }, timeoutMs);
@@ -75,6 +76,6 @@ function disconnectedError(): AppError {
     code: 'port-disconnected',
     category: 'internal',
     retryable: true,
-    message: '连接已断开',
+    message: t('background.rpc.disconnected'),
   });
 }

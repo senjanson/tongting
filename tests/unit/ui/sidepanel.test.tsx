@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { ToastProvider, useToast } from '@src/ui/components/toast';
 import { Dialog } from '@src/ui/components/layout';
@@ -41,6 +41,11 @@ function renderPanel(client: StaticClient, activeTab: ActiveTabState = videoTab)
 function connected(snapshot: AppSnapshot) {
   return { connection: 'connected' as const, snapshot, reconnectAttempts: 0 };
 }
+
+// 界面语言跟随浏览器（快照中 uiLocale 默认 auto）：本文件的断言使用中文界面。
+beforeEach(() => {
+  vi.spyOn(fakeBrowser.i18n, 'getUILanguage').mockReturnValue('zh-CN');
+});
 
 afterEach(() => {
   cleanup();

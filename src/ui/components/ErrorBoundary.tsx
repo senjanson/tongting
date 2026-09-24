@@ -1,7 +1,9 @@
 /**
  * 页面级错误边界：渲染异常时显示可操作的提示，而不是空白页面。不展示堆栈。
+ * 位于语言 Provider 之外，文案使用页面根部同步的当前语言（getLocale）。
  */
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { getLocale, translate } from '../../i18n';
 import { Button } from './controls';
 import { EmptyState } from './layout';
 
@@ -26,16 +28,17 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
 
   override render() {
     if (!this.state.failed) return this.props.children;
+    const locale = getLocale();
     return (
       <EmptyState
-        title="界面出现错误"
+        title={translate(locale, 'common.errorBoundary.title')}
         actions={
           <Button variant="primary" onClick={() => window.location.reload()}>
-            重新加载此页面
+            {translate(locale, 'common.errorBoundary.reload')}
           </Button>
         }
       >
-        正在进行的翻译不受影响（由后台管理）。重新加载后会从后台重新读取真实状态。
+        {translate(locale, 'common.errorBoundary.body')}
       </EmptyState>
     );
   }

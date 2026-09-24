@@ -208,6 +208,18 @@
   padding: 10px 0;
   font-size: 12px;
 }
+/* 英文标签较长：缩小间距；窄屏（如 320px）只显示文字，避免最后一个标签被截断。 */
+.app:lang(en) > [role='tablist'] {
+  gap: 12px;
+}
+.app:lang(en) > [role='tablist'] > button {
+  gap: 4px;
+}
+@media (max-width: 360px) {
+  .app:lang(en) > [role='tablist'] > button > svg {
+    display: none;
+  }
+}
 .pane > section + section {
   margin-top: 18px;
   padding-top: 16px;

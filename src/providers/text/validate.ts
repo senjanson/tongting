@@ -65,11 +65,22 @@ export interface ValidationOutcome {
   extraIds: number;
 }
 
-const CJK_TARGET: Record<string, RegExp> = {
+/** 使用非拉丁文字的目标语言：译文里至少应出现该文字。 */
+const SCRIPT_TARGET: Record<string, RegExp> = {
   zh: /[\u3400-\u9fff\uf900-\ufaff]/u,
   ja: /[\u3040-\u30ff\u3400-\u9fff]/u,
   ko: /[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f]/u,
+  ru: /\p{Script=Cyrillic}/u,
+  uk: /\p{Script=Cyrillic}/u,
+  ar: /\p{Script=Arabic}/u,
+  hi: /\p{Script=Devanagari}/u,
+  th: /\p{Script=Thai}/u,
 };
+
+/** 使用非拉丁文字的语言对应的文字判定；其余语言返回 undefined。 */
+export function targetScriptPattern(language: string): RegExp | undefined {
+  return SCRIPT_TARGET[primaryLanguageTag(language)];
+}
 const CJK_ANY = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uf900-\ufaff]/gu;
 const LETTER = /\p{L}/gu;
 
@@ -94,9 +105,9 @@ export function detectItemIssue(
   if (out.length > 40 + src.length * 5) return 'too-long';
 
   const target = primaryLanguageTag(targetLanguage);
-  const targetScript = CJK_TARGET[target];
+  const targetScript = SCRIPT_TARGET[target];
   if (targetScript) {
-    // 目标为中/日/韩，但一段自然拉丁语句的译文没有任何目标文字 → 很可能没有翻译。
+    // 目标为中/日/韩/西里尔/阿拉伯等文字，但一段自然拉丁语句的译文没有任何目标文字 → 很可能没有翻译。
     if (!targetScript.test(out) && looksLikeLatinSentence(src) && countMatches(src, LETTER) >= 12) {
       return 'wrong-language';
     }

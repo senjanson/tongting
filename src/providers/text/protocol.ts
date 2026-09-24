@@ -6,6 +6,7 @@ import { AppError, type AppErrorInfo } from '../../domain/errors';
 import type { SseEvent } from './sse';
 import type { TokenUsage } from './types';
 import { isQuotaCode, sanitizeDetail } from './http-errors';
+import { t } from '../../i18n';
 
 /**
  * 输出格式模式：
@@ -81,7 +82,7 @@ export function truncatedOutputError(): AppError {
     code: 'output-truncated',
     category: 'format',
     retryable: true,
-    message: '模型输出被截断，本批结果已丢弃，稍后会以更小的批次重试。',
+    message: t('background.protocol.truncated'),
   });
 }
 
@@ -90,7 +91,7 @@ export function refusedError(detail?: string): AppError {
     code: 'model-refused',
     category: 'format',
     retryable: true,
-    message: '模型拒绝翻译这段字幕，已标记为失败，可稍后重试或更换模型。',
+    message: t('background.protocol.refused'),
     detail: sanitizeDetail(detail),
   });
 }
@@ -100,7 +101,7 @@ export function emptyOutputError(): AppError {
     code: 'empty-output',
     category: 'format',
     retryable: true,
-    message: '模型没有返回译文内容，稍后可重试。',
+    message: t('background.protocol.empty'),
   });
 }
 
@@ -117,7 +118,7 @@ export function errorFromPayload(errorValue: unknown): AppError {
       code: 'rate-limited',
       category: 'rate-limit',
       retryable: true,
-      message: '请求过于频繁（服务在响应中报告限流），已暂停预取并稍后重试。',
+      message: t('background.protocol.rateLimited'),
       detail,
     });
   }
@@ -126,7 +127,7 @@ export function errorFromPayload(errorValue: unknown): AppError {
       code: 'quota-exhausted',
       category: 'quota',
       retryable: false,
-      message: '服务提示余额或额度不足：请到 sub2api 后台确认余额与分组额度后再试。',
+      message: t('background.protocol.quota'),
       detail,
     });
   }
@@ -134,7 +135,7 @@ export function errorFromPayload(errorValue: unknown): AppError {
     code: 'upstream-error',
     category: 'server',
     retryable: true,
-    message: '服务在处理过程中返回错误，稍后会自动重试。',
+    message: t('background.protocol.serverError'),
     detail,
   });
 }

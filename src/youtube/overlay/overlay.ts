@@ -18,6 +18,7 @@ import {
   type SessionCuesMsg,
 } from './cue-store';
 import { OVERLAY_CSS } from './styles';
+import { t, type MessageKey } from '../../i18n';
 
 export interface CaptionOverlayOptions {
   doc: Document;
@@ -47,15 +48,15 @@ export interface CaptionOverlay {
 /** 强制下一次 render 重新写入 DOM 的哨兵值（不会与 cue key 冲突）。 */
 const FORCE_RENDER = '#force';
 
-const PHASE_LABEL: Record<SessionPhase, string> = {
-  idle: '未开始',
-  configuring: '需要配置',
-  starting: '正在准备',
-  running: '运行中',
-  pausing: '正在暂停',
-  paused: '已暂停',
-  stopping: '正在停止',
-  error: '出错',
+const PHASE_LABEL: Record<SessionPhase, MessageKey> = {
+  idle: 'background.overlay.phase.idle',
+  configuring: 'background.overlay.phase.configuring',
+  starting: 'background.overlay.phase.starting',
+  running: 'background.overlay.phase.running',
+  pausing: 'background.overlay.phase.pausing',
+  paused: 'background.overlay.phase.paused',
+  stopping: 'background.overlay.phase.stopping',
+  error: 'background.overlay.phase.error',
 };
 
 export function createCaptionOverlay(opts: CaptionOverlayOptions): CaptionOverlay {
@@ -191,8 +192,8 @@ export function createCaptionOverlay(opts: CaptionOverlayOptions): CaptionOverla
     host.hidden = !visible;
     if (!visible || !session) return;
 
-    const label = session.statusText?.trim() || PHASE_LABEL[session.phase];
-    setText(badgeEl, `同听 · ${label}`);
+    const label = session.statusText?.trim() || t(PHASE_LABEL[session.phase]);
+    setText(badgeEl, t('background.overlay.badge', { label }));
 
     const selection = !ad && sessionMatchesPage() ? currentSelection() : undefined;
     const cue = selection?.cue;

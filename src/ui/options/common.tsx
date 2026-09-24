@@ -4,6 +4,8 @@
 import { CircleCheck, CircleDashed, CircleX } from 'lucide-react';
 import { useId, type ReactNode } from 'react';
 import type { CapabilityStatus } from '../../domain/capability';
+import { translate, type Locale } from '../../i18n';
+import { useLocale, useT } from '../../i18n/react';
 import { capabilityStatusLabel } from '../format';
 import styles from './options.module.css';
 
@@ -45,12 +47,16 @@ export function CapabilityStatusText({
   status: CapabilityStatus | undefined;
   message?: string;
 }) {
+  const t = useT();
+  const locale = useLocale();
+  const label = capabilityStatusLabel(status, locale);
   return (
     <span className={styles.status}>
       <StatusIcon status={status} />
       <span>
-        {capabilityStatusLabel(status)}
-        {message && status !== 'verified' ? `：${message}` : ''}
+        {message && status !== 'verified'
+          ? t('options.check.statusWithMessage', { status: label, message })
+          : label}
       </span>
     </span>
   );
@@ -67,13 +73,16 @@ export function draftValue(draft: Draft, external: string): string {
 }
 
 /** 凭证保存位置说明。storage 为 none 表示只在后台内存中，随时可能丢失。 */
-export function credentialStorageText(storage: 'none' | 'session' | 'local'): string {
+export function credentialStorageText(
+  storage: 'none' | 'session' | 'local',
+  locale: Locale = 'zh-CN',
+): string {
   switch (storage) {
     case 'local':
-      return '保存在本机扩展存储';
+      return translate(locale, 'options.connection.storageLocal');
     case 'session':
-      return '仅保存在本次浏览器会话（扩展重载或浏览器重启后清除）';
+      return translate(locale, 'options.connection.storageSession');
     case 'none':
-      return '未保存，仅本次后台运行期间有效，可能随时丢失';
+      return translate(locale, 'options.connection.storageNone');
   }
 }

@@ -51,6 +51,7 @@ const welcome = {
   type: 'welcome',
   protocolVersion: CONTENT_PROTOCOL_VERSION,
   workerInstanceId: 'w1',
+  locale: 'zh-CN',
 };
 
 function setup(overrides: Partial<Parameters<typeof createPortClient>[0]> = {}) {

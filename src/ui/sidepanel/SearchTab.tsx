@@ -1,21 +1,73 @@
-import { Check, ChevronRight, Copy, History, Pencil, Search, Sparkles, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ArrowRight,
+  Check,
+  ChevronRight,
+  Copy,
+  History,
+  Pencil,
+  Search,
+  Sparkles,
+  X,
+} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  DEFAULT_TARGET_LANGUAGE,
+  TARGET_LANGUAGES,
+  primaryLanguageTag,
+} from '../../domain/languages';
+import {
+  DEFAULT_SEARCH_KEYWORD_LANGUAGE,
   SEARCH_HISTORY_LIMIT,
   SEARCH_KEYWORD_MAX_LENGTH,
   SearchInputSchema,
   SearchKeywordSchema,
+  resolveSearchLanguages,
+  searchRecordLanguages,
+  type SearchLanguages,
   type SearchRecord,
 } from '../../domain/search';
+import { translate, type Locale } from '../../i18n';
+import { useLocale, useT } from '../../i18n/react';
 import { randomId } from '../../messaging/ports';
-import { Button, IconButton } from '../components/controls';
+import { Button, IconButton, SelectField } from '../components/controls';
 import { useToast } from '../components/toast';
+import { formatDate, languageLabel, searchLanguageName } from '../format';
 import { copyText } from '../shared/clipboard';
+import { useSettingsUpdater } from '../shared/hooks';
 import { openYouTubeSearch } from '../shared/navigation';
 import { errorInfoOf, errorMessageOf } from '../state/client';
 import { deriveServiceConfig } from '../state/derive';
 import { useClientState, useUiClient } from '../state/hooks';
 import styles from './search.module.css';
+
+/** 界面文案中的两种语言名；同为中文时区分简繁。 */
+function languageNames({ userLanguage, keywordLanguage }: SearchLanguages, locale: Locale) {
+  return {
+    user: searchLanguageName(userLanguage, keywordLanguage, locale),
+    keyword: searchLanguageName(keywordLanguage, userLanguage, locale),
+  };
+}
+
+function sameLanguages(a: SearchLanguages, b: SearchLanguages): boolean {
+  return a.userLanguage === b.userLanguage && a.keywordLanguage === b.keywordLanguage;
+}
+
+function historyLanguages(record: SearchRecord, locale: Locale): string {
+  const names = languageNames(searchRecordLanguages(record), locale);
+  return `${names.user} → ${names.keyword}`;
+}
+
+/** 示例用用户所选的输入语言书写（中文、英文有现成示例），其他语言显示界面语言的说明。 */
+function placeholderFor(userLanguage: string, userName: string, locale: Locale): string {
+  switch (primaryLanguageTag(userLanguage)) {
+    case 'zh':
+      return '例如：新手怎么用 AI 剪辑 YouTube 视频';
+    case 'en':
+      return 'e.g. How can beginners edit YouTube videos with AI?';
+    default:
+      return translate(locale, 'sidepanel.search.placeholder', { language: userName });
+  }
+}
 
 export function SearchTab({
   onOpenSettings,
@@ -30,6 +82,19 @@ export function SearchTab({
   const { snapshot, connection } = useClientState();
   const config = deriveServiceConfig(snapshot);
   const notify = useToast();
+  const updateSettings = useSettingsUpdater();
+  const locale = useLocale();
+  const t = useT();
+  const languageOptions = useMemo(
+    () => TARGET_LANGUAGES.map((l) => ({ value: l.code, label: languageLabel(l.code, locale) })),
+    [locale],
+  );
+  // 设置未载入时只用于显示；生成按钮在此之前不可用。
+  const languages: SearchLanguages = snapshot
+    ? resolveSearchLanguages(snapshot.settings)
+    : { userLanguage: DEFAULT_TARGET_LANGUAGE, keywordLanguage: DEFAULT_SEARCH_KEYWORD_LANGUAGE };
+  const names = languageNames(languages, locale);
+  const sameLanguage = languages.userLanguage === languages.keywordLanguage;
   const [record, setRecord] = useState<SearchRecord | null>(null);
   const [keywords, setKeywords] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -55,9 +120,9 @@ export function SearchTab({
       setHistoryError('');
     } catch {
       if (mounted.current && version === historyVersion.current.value)
-        setHistoryError('最近生成记录未能读取，请稍后重新展开。');
+        setHistoryError(t('sidepanel.search.historyLoadFailed'));
     }
-  }, [client]);
+  }, [client, t]);
 
   useEffect(() => {
     mounted.current = true;
@@ -102,7 +167,7 @@ export function SearchTab({
     if (operation.current || clearing || connection !== 'connected' || !config.ready) return;
     const input = SearchInputSchema.safeParse(query);
     if (!input.success) {
-      setError('请输入 1–300 字的搜索内容。');
+      setError(t('sidepanel.search.inputInvalid'));
       return;
     }
     const id = randomId('search');
@@ -115,6 +180,9 @@ export function SearchTab({
         kind: 'search/generate',
         operationId: id,
         query: input.data,
+        // 携带界面当前显示的语言：刚切换、设置尚未写回时也按用户看到的语言生成。
+        userLanguage: languages.userLanguage,
+        keywordLanguage: languages.keywordLanguage,
       });
       if (!mounted.current || operation.current !== id) return;
       display(result.record);
@@ -127,12 +195,12 @@ export function SearchTab({
           ),
         );
         setHistoryError('');
-      } else setHistoryError('搜索词已生成，但历史记录保存失败；当前仍可复制和搜索。');
+      } else setHistoryError(t('sidepanel.search.historySaveFailed'));
     } catch (failure) {
       if (mounted.current && operation.current === id)
         setError(
           errorInfoOf(failure)?.category === 'cancelled'
-            ? '请求已取消或服务配置发生变化，请重新生成。'
+            ? t('sidepanel.search.cancelled')
             : errorMessageOf(failure),
         );
     } finally {
@@ -146,7 +214,7 @@ export function SearchTab({
   function saveEdit(index: number) {
     const parsed = SearchKeywordSchema.safeParse(editDraft);
     if (!parsed.success) {
-      setEditError(`请输入 1–${SEARCH_KEYWORD_MAX_LENGTH} 字符的单行英文搜索词。`);
+      setEditError(t('sidepanel.search.keywordInvalid', { max: SEARCH_KEYWORD_MAX_LENGTH }));
       return;
     }
     setKeywords((old) => old.map((value, i) => (i === index ? parsed.data : value)));
@@ -157,7 +225,7 @@ export function SearchTab({
   async function search(index: number) {
     if (openingRef.current) return;
     if (client.mode === 'demo') {
-      notify('演示模式不打开真实搜索页面。', 'info');
+      notify(t('sidepanel.search.demoNoOpen'), 'info');
       return;
     }
     openingRef.current = true;
@@ -165,7 +233,7 @@ export function SearchTab({
     try {
       await openYouTubeSearch(keywords[index]!);
     } catch {
-      if (mounted.current) notify('未能打开 YouTube 搜索，请重试或复制关键词。', 'danger');
+      if (mounted.current) notify(t('sidepanel.search.openFailed'), 'danger');
     } finally {
       openingRef.current = false;
       if (mounted.current) setOpening(null);
@@ -185,21 +253,30 @@ export function SearchTab({
         setHistoryError('');
       }
     } catch {
-      if (mounted.current) setHistoryError('清空失败，历史记录仍保留，请重试。');
+      if (mounted.current) setHistoryError(t('sidepanel.search.clearFailed'));
     } finally {
       if (mounted.current) setClearing(false);
     }
   }
 
+  const recordNames = record ? languageNames(searchRecordLanguages(record), locale) : names;
+  const current =
+    !!record &&
+    record.query === query.trim() &&
+    sameLanguages(searchRecordLanguages(record), languages);
+  const languageDisabled = busy || clearing || !snapshot || connection !== 'connected';
+
   return (
     <div className={styles.pane}>
-      <h2 className={styles.title}>用中文，搜英文</h2>
-      <p className={styles.intro}>说出你想看的内容，找到更合适的搜索词。</p>
+      <h2 className={styles.title}>
+        {t('sidepanel.search.title', { user: names.user, keyword: names.keyword })}
+      </h2>
+      <p className={styles.intro}>{t('sidepanel.search.intro')}</p>
       {!config.ready && (
         <div className={styles.config} role="status">
-          <p>{config.message || '请先在设置中配置翻译服务。'}</p>
+          <p>{config.message || t('sidepanel.search.configFallback')}</p>
           <Button size="sm" onClick={onOpenSettings}>
-            打开设置
+            {t('common.openSettings')}
           </Button>
         </div>
       )}
@@ -209,15 +286,34 @@ export function SearchTab({
           void generate();
         }}
       >
+        <div className={styles.languages}>
+          <SelectField
+            label={t('sidepanel.search.userLanguage')}
+            value={languages.userLanguage}
+            options={languageOptions}
+            disabled={languageDisabled}
+            onChange={(userLanguage) => void updateSettings({ search: { userLanguage } })}
+          />
+          <span className={styles.arrow} aria-hidden="true">
+            <ArrowRight size={15} />
+          </span>
+          <SelectField
+            label={t('sidepanel.search.keywordLanguage')}
+            value={languages.keywordLanguage}
+            options={languageOptions}
+            disabled={languageDisabled}
+            onChange={(keywordLanguage) => void updateSettings({ search: { keywordLanguage } })}
+          />
+        </div>
         <label className={styles.label} htmlFor="search-topic">
-          你想在 YouTube 上找什么？
+          {t('sidepanel.search.question')}
         </label>
         <textarea
           id="search-topic"
           className={styles.input}
           rows={3}
           maxLength={300}
-          placeholder="例如：新手怎么用 AI 剪辑 YouTube 视频"
+          placeholder={placeholderFor(languages.userLanguage, names.user, locale)}
           value={query}
           disabled={busy || clearing}
           onChange={(event) => {
@@ -236,7 +332,9 @@ export function SearchTab({
           }}
         />
         <div className={styles.inputMeta}>
-          <span>1 条原文直译 + 2 条简短搜索词</span>
+          <span>
+            {sameLanguage ? t('sidepanel.search.metaSame') : t('sidepanel.search.metaDiff')}
+          </span>
           <span>{query.length} / 300</span>
         </div>
         <Button
@@ -250,14 +348,14 @@ export function SearchTab({
           }
         >
           {busy
-            ? '正在生成搜索词…'
-            : record?.query === query.trim()
-              ? '重新生成英文搜索词'
-              : '生成英文搜索词'}
+            ? t('sidepanel.search.generating')
+            : current
+              ? t('sidepanel.search.regenerate', { keyword: names.keyword })
+              : t('sidepanel.search.generate', { keyword: names.keyword })}
         </Button>
         {busy && (
           <Button block variant="ghost" size="sm" onClick={cancel}>
-            取消生成
+            {t('sidepanel.search.cancel')}
           </Button>
         )}
       </form>
@@ -268,18 +366,26 @@ export function SearchTab({
       )}
       <section
         className={styles.results}
-        aria-label="英文搜索词"
+        aria-label={t('sidepanel.search.keywords', { keyword: recordNames.keyword })}
         aria-busy={busy}
         aria-live="polite"
       >
         {record ? (
           <>
             <div className={styles.resultHead}>
-              <span>{busy || record.query !== query.trim() ? '上次生成' : '英文搜索词'}</span>
-              <span>中文注释 · 可编辑</span>
+              <span>
+                {busy || !current
+                  ? t('sidepanel.search.previous')
+                  : t('sidepanel.search.keywords', { keyword: recordNames.keyword })}
+              </span>
+              <span>{t('sidepanel.search.notes', { user: recordNames.user })}</span>
             </div>
-            {(busy || record.query !== query.trim()) && (
-              <p className={styles.previous}>{record.query}</p>
+            {(busy || !current) && (
+              <p className={styles.previous}>
+                {record.query}
+                {!sameLanguages(searchRecordLanguages(record), languages) &&
+                  ` · ${recordNames.user} → ${recordNames.keyword}`}
+              </p>
             )}
             {record.items.map((item, index) => (
               <article className={styles.result} key={`${record.id}:${index}`}>
@@ -289,7 +395,7 @@ export function SearchTab({
                 {editing === index ? (
                   <>
                     <label className={styles.label} htmlFor={`keyword-${index}`}>
-                      编辑英文搜索词
+                      {t('sidepanel.search.editLabel', { keyword: recordNames.keyword })}
                     </label>
                     <textarea
                       id={`keyword-${index}`}
@@ -321,7 +427,7 @@ export function SearchTab({
                     )}
                     <div className={styles.actions}>
                       <Button size="sm" onClick={() => setEditing(null)}>
-                        取消
+                        {t('common.cancel')}
                       </Button>
                       <Button
                         size="sm"
@@ -329,7 +435,7 @@ export function SearchTab({
                         icon={<Check size={14} />}
                         onClick={() => saveEdit(index)}
                       >
-                        保存
+                        {t('common.save')}
                       </Button>
                     </div>
                   </>
@@ -338,11 +444,13 @@ export function SearchTab({
                     <p className={styles.english}>{keywords[index]}</p>
                     <p className={styles.meaning}>{item.annotation}</p>
                     {keywords[index] !== item.keyword && (
-                      <p className={styles.editNote}>已编辑 · 中文注释对应原建议</p>
+                      <p className={styles.editNote}>
+                        {t('sidepanel.search.edited', { user: recordNames.user })}
+                      </p>
                     )}
                     <div className={styles.actions}>
                       <IconButton
-                        label={`编辑搜索词 ${index + 1}`}
+                        label={t('sidepanel.search.editAria', { index: index + 1 })}
                         icon={<Pencil size={14} />}
                         onClick={() => {
                           setEditing(index);
@@ -357,13 +465,15 @@ export function SearchTab({
                           void copyText(keywords[index]!).then((ok) => {
                             if (mounted.current)
                               notify(
-                                ok ? '英文搜索词已复制。' : '复制失败，请选中英文词手动复制。',
+                                ok
+                                  ? t('sidepanel.search.copied', { keyword: recordNames.keyword })
+                                  : t('sidepanel.search.copyFailed'),
                                 ok ? 'success' : 'warning',
                               );
                           });
                         }}
                       >
-                        复制
+                        {t('common.copy')}
                       </Button>
                       <Button
                         size="sm"
@@ -373,7 +483,7 @@ export function SearchTab({
                         disabled={opening !== null}
                         onClick={() => void search(index)}
                       >
-                        搜索
+                        {t('common.search')}
                       </Button>
                     </div>
                   </>
@@ -385,7 +495,11 @@ export function SearchTab({
           !busy && (
             <div className={styles.empty}>
               <Search size={21} aria-hidden="true" />
-              <p>输入中文后，这里会显示英文搜索词和中文注释。</p>
+              <p>
+                {sameLanguage
+                  ? t('sidepanel.search.emptySame', { user: names.user })
+                  : t('sidepanel.search.emptyDiff', { user: names.user, keyword: names.keyword })}
+              </p>
             </div>
           )
         )}
@@ -399,9 +513,9 @@ export function SearchTab({
       >
         <summary>
           <History size={14} aria-hidden="true" />
-          最近生成 <span>{history.length}</span>
+          {t('sidepanel.search.recent')} <span>{history.length}</span>
         </summary>
-        <p className={styles.historyHint}>仅保存在本机，最多 20 条。载入记录不会再次调用 AI。</p>
+        <p className={styles.historyHint}>{t('sidepanel.search.historyHint')}</p>
         {history.length ? (
           <>
             <ul>
@@ -421,7 +535,8 @@ export function SearchTab({
                     <span>
                       {item.query}
                       <small>
-                        {new Date(item.createdAt).toLocaleDateString('zh-CN')} · {item.model}
+                        {formatDate(item.createdAt, locale)} · {historyLanguages(item, locale)} ·{' '}
+                        {item.model}
                       </small>
                     </span>
                     <ChevronRight size={14} aria-hidden="true" />
@@ -431,7 +546,7 @@ export function SearchTab({
             </ul>
           </>
         ) : (
-          <p className={styles.historyHint}>还没有生成记录。</p>
+          <p className={styles.historyHint}>{t('sidepanel.search.historyEmpty')}</p>
         )}
         {(history.length > 0 || historyError) && (
           <Button
@@ -442,7 +557,7 @@ export function SearchTab({
             icon={<X size={14} aria-hidden="true" />}
             onClick={() => void clearHistory()}
           >
-            清空历史记录
+            {t('sidepanel.search.clearHistory')}
           </Button>
         )}
       </details>
@@ -452,7 +567,7 @@ export function SearchTab({
         </p>
       )}
       {client.mode === 'demo' && (
-        <p className={styles.historyHint}>演示使用固定示例，不调用 AI，也不打开真实搜索。</p>
+        <p className={styles.historyHint}>{t('sidepanel.search.demoHint')}</p>
       )}
     </div>
   );

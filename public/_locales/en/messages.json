@@ -1,0 +1,22 @@
+{
+  "extName": {
+    "message": "Tongting — YouTube Translate",
+    "description": "Extension name shown in the Chrome Web Store and the extensions page."
+  },
+  "extDescription": {
+    "message": "Translated subtitles and dubbing for YouTube videos, powered by your own sub2api service.",
+    "description": "Extension description."
+  },
+  "actionTitle": {
+    "message": "Tongting",
+    "description": "Tooltip of the toolbar button."
+  },
+  "commandToggleTranslation": {
+    "message": "Pause / resume translation",
+    "description": "Keyboard shortcut description."
+  },
+  "commandToggleCaptions": {
+    "message": "Show / hide translated subtitles",
+    "description": "Keyboard shortcut description."
+  }
+}

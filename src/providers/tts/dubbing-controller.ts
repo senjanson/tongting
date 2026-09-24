@@ -26,6 +26,7 @@ import type {
   TtsEngineEvent,
 } from './types';
 import { selectVoice } from './voices';
+import { t as tr } from '../../i18n';
 
 type TimerHandle = unknown;
 
@@ -318,7 +319,7 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
         error: toAppErrorInfo(error, {
           code: 'tts-speak-failed',
           category: 'tts',
-          message: '配音朗读启动失败',
+          message: tr('background.dubbing.speakFailed'),
         }),
       });
     }
@@ -362,7 +363,7 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
               code: 'tts-no-voice',
               category: 'unsupported',
               retryable: false,
-              message: `没有可用于「${label}」的配音声音，配音不可用，字幕仍可正常使用。可在设置中改用其他配音服务。`,
+              message: tr('background.dubbing.noVoice', { language: label }),
             }).info,
           };
           lastError = voice.error;
@@ -378,7 +379,7 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
           error: toAppErrorInfo(error, {
             code: 'tts-voices-failed',
             category: 'tts',
-            message: '无法读取可用配音声音列表',
+            message: tr('background.dubbing.voicesUnavailable'),
           }),
         };
         lastError = voice.error;
@@ -458,7 +459,7 @@ export function createDubbingController(deps: DubbingControllerDeps): DubbingCon
           code: 'tts-start-timeout',
           category: 'tts',
           retryable: true,
-          message: '配音引擎长时间没有开始朗读，已跳过该句。',
+          message: tr('background.dubbing.stalled'),
         }).info;
         emit({ type: 'error', cueId: target.cue.id, error: lastError });
         if (errorStreak >= policy.maxErrorStreak) return;

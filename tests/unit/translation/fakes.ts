@@ -52,9 +52,17 @@ export class FakeClock implements SchedulerTimers {
   }
 }
 
-/** 让 microtask / webcrypto 回调跑完。 */
+const BARRIER = new Uint8Array(1);
+
+/**
+ * 让 microtask / webcrypto 回调跑完。缓存键的 SHA-256 在线程池中计算，慢机器（CI）上
+ * 只让出事件循环不足以等到它完成：每轮先做一次摘要作为屏障（线程池按序取任务），再让出一轮。
+ */
 export async function settle(rounds = 8): Promise<void> {
-  for (let i = 0; i < rounds; i++) await new Promise<void>((r) => setImmediate(r));
+  for (let i = 0; i < rounds; i++) {
+    await crypto.subtle.digest('SHA-256', BARRIER);
+    await new Promise<void>((r) => setImmediate(r));
+  }
 }
 
 export async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {

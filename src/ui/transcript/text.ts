@@ -2,6 +2,8 @@
  * 字幕文本的显示与复制格式（纯函数）。
  */
 import type { Cue } from '../../domain/cue';
+import { interimMark, untranslatedMark } from '../../export/format';
+import type { Locale } from '../../i18n';
 import { formatMediaTime } from '../format';
 
 export type CueViewMode = 'translation' | 'original' | 'bilingual';
@@ -16,25 +18,30 @@ export function translationOf(cue: Cue): string | undefined {
   return hasFinalTranslation(cue) ? cue.translatedText : undefined;
 }
 
-/** 复制用文本：未完成翻译时明确标注，不把原文冒充译文；临时识别结果标记「[临时]」（与导出一致）。 */
-export function cueCopyText(cue: Cue, mode: CueViewMode): string {
-  const time = `[${formatMediaTime(cue.startMs)}]${cue.stability === 'interim' ? ' [临时]' : ''}`;
+/** 复制用文本：未完成翻译时明确标注，不把原文冒充译文；临时识别结果加标记（与导出一致，按界面语言）。 */
+export function cueCopyText(cue: Cue, mode: CueViewMode, locale: Locale = 'zh-CN'): string {
+  const untranslated = untranslatedMark(locale);
+  const time = `[${formatMediaTime(cue.startMs)}]${cue.stability === 'interim' ? ` ${interimMark(locale)}` : ''}`;
   const translated = translationOf(cue);
   switch (mode) {
     case 'original':
       return `${time} ${cue.sourceText}`;
     case 'translation':
-      return translated ? `${time} ${translated}` : `${time} [未翻译] ${cue.sourceText}`;
+      return translated ? `${time} ${translated}` : `${time} ${untranslated} ${cue.sourceText}`;
     case 'bilingual':
-      if (!translated) return `${time} [未翻译] ${cue.sourceText}`;
+      if (!translated) return `${time} ${untranslated} ${cue.sourceText}`;
       return translated === cue.sourceText
         ? `${time} ${translated}`
         : `${time} ${translated}\n${cue.sourceText}`;
   }
 }
 
-export function cuesCopyText(cues: readonly Cue[], mode: CueViewMode): string {
-  return cues.map((c) => cueCopyText(c, mode)).join('\n\n');
+export function cuesCopyText(
+  cues: readonly Cue[],
+  mode: CueViewMode,
+  locale: Locale = 'zh-CN',
+): string {
+  return cues.map((c) => cueCopyText(c, mode, locale)).join('\n\n');
 }
 
 export function matchesQuery(cue: Cue, query: string): boolean {

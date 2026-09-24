@@ -8,6 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getLocale } from '@src/i18n';
 import { CONTENT_PROTOCOL_VERSION } from '@src/messaging/content-protocol';
 import { installMainWorldBridge } from '@src/youtube/bridge/main-world';
 import { startYoutubeContent, type YoutubeContentController } from '@src/youtube/controller';
@@ -159,7 +160,7 @@ afterEach(() => {
   controllers = [];
 });
 
-function start(opts: { connect?: boolean; videoId?: string } = {}) {
+function start(opts: { connect?: boolean; videoId?: string; uiLanguage?: string } = {}) {
   // 桥的正文缓存在整个文件内共享：需要「未缓存」轨道的用例使用独立 videoId。
   if (opts.videoId) realWin.happyDOM.setURL(`https://www.youtube.com/watch?v=${opts.videoId}`);
   let wakeCb: (() => void) | undefined;
@@ -184,6 +185,7 @@ function start(opts: { connect?: boolean; videoId?: string } = {}) {
       invalidate = cb;
     },
     pageInstanceId: 'pg-test-0001',
+    uiLanguage: opts.uiLanguage,
     onWakeMessage: (cb) => {
       wakeCb = cb;
       return () => {
@@ -211,6 +213,7 @@ function start(opts: { connect?: boolean; videoId?: string } = {}) {
       type: 'welcome',
       protocolVersion: CONTENT_PROTOCOL_VERSION,
       workerInstanceId: 'w-1',
+      locale: 'zh-CN',
     });
     port().receive({
       type: 'display/settings',
@@ -223,6 +226,7 @@ function start(opts: { connect?: boolean; videoId?: string } = {}) {
         offsetMs: 0,
       },
       targetLanguage: 'zh-CN',
+      locale: 'zh-CN',
     });
     port().receive({ type: 'session/state', session });
   };
@@ -476,6 +480,7 @@ describe('youtube content controller', () => {
       type: 'welcome',
       protocolVersion: CONTENT_PROTOCOL_VERSION,
       workerInstanceId: 'w-2',
+      locale: 'zh-CN',
     });
     await vi.waitFor(() => expect(t.root.querySelector(`[${TT_ATTRS.overlayHost}]`)).toBeNull());
   });
@@ -605,5 +610,32 @@ describe('review fixes: navigation, requests and metadata retry', () => {
     await vi.waitFor(() => expect(t.controller.debug().availability).toBe('available'));
     const tracks = t.port().ofType('captions/tracks').at(-1) as { availability?: string };
     expect(tracks.availability).toBe('available');
+  });
+
+  it('shows overlay labels in the locale sent by the worker and switches when it changes', async () => {
+    const t = start({ uiLanguage: 'en-US' });
+    expect(getLocale()).toBe('en');
+    t.workerHandshake(sessionA);
+    const badge = () =>
+      t.root
+        .querySelector(`[${TT_ATTRS.overlayHost}]`)
+        ?.shadowRoot?.querySelector<HTMLElement>('.badge')?.textContent;
+    // worker 下发的是中文（用户在设置中选择了中文），优先于浏览器界面语言。
+    await vi.waitFor(() => expect(badge()).toBe('同听 · 运行中'));
+    t.port().receive({
+      type: 'display/settings',
+      captions: {
+        enabled: true,
+        bilingual: true,
+        position: 'bottom',
+        fontSizePx: 22,
+        backgroundOpacity: 0.75,
+        offsetMs: 0,
+      },
+      targetLanguage: 'zh-CN',
+      locale: 'en',
+    });
+    await vi.waitFor(() => expect(badge()).toBe('Tongting · Running'));
+    expect(getLocale()).toBe('en');
   });
 });

@@ -31,6 +31,26 @@ describe('local search history', () => {
     await searchHistory.save({ ...searchRecord, query: '新的查询' }, signal());
     expect((await searchHistory.list())[1]).toEqual(legacy);
   });
+  it('reads legacy Chinese→English records next to new multilingual records', async () => {
+    const multilingual = {
+      ...searchRecord,
+      id: 'search-ja-ko',
+      query: '料理の基本を学びたい',
+      userLanguage: 'ja',
+      keywordLanguage: 'ko',
+      items: [
+        { label: '直訳', keyword: '요리 기초를 배우고 싶어요', annotation: '料理の基本を学びたい' },
+        { label: '入門', keyword: '요리 기초', annotation: '料理の基本' },
+        { label: 'レシピ', keyword: '초보 요리 레시피', annotation: '初心者向けレシピ' },
+      ],
+    };
+    const db = await openTongtingDb();
+    await db.put('meta', { key: 'search-history-v1', value: [searchRecord] });
+    await searchHistory.save(multilingual, signal());
+    const records = await searchHistory.list();
+    expect(records).toEqual([multilingual, searchRecord]);
+    expect(records[1]).not.toHaveProperty('userLanguage');
+  });
   it('serializes concurrent writes, bounds history to 20 and replaces repeated topics', async () => {
     await Promise.all(
       Array.from({ length: 25 }, (_, i) =>

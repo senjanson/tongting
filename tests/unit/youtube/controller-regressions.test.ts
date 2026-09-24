@@ -212,6 +212,7 @@ function start(opts: { connect?: boolean; videoId?: string } = {}) {
       type: 'welcome',
       protocolVersion: CONTENT_PROTOCOL_VERSION,
       workerInstanceId: 'w-1',
+      locale: 'zh-CN',
     });
     port().receive({
       type: 'display/settings',
@@ -224,6 +225,7 @@ function start(opts: { connect?: boolean; videoId?: string } = {}) {
         offsetMs: 0,
       },
       targetLanguage: 'zh-CN',
+      locale: 'zh-CN',
     });
     port().receive({ type: 'session/state', session });
   };

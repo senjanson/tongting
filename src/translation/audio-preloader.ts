@@ -2,6 +2,7 @@ import { mergeRanges, type TimeRange } from '../domain/cue';
 import { AppError, toAppErrorInfo, type AppErrorInfo } from '../domain/errors';
 import { PreloadRangeError, type YoutubePreloadResult } from '../providers/asr/youtube-preload';
 import { isAutoRetryable, retryDelay } from './retry';
+import { t } from '../i18n';
 
 export interface AudioPreloader {
   update(positionMs: number, durationMs: number, seek?: boolean): void;
@@ -116,7 +117,7 @@ export function createAudioPreloader(deps: {
         const info = toAppErrorInfo(error, {
           code: 'audio-preload-failed',
           category: 'asr',
-          message: '音频预读失败，请重试或切换为「连续播放」。',
+          message: t('background.preload.failed'),
         });
         if (
           isAutoRetryable(info) &&

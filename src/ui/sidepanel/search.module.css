@@ -192,3 +192,20 @@
     font-size: 16px;
   }
 }
+.languages {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
+  gap: 6px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+.languages select {
+  min-width: 0;
+  width: 100%;
+}
+.arrow {
+  height: 36px;
+  display: grid;
+  place-items: center;
+  color: var(--tt-muted);
+}

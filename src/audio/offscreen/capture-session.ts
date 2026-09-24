@@ -35,6 +35,7 @@ import { StreamingResampler } from '../resampler';
 import { PcmSegmenter, type PcmSegment } from '../segmenter';
 import { MediaTimeline, type DropReason } from '../timeline';
 import { PCM_TAP_PROCESSOR_NAME } from './constants';
+import { t as tr } from '../../i18n';
 
 export type CaptureStartRequest = Extract<OffscreenRequest, { kind: 'capture/start' }>;
 export type CaptureEndReason = 'stopped' | 'track-ended' | 'lease-expired' | 'error' | 'superseded';
@@ -121,7 +122,7 @@ function captureError(error: unknown): AppError {
         code: 'capture-permission-denied',
         category: 'capture',
         retryable: false,
-        message: '浏览器拒绝了标签页音频捕获，请在视频页面点击扩展按钮后重新开始。',
+        message: tr('background.offscreen.captureDenied'),
         detail: name,
       },
       { cause: error },
@@ -132,7 +133,7 @@ function captureError(error: unknown): AppError {
       code: 'capture-failed',
       category: 'capture',
       retryable: true,
-      message: '无法捕获标签页音频（捕获标识可能已过期或标签页不可捕获），请重新开始。',
+      message: tr('background.offscreen.captureFailed'),
       detail: name || undefined,
     },
     { cause: error },
@@ -309,7 +310,7 @@ export class CaptureSession {
         code: 'capture-no-audio',
         category: 'capture',
         retryable: true,
-        message: '捕获到的标签页流中没有音频轨道',
+        message: tr('background.offscreen.noAudioTrack'),
       });
     }
     for (const track of audioTracks) {
@@ -362,7 +363,7 @@ export class CaptureSession {
           code: 'capture-audio-graph-failed',
           category: 'audio',
           retryable: true,
-          message: '无法建立音频处理（AudioContext/AudioWorklet）',
+          message: tr('background.offscreen.audioSetupFailed'),
         },
         { cause: error },
       );
@@ -404,7 +405,7 @@ export class CaptureSession {
       this.asrInitError = toAppErrorInfo(error, {
         code: 'asr-init-failed',
         category: 'config',
-        message: '语音识别配置无效',
+        message: tr('background.offscreen.asrConfigInvalid'),
       });
       this.emitAsrError(this.asrInitError);
     }
@@ -440,7 +441,7 @@ export class CaptureSession {
         code: 'audio-context-closed',
         category: 'audio',
         retryable: true,
-        message: '音频处理上下文被意外关闭，已停止识别，请重新开始。',
+        message: tr('background.offscreen.contextClosed'),
         at: this.deps.now(),
       });
       return;
@@ -458,7 +459,7 @@ export class CaptureSession {
       code: 'capture-track-ended',
       category: 'capture',
       retryable: true,
-      message: '标签页音频捕获已结束（标签页关闭、导航或权限被撤回），需要重新开始。',
+      message: tr('background.offscreen.captureEnded'),
       at: this.deps.now(),
     };
     void this.stop('track-ended');
@@ -564,8 +565,7 @@ export class CaptureSession {
         code: 'asr-input-quiet',
         category: 'audio',
         retryable: true,
-        message:
-          '捕获到的视频声音过小，持续被判为无语音，未送识别。请调高 YouTube 播放器音量或取消静音。',
+        message: tr('background.offscreen.inputQuiet'),
         at: this.deps.now(),
       });
       this.emitStatus(true);
@@ -742,7 +742,7 @@ export class CaptureSession {
         code: 'capture-not-active',
         category: 'capture',
         retryable: false,
-        message: '音频捕获未在运行',
+        message: tr('background.offscreen.notRunning'),
       });
     }
     const param = this.gainNode.gain;

@@ -3,23 +3,27 @@
  * 并给出可执行的下一步（按钮或操作指引）。
  */
 import type { SessionSnapshot } from '../../domain/session';
+import { getLocale, translate, type Locale } from '../../i18n';
+import { useLocale } from '../../i18n/react';
 import { Button, Hint } from '../components/controls';
 import { Callout } from '../components/layout';
 import { errorNextStep, sessionProblem, type NextStepAction } from '../state/derive';
 
-export function problemTitle(session: SessionSnapshot, source: 'session' | 'blocked'): string {
-  if (source === 'blocked') return '翻译受阻';
+export function problemTitle(
+  session: SessionSnapshot,
+  source: 'session' | 'blocked',
+  locale: Locale = getLocale(),
+): string {
+  if (source === 'blocked') return translate(locale, 'common.problem.blocked');
   switch (session.phase) {
-    case 'error':
-      return '翻译出错';
     case 'paused':
     case 'pausing':
-      return '无法继续翻译';
+      return translate(locale, 'common.problem.cannotResume');
     case 'starting':
     case 'configuring':
-      return '启动受阻';
+      return translate(locale, 'common.problem.startBlocked');
     default:
-      return '翻译出错';
+      return translate(locale, 'common.problem.error');
   }
 }
 
@@ -32,13 +36,14 @@ export function SessionProblemCallout({
   onNextStep(action: NextStepAction): void;
   compact?: boolean;
 }) {
+  const locale = useLocale();
   const problem = sessionProblem(session);
   if (!session || !problem) return null;
-  const next = errorNextStep(problem.error);
+  const next = errorNextStep(problem.error, locale);
   return (
     <Callout
       tone="danger"
-      title={compact ? undefined : problemTitle(session, problem.source)}
+      title={compact ? undefined : problemTitle(session, problem.source, locale)}
       live
       actions={
         next.action !== 'none' ? (

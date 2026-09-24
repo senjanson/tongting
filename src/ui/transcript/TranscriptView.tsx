@@ -10,6 +10,8 @@ import { Bookmark, Copy, Download, Locate, Quote, Search } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { findActiveCue, type Cue } from '../../domain/cue';
 import { describeCoverage } from '../../export';
+import type { MessageKey } from '../../i18n';
+import { useLocale, useT } from '../../i18n/react';
 import { Button, controlStyles, Hint, IconButton, Segmented } from '../components/controls';
 import { cx } from '../components/cx';
 import { EmptyState } from '../components/layout';
@@ -76,6 +78,8 @@ export function TranscriptView({
   initialView = 'bilingual',
   backfill,
 }: TranscriptViewProps) {
+  const t = useT();
+  const locale = useLocale();
   const notify = useToast();
   const [query, setQuery] = useState('');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
@@ -134,23 +138,28 @@ export function TranscriptView({
 
   const handleCopy = useCallback(
     async (cue: Cue) => {
-      const ok = await copyText(cueCopyText(cue, view));
-      notify(ok ? '已复制这句字幕。' : '复制失败，请手动选择文本。', ok ? 'success' : 'danger');
+      const ok = await copyText(cueCopyText(cue, view, locale));
+      notify(
+        t(ok ? 'options.transcript.copied' : 'options.transcript.copyFailed'),
+        ok ? 'success' : 'danger',
+      );
     },
-    [notify, view],
+    [locale, notify, t, view],
   );
 
   const copyAll = async () => {
     if (visible.length === 0) return;
-    const ok = await copyText(cuesCopyText(visible, view));
+    const ok = await copyText(cuesCopyText(visible, view, locale));
     notify(
-      ok ? `已复制 ${visible.length} 条字幕。` : '复制失败，请改用导出。',
+      ok
+        ? t('options.transcript.copiedCount', { count: visible.length })
+        : t('options.transcript.copyAllFailed'),
       ok ? 'success' : 'danger',
     );
   };
 
   const canFollow = currentTimeMs !== undefined;
-  const coverageText = describeCoverage(source.coverage, source.sourceMode);
+  const coverageText = describeCoverage(source.coverage, source.sourceMode, locale);
   const partial = !(source.coverage?.complete && source.sourceMode === 'full-track');
 
   return (
@@ -161,21 +170,23 @@ export function TranscriptView({
           <input
             type="search"
             className={controlStyles.input}
-            placeholder="搜索原文或译文"
-            aria-label="搜索字幕"
+            placeholder={t('options.transcript.searchPlaceholder')}
+            aria-label={t('options.transcript.searchAria')}
             value={query}
             onChange={(e) => setQuery(e.currentTarget.value)}
           />
         </div>
         <IconButton
-          label={favoritesOnly ? '显示全部字幕' : '只看收藏'}
+          label={t(
+            favoritesOnly ? 'options.transcript.showAll' : 'options.transcript.favoritesOnly',
+          )}
           icon={<Bookmark size={16} aria-hidden="true" />}
           pressed={favoritesOnly}
           onClick={() => setFavoritesOnly((v) => !v)}
         />
         {compact && (
           <IconButton
-            label="跟随播放"
+            label={t('options.transcript.follow')}
             icon={<Locate size={16} aria-hidden="true" />}
             pressed={following}
             disabled={!canFollow}
@@ -184,16 +195,16 @@ export function TranscriptView({
         )}
       </div>
       <details className={styles.displayOptions} open={!compact || undefined}>
-        <summary hidden={!compact}>显示与覆盖详情</summary>
+        <summary hidden={!compact}>{t('options.transcript.displayDetails')}</summary>
         <div className={styles.viewRow}>
           <Segmented<CueViewMode>
-            label="字幕显示内容"
+            label={t('options.transcript.viewLabel')}
             value={view}
             onChange={setView}
             options={[
-              { value: 'bilingual', label: '双语' },
-              { value: 'translation', label: '译文' },
-              { value: 'original', label: '原文' },
+              { value: 'bilingual', label: t('options.transcript.viewBilingual') },
+              { value: 'translation', label: t('options.transcript.viewTranslation') },
+              { value: 'original', label: t('options.transcript.viewOriginal') },
             ]}
           />
         </div>
@@ -203,32 +214,48 @@ export function TranscriptView({
       </details>
       <div className={styles.meta}>
         <span>
-          {loading ? '正在同步字幕…' : `${visible.length} / ${cues.length} 条字幕`}
-          {source.kind === 'record' ? ' · 本地记录' : ' · 实时'}
+          {loading
+            ? t('options.transcript.syncing')
+            : t('options.transcript.count', { visible: visible.length, total: cues.length })}
+          {t(
+            source.kind === 'record'
+              ? 'options.transcript.kindRecord'
+              : 'options.transcript.kindLive',
+          )}
         </span>
         <span>
           {!source.recordId
-            ? '字幕记录尚未确定，暂不能收藏'
+            ? t('options.transcript.favoritesUnavailable')
             : favorites.loadFailed
-              ? '收藏读取失败'
+              ? t('options.transcript.favoritesLoadFailed')
               : favorites.loading
-                ? '正在读取收藏…'
-                : `${favorites.ids.size} 条收藏`}
+                ? t('options.transcript.favoritesLoading')
+                : t('options.transcript.favoritesCount', { count: favorites.ids.size })}
         </span>
       </div>
       {backfill && backfill.total > 0 && (backfill.enabled || backfill.done < backfill.total) && (
         <div className={styles.meta}>
           <span>
             {backfill.enabled
-              ? `正在翻译全片：${backfill.done} / ${backfill.total}`
-              : `已翻译 ${backfill.done} / ${backfill.total} 条；翻译全片后可导出完整译文`}
+              ? t('options.transcript.backfillRunning', {
+                  done: backfill.done,
+                  total: backfill.total,
+                })
+              : t('options.transcript.backfillIdle', {
+                  done: backfill.done,
+                  total: backfill.total,
+                })}
           </span>
           <Button
             size="sm"
             onClick={() => backfill.onToggle(!backfill.enabled)}
-            title="播放位置附近的翻译优先；全片翻译每次只发一个请求，会产生额外调用"
+            title={t('options.transcript.backfillTitle')}
           >
-            {backfill.enabled ? '停止翻译全片' : '翻译全片'}
+            {t(
+              backfill.enabled
+                ? 'options.transcript.backfillStop'
+                : 'options.transcript.backfillStart',
+            )}
           </Button>
         </div>
       )}
@@ -239,7 +266,7 @@ export function TranscriptView({
           ref={listRef}
           className={styles.list}
           role="list"
-          aria-label="字幕列表"
+          aria-label={t('options.transcript.listAria')}
           aria-busy={loading || undefined}
           tabIndex={0}
           onWheel={stopFollowing}
@@ -251,8 +278,10 @@ export function TranscriptView({
           onKeyDown={onListKeyDown}
         >
           {visible.length === 0 ? (
-            <EmptyState title={emptyTitle({ loading, total: cues.length, favoritesOnly, query })}>
-              {cues.length === 0 && !loading ? '开始翻译后，已获得的字幕会显示在这里。' : undefined}
+            <EmptyState
+              title={t(emptyTitle({ loading, total: cues.length, favoritesOnly, query }))}
+            >
+              {cues.length === 0 && !loading ? t('options.transcript.emptyBody') : undefined}
             </EmptyState>
           ) : (
             visible.map((cue) => (
@@ -280,7 +309,7 @@ export function TranscriptView({
             icon={<Locate size={14} aria-hidden="true" />}
             onClick={() => setFollowing(true)}
           >
-            跟随播放
+            {t('options.transcript.follow')}
           </Button>
         )}
       </div>
@@ -291,7 +320,11 @@ export function TranscriptView({
           onClick={copyAll}
           disabled={visible.length === 0}
         >
-          复制{favoritesOnly || query ? '筛选结果' : '全部'}
+          {t(
+            favoritesOnly || query
+              ? 'options.transcript.copyFiltered'
+              : 'options.transcript.copyAll',
+          )}
         </Button>
         <Button
           variant="primary"
@@ -299,7 +332,7 @@ export function TranscriptView({
           onClick={() => setExportOpen(true)}
           disabled={cues.length === 0}
         >
-          导出字幕
+          {t('options.transcript.export')}
         </Button>
       </div>
 
@@ -324,11 +357,11 @@ function emptyTitle(args: {
   total: number;
   favoritesOnly: boolean;
   query: string;
-}): string {
-  if (args.loading && args.total === 0) return '正在同步字幕…';
-  if (args.total === 0) return '还没有字幕';
-  if (args.favoritesOnly && !args.query) return '还没有收藏的字幕';
-  return '没有匹配的字幕';
+}): MessageKey {
+  if (args.loading && args.total === 0) return 'options.transcript.syncing';
+  if (args.total === 0) return 'options.transcript.emptyNone';
+  if (args.favoritesOnly && !args.query) return 'options.transcript.emptyFavorites';
+  return 'options.transcript.emptyNoMatch';
 }
 
 interface CueRowProps {
@@ -356,6 +389,7 @@ const CueRow = memo(function CueRow({
   onCopy,
   onQuote,
 }: CueRowProps) {
+  const t = useT();
   const translated = translationOf(cue);
   const time = formatMediaTime(cue.startMs);
   const partialTranslation =
@@ -371,8 +405,8 @@ const CueRow = memo(function CueRow({
     if (view === 'bilingual' && translated !== cue.sourceText) secondary = cue.sourceText;
   } else {
     placeholder = partialTranslation
-      ? `译文生成中：${cue.translatedText}`
-      : translationPlaceholder(cue);
+      ? t('options.transcript.partialTranslation', { text: cue.translatedText ?? '' })
+      : t(translationPlaceholder(cue));
     secondary = cue.sourceText;
   }
 
@@ -388,7 +422,7 @@ const CueRow = memo(function CueRow({
           type="button"
           className={styles.time}
           onClick={() => onSeek(cue)}
-          aria-label={`跳转到 ${time}`}
+          aria-label={t('options.transcript.seekTo', { time })}
         >
           {time}
         </button>
@@ -405,7 +439,9 @@ const CueRow = memo(function CueRow({
         <IconButton
           bare
           className={styles.favorite}
-          label={favorite ? `取消收藏 ${time} 字幕` : `收藏 ${time} 字幕`}
+          label={t(favorite ? 'options.transcript.unfavorite' : 'options.transcript.favorite', {
+            time,
+          })}
           pressed={favorite}
           disabled={favoriteDisabled}
           icon={<Bookmark size={15} aria-hidden="true" />}
@@ -413,14 +449,14 @@ const CueRow = memo(function CueRow({
         />
         <IconButton
           bare
-          label={`复制 ${time} 字幕`}
+          label={t('options.transcript.copyCue', { time })}
           icon={<Copy size={15} aria-hidden="true" />}
           onClick={() => onCopy(cue)}
         />
         {onQuote && (
           <IconButton
             bare
-            label={`把 ${time} 字幕引用到笔记`}
+            label={t('options.transcript.quoteCue', { time })}
             icon={<Quote size={15} aria-hidden="true" />}
             onClick={() => onQuote(cue)}
           />
@@ -430,29 +466,32 @@ const CueRow = memo(function CueRow({
   );
 });
 
-function translationPlaceholder(cue: Cue): string {
+function translationPlaceholder(cue: Cue): MessageKey {
   switch (cue.translationState) {
     case 'pending':
-      return '等待翻译';
+      return 'options.transcript.pending';
     case 'running':
-      return '正在翻译';
+      return 'options.transcript.running';
     default:
-      return '暂无译文';
+      return 'options.transcript.noTranslation';
   }
 }
 
 function CueChips({ cue }: { cue: Cue }) {
+  const t = useT();
   const chips: Array<{ label: string; tone?: 'danger' | 'warning' }> = [];
-  if (cue.stability === 'interim') chips.push({ label: '临时识别', tone: 'warning' });
+  if (cue.stability === 'interim')
+    chips.push({ label: t('options.transcript.chipInterim'), tone: 'warning' });
   if (cue.translationState === 'failed') {
+    // 错误信息由 worker 按当前界面语言生成，原样显示。
     chips.push({
       label: cue.translationError?.message
-        ? `翻译失败：${cue.translationError.message}`
-        : '翻译失败',
+        ? t('options.transcript.chipFailedWith', { message: cue.translationError.message })
+        : t('options.transcript.chipFailed'),
       tone: 'danger',
     });
   }
-  if (cue.endEstimated) chips.push({ label: '结束时间为估计' });
+  if (cue.endEstimated) chips.push({ label: t('options.transcript.chipEstimated') });
   if (chips.length === 0) return null;
   return (
     <div className={styles.chips}>

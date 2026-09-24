@@ -346,3 +346,66 @@ describe('favorites missing from the record', () => {
     expect(result.coverageSummary).toContain('收藏中 1 条已不在当前记录');
   });
 });
+
+describe('interface language of the export header', () => {
+  /** 去掉文件头说明（VTT 的 NOTE 块、TXT 的头部），只留字幕正文。 */
+  function vttBody(text: string): string {
+    return text.split('\n\n').slice(2).join('\n\n');
+  }
+  function txtBody(text: string): string {
+    return text.split('\n\n').slice(1).join('\n\n');
+  }
+
+  it('writes VTT and TXT headers and marks in English without changing cues or timings', () => {
+    // 正文只有标记随界面语言变化，字幕文字与时间轴完全一致。
+    const enMarks = (text: string) =>
+      text.replaceAll('[未翻译]', '[untranslated]').replaceAll('[临时]', '[provisional]');
+    const input = baseInput({ content: 'bilingual', includeInterim: true });
+    const zhVtt = formatVtt(input);
+    const enVtt = formatVtt({ ...input, locale: 'en' });
+    expect(enVtt.text.startsWith('WEBVTT\n\nNOTE Exported by Tongting\n')).toBe(true);
+    expect(enVtt.text).toContain('Title: My: "Video" / Test?');
+    expect(enVtt.text).toContain(
+      'Content: Bilingual: translation (Simplified Chinese) + original (English)',
+    );
+    expect(enVtt.text).toContain(
+      'Coverage: Full caption track (video length 10 min). Exported: 6, untranslated, output as original and marked [untranslated]: 2',
+    );
+    expect(enVtt.text).not.toMatch(/同听|标题：|内容：|覆盖：|本次导出/);
+    expect(vttBody(enVtt.text)).toBe(enMarks(vttBody(zhVtt.text)));
+    expect(vttBody(enVtt.text)).toContain('[untranslated] Not yet');
+    expect(vttBody(enVtt.text)).toContain('[provisional] 临时词');
+    expect(new WebVTTParser().parse(enVtt.text, 'metadata').errors).toEqual([]);
+
+    const zhTxt = formatTxt(input);
+    const enTxt = formatTxt({ ...input, locale: 'en' });
+    expect(enTxt.text.split('\n').slice(0, 4)).toEqual([
+      'Tongting subtitle export',
+      'Title: My: "Video" / Test?',
+      'Video ID: abcdefghijk',
+      'Content: Bilingual: translation (Simplified Chinese) + original (English)',
+    ]);
+    expect(txtBody(enTxt.text)).toBe(enMarks(txtBody(zhTxt.text)));
+    expect(formatTxt({ ...input, cues: [], locale: 'en' }).text).toContain(
+      '(No subtitles to export)',
+    );
+
+    // SRT 没有文件头：正文完全一致；文件名标签随界面语言。
+    const enSrt = formatSrt({ ...input, locale: 'en', scope: 'favorites', favoriteCueIds: ['c1'] });
+    const zhSrt = formatSrt({ ...input, scope: 'favorites', favoriteCueIds: ['c1'] });
+    expect(enSrt.text).toBe(enMarks(zhSrt.text));
+    expect(enSrt.filename).toBe('My Video Test.favorites.bilingual.zh-CN.srt');
+    expect(zhSrt.filename).toBe('My Video Test.收藏.双语.zh-CN.srt');
+    expect(enSrt.coverageSummary).toContain('favorites only');
+  });
+
+  it('describes partial coverage in English', () => {
+    expect(describeCoverage(fullCoverage, 'full-track', 'en')).toBe(
+      'Full caption track (video length 10 min)',
+    );
+    expect(describeCoverage(partialCoverage, 'incremental-captions', 'en')).toBe(
+      'Partial subtitles (not the full video, incremental captions (only on-screen captions are read)): segments covered: 2, 1 min 30 s in total / video 10 min: 00:01:00–00:02:00, 00:05:00–00:05:30; gaps: 1 (not played yet)',
+    );
+    expect(describeCoverage(undefined, undefined, 'en')).toBe('Coverage unknown');
+  });
+});

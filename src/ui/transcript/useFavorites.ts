@@ -8,6 +8,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Cue } from '../../domain/cue';
+import { useT } from '../../i18n/react';
 import { useToast } from '../components/toast';
 import { useRepos } from '../state/repos';
 
@@ -29,6 +30,7 @@ export function useFavorites(
 ): FavoritesState {
   const { favorites } = useRepos();
   const notify = useToast();
+  const t = useT();
   const [loaded, setLoaded] = useState<{
     recordId: string;
     ids: Set<string>;
@@ -110,7 +112,8 @@ export function useFavorites(
           return { ...l, ids };
         });
       } catch {
-        if (currentRecord.current === recordId) notify('收藏状态保存失败，请重试。', 'danger');
+        if (currentRecord.current === recordId)
+          notify(t('options.transcript.favoriteSaveFailed'), 'danger');
       } finally {
         inFlight.current.delete(key);
         setPending((p) => {
@@ -121,7 +124,7 @@ export function useFavorites(
         });
       }
     },
-    [favorites, notify, recordId, videoId],
+    [favorites, notify, recordId, t, videoId],
   );
 
   return {

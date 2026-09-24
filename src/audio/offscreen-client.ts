@@ -30,6 +30,7 @@ import {
 } from '../messaging/ports';
 import type { OffscreenClient, OffscreenRequestOf } from './types';
 import { OFFSCREEN_WAKE_TYPE } from './offscreen/wake';
+import { getLocale, t } from '../i18n';
 
 type TimerHandle = unknown;
 
@@ -197,7 +198,12 @@ export function createOffscreenClient(
     if (port !== target) return;
     port = null;
     hello = null;
-    rejectAll(offscreenError('offscreen-disconnected', `offscreen 连接已断开（${reason}）`));
+    rejectAll(
+      offscreenError(
+        'offscreen-disconnected',
+        t('background.offscreen.disconnectedReason', { reason }),
+      ),
+    );
     if (!closingIntentionally)
       notifyLost({ reason: 'port-disconnected', previousInstanceId: lastInstanceId });
   };
@@ -216,7 +222,7 @@ export function createOffscreenClient(
         const previous = lastInstanceId;
         lastInstanceId = message.status.offscreenInstanceId;
         try {
-          target.postMessage({ type: 'welcome', workerInstanceId });
+          target.postMessage({ type: 'welcome', workerInstanceId, locale: getLocale() });
         } catch {
           detach(target, 'welcome-failed');
           return;
@@ -271,7 +277,7 @@ export function createOffscreenClient(
       };
       const timer = deps.setTimer(() => {
         helloWaiters.delete(waiter);
-        reject(offscreenError('offscreen-unresponsive', 'offscreen 文档没有响应握手'));
+        reject(offscreenError('offscreen-unresponsive', t('background.offscreen.unresponsive')));
       }, timeoutMs);
       helloWaiters.add(waiter);
     });
@@ -280,7 +286,9 @@ export function createOffscreenClient(
   const sendNow = (request: OffscreenRequest, timeoutMs: number): Promise<unknown> => {
     const target = port;
     if (!target || !hello)
-      return Promise.reject(offscreenError('offscreen-disconnected', 'offscreen 未连接'));
+      return Promise.reject(
+        offscreenError('offscreen-disconnected', t('background.offscreen.notConnected')),
+      );
     const requestId = deps.randomId('q');
     return new Promise((resolve, reject) => {
       const timer = deps.setTimer(() => {
@@ -290,18 +298,18 @@ export function createOffscreenClient(
             code: 'offscreen-timeout',
             category: 'timeout',
             retryable: true,
-            message: `offscreen 请求超时（${request.kind}）`,
+            message: t('background.offscreen.timeout', { kind: request.kind }),
           }),
         );
       }, timeoutMs);
       pending.set(requestId, { kind: request.kind, resolve, reject, timer });
       try {
-        target.postMessage({ type: 'request', requestId, request });
+        target.postMessage({ type: 'request', requestId, request, locale: getLocale() });
       } catch {
         deps.clearTimer(timer);
         pending.delete(requestId);
         detach(target, 'post-failed');
-        reject(offscreenError('offscreen-disconnected', 'offscreen 连接已断开'));
+        reject(offscreenError('offscreen-disconnected', t('background.offscreen.disconnected')));
       }
     });
   };
@@ -326,7 +334,7 @@ export function createOffscreenClient(
               code: 'offscreen-create-failed',
               category: 'audio',
               retryable: true,
-              message: '无法创建音频处理文档（offscreen）',
+              message: t('background.offscreen.createFailed'),
               detail: message.slice(0, 200),
             },
             { cause: error },
@@ -391,7 +399,7 @@ export function createOffscreenClient(
           outbox.shift();
           settleWithoutDocument(
             head,
-            offscreenError('offscreen-missing', 'offscreen 文档不存在', false),
+            offscreenError('offscreen-missing', t('background.offscreen.missing'), false),
           );
           continue;
         }
@@ -426,7 +434,7 @@ export function createOffscreenClient(
       if (previous && previous !== incoming) {
         port = null;
         hello = null;
-        rejectAll(offscreenError('offscreen-reconnected', 'offscreen 已重新连接，旧请求作废'));
+        rejectAll(offscreenError('offscreen-reconnected', t('background.offscreen.reconnected')));
         try {
           previous.disconnect();
         } catch {
@@ -473,7 +481,7 @@ export function createOffscreenClient(
             code: 'offscreen-bad-request',
             category: 'internal',
             retryable: false,
-            message: 'offscreen 请求参数无效',
+            message: t('background.offscreen.badRequest'),
           }),
         );
       }
@@ -555,7 +563,11 @@ function defaultOffscreenClientDepsSafe(): OffscreenClientDeps {
     return defaultOffscreenClientDeps();
   } catch {
     const unavailable = async () => {
-      throw offscreenError('offscreen-api-unavailable', '当前环境不支持 offscreen API', false);
+      throw offscreenError(
+        'offscreen-api-unavailable',
+        t('background.offscreen.apiUnavailable'),
+        false,
+      );
     };
     return {
       hasDocument: unavailable,

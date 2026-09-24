@@ -42,6 +42,7 @@ import type {
 import type { CoordinatorDeps } from './deps';
 import type { PageState } from './pages';
 import { mergeTranscriptRecord, type TranscriptWriter } from '../storage/transcripts';
+import { t } from '../i18n';
 export { mergeTranscriptCues } from '../storage/transcripts';
 
 // 简单内存仓库（测试/嵌入）也按仓库串行保存，避免停会话超时导致写入逆序。
@@ -330,13 +331,13 @@ export class TranslationSession {
         code: 'live-unsupported',
         category: 'unsupported',
         retryable: false,
-        message: '暂不支持直播：直播的字幕与音频时间轴尚未验证。请在普通录播视频上使用。',
+        message: t('background.session.liveUnsupported'),
       });
     }
     if (startPage?.isShorts) {
       this.notice = {
         code: 'shorts-unverified',
-        message: 'Shorts 页面尚未经过验证，字幕位置与时间可能不准确。',
+        message: t('background.session.shortsUnverified'),
         level: 'info',
       };
     }
@@ -393,8 +394,7 @@ export class TranslationSession {
           code: 'buffered-captions-incomplete',
           category: 'config',
           retryable: false,
-          message:
-            '无法读取完整字幕轨道，当前只能读取部分字幕。请在设置中将播放模式切换为「连续播放」，即可使用增量字幕翻译；如需「同步优先」，请将字幕来源改为「缺失时识别语音」，并配置支持音频预读的本地识别服务。',
+          message: t('background.session.partialCaptionsBuffered'),
         });
       }
     }
@@ -411,8 +411,8 @@ export class TranslationSession {
           category: 'captions',
           retryable: true,
           message: captionsOnly
-            ? '页面字幕接入尚未就绪（播放器可能仍在加载），暂时读取不到字幕。请稍后重试。'
-            : '页面字幕接入尚未就绪（播放器可能仍在加载），且尚未配置语音识别服务。请稍后重试；视频可继续正常播放。',
+            ? t('background.session.bridgeNotReadyCaptionsOnly')
+            : t('background.session.bridgeNotReadyNoAsr'),
         });
       }
       if (captionsOnly) {
@@ -420,8 +420,7 @@ export class TranslationSession {
           code: 'captions-unavailable',
           category: 'captions',
           retryable: false,
-          message:
-            '此视频没有可读取的字幕。可在设置中把字幕来源改为「缺失时识别语音」并配置语音识别服务。',
+          message: t('background.session.noCaptions'),
         });
       }
       if (settings.playbackMode === 'buffered')
@@ -464,17 +463,12 @@ export class TranslationSession {
     const p = settings.provider;
     const configError = (code: string, message: string) =>
       new AppError({ code, category: 'config', retryable: false, message });
-    if (!p.baseUrl)
-      throw configError('missing-base-url', '尚未配置 sub2api 服务地址，请先在设置页填写。');
+    if (!p.baseUrl) throw configError('missing-base-url', t('background.session.missingBaseUrl'));
     const normalized = deps.normalizeBaseUrl(p.baseUrl);
     if (!normalized.ok) throw new AppError(normalized.error);
     const apiKey = this.host.apiKey();
-    if (!apiKey)
-      throw configError(
-        'missing-api-key',
-        '尚未填写 API Key，请在设置页填写（默认只保存在本次浏览器会话）。',
-      );
-    if (!p.model) throw configError('missing-model', '尚未选择翻译模型。');
+    if (!apiKey) throw configError('missing-api-key', t('background.session.missingApiKey'));
+    if (!p.model) throw configError('missing-model', t('background.session.missingModel'));
     const granted = await this.abortable(
       signal,
       deps.permissions.contains(normalized.originPattern),
@@ -485,7 +479,7 @@ export class TranslationSession {
         code: 'host-permission-missing',
         category: 'permission',
         retryable: false,
-        message: '尚未授予访问 sub2api 服务地址的权限，请在设置页点击「授予访问权限」。',
+        message: t('background.session.missingHostPermission'),
       });
     }
     let protocol: 'responses' | 'chat';
@@ -507,8 +501,7 @@ export class TranslationSession {
           code: failed?.reasonCode ?? 'protocol-detect-failed',
           category: 'config',
           retryable: true,
-          message:
-            failed?.message ?? '无法自动确定接口协议，请在设置页「检查连接」或手动选择协议。',
+          message: failed?.message ?? t('background.session.protocolUndetermined'),
         });
       }
       protocol = report.detectedProtocol;
@@ -583,7 +576,7 @@ export class TranslationSession {
               code: 'track-load-timeout',
               category: 'captions',
               retryable: true,
-              message: '读取字幕轨道超时',
+              message: t('background.session.trackLoadTimeout'),
             }),
           ),
         this.timings.trackLoadTimeoutMs,
@@ -646,8 +639,7 @@ export class TranslationSession {
       this.scheduler?.setCues([], this.schedulerIdentity());
       this.notice = {
         code: 'incremental-captions',
-        message:
-          '无法读取完整字幕轨道，改为读取播放器当前显示的字幕：只覆盖已播放部分，且需保持 YouTube 字幕开启。',
+        message: t('background.session.incrementalCaptions'),
         level: 'warning',
       };
       return true;
@@ -760,7 +752,7 @@ export class TranslationSession {
         code: 'preload-local-required',
         category: 'config',
         retryable: false,
-        message: '无完整字幕时，同步优先需要启用音频预读的本地识别服务。也可切换为「连续播放」。',
+        message: t('background.session.preloadLocalRequired'),
       });
     // 截断轨道可能已有字幕/译文；在异步路由检查结束后冻结旧来源，再切换到预读记录。
     this.queueTranscriptWrite();
@@ -862,20 +854,20 @@ export class TranslationSession {
         c.endMs > position && c.startMs < position + targetMs && c.translationState === 'failed',
     );
     let state: PlaybackBuffer['state'] = 'preparing';
-    let message = '正在准备翻译，缓冲完成后按视频时间播放。';
+    let message = t('background.session.bufferPreparing');
     if (failure || failedCue) {
       state = 'blocked';
-      message = failure?.message ?? '当前片段翻译失败，请重试失败项或切换连续播放。';
+      message = failure?.message ?? t('background.session.bufferSegmentFailed');
     } else if (!supported && this.phase !== 'starting') {
       state = 'unavailable';
-      message = '此来源无法提前读取，请配置音频预读或切换连续播放。';
+      message = t('background.session.bufferCannotPreload');
     } else if (
       readyAheadMs >= targetMs ||
       (player && !player.paused && readyAheadMs > 500) ||
       (duration > 0 && readyUntilMs >= duration - 100)
     ) {
       state = 'ready';
-      message = '翻译已缓冲，播放期间继续准备后续内容。';
+      message = t('background.session.bufferReady');
     }
     return {
       readyUntilMs,
@@ -908,8 +900,7 @@ export class TranslationSession {
           code: 'capture-not-allowed',
           category: 'capture',
           retryable: true,
-          message:
-            '无法捕获此标签页的声音。请在该 YouTube 标签页点击浏览器工具栏中的「同听」图标（或按快捷键 Alt+T）后重试。',
+          message: t('background.session.captureFailed'),
           detail: error instanceof Error ? error.message.slice(0, 160) : undefined,
         },
         { cause: error },
@@ -963,22 +954,16 @@ export class TranslationSession {
     const configError = (code: string, message: string) =>
       new AppError({ code, category: 'config', retryable: false, message });
     if (settings.asr.backend === 'none') {
-      throw configError(
-        'asr-not-configured',
-        '此视频没有可读取的字幕，且尚未配置语音识别服务。请在设置页「识别与播放」中配置后重试。视频可继续正常播放。',
-      );
+      throw configError('asr-not-configured', t('background.session.asrNotConfigured'));
     }
     if (settings.asr.backend === 'local') {
       const normalized = deps.normalizeBaseUrl(settings.asr.localUrl);
       // 只允许 127.0.0.1：服务只监听 IPv4，localhost 可能解析到被其他进程占用的 ::1，导致令牌与音频泄露。
       if (!normalized.ok || !/^http:\/\/127\.0\.0\.1(:\d+)?$/.test(normalized.origin)) {
-        throw configError(
-          'asr-local-url-invalid',
-          '本地识别服务地址无效，只允许 http://127.0.0.1:<端口>。',
-        );
+        throw configError('asr-local-url-invalid', t('background.session.asrLocalUrlInvalid'));
       }
       const token = this.host.asrToken();
-      if (!token) throw configError('asr-token-missing', '尚未填写本地识别服务的配对令牌。');
+      if (!token) throw configError('asr-token-missing', t('background.session.asrTokenMissing'));
       const granted = await this.abortable(
         signal,
         deps.permissions.contains(normalized.originPattern),
@@ -989,7 +974,7 @@ export class TranslationSession {
           code: 'asr-host-permission-missing',
           category: 'permission',
           retryable: false,
-          message: '尚未授予访问本地识别服务的权限，请在设置页点击「授予访问权限」。',
+          message: t('background.session.asrNoHostPermission'),
         });
       }
       return { backend: 'local', baseUrl: normalized.baseUrl, token };
@@ -997,9 +982,9 @@ export class TranslationSession {
     const normalized = deps.normalizeBaseUrl(settings.provider.baseUrl);
     const apiKey = this.host.apiKey();
     if (!normalized.ok || !apiKey)
-      throw configError('asr-sub2api-config', 'sub2api 服务地址或 Key 未配置。');
+      throw configError('asr-sub2api-config', t('background.session.asrSub2apiConfig'));
     if (!settings.asr.sub2apiModel)
-      throw configError('asr-model-missing', '尚未填写 sub2api 语音识别模型。');
+      throw configError('asr-model-missing', t('background.session.asrModelMissing'));
     return {
       backend: 'sub2api',
       baseUrl: normalized.baseUrl,
@@ -1045,7 +1030,7 @@ export class TranslationSession {
             ...info,
             code: 'offscreen-lost',
             category: 'audio',
-            message: '音频处理组件意外中断，已停止语音识别。请重新开始翻译。',
+            message: t('background.session.offscreenLost'),
             retryable: true,
           });
         });
@@ -1092,7 +1077,7 @@ export class TranslationSession {
     if (!engine) {
       this.notice = {
         code: 'tts-disabled',
-        message: '未启用语音合成服务，当前仅显示字幕。',
+        message: t('background.session.ttsDisabled'),
         level: 'warning',
       };
       return;
@@ -1109,7 +1094,10 @@ export class TranslationSession {
         this.setDuck(false);
         this.notice = {
           code: 'tts-error',
-          message: clip(`配音出错：${event.error.message}`, NOTICE_MAX),
+          message: clip(
+            t('background.session.dubError', { message: event.error.message }),
+            NOTICE_MAX,
+          ),
           level: 'warning',
         };
       }
@@ -1535,8 +1523,8 @@ export class TranslationSession {
           retryable: true,
           message:
             event.reason === 'lease-expired'
-              ? '音频捕获因后台失联而自动停止，请重新开始翻译。'
-              : '标签页音频捕获已结束（可能是权限被撤回或页面音频不可用），已停止语音识别。请重新开始翻译。',
+              ? t('background.session.captureLeaseExpired')
+              : t('background.session.captureEnded'),
           detail: event.error?.message,
           at: this.host.deps.now(),
         });
@@ -1571,8 +1559,7 @@ export class TranslationSession {
           this.asrBacklogNotified = true;
           this.notice = {
             code: 'asr-backlog',
-            message:
-              '语音识别速度跟不上播放，已跳过部分音频。可暂停视频等待，或在本地识别服务中换用更小的模型。',
+            message: t('background.session.asrBacklog'),
             level: 'warning',
           };
         } else if ((event.state === 'error' || event.state === 'unavailable') && !this.notice) {
@@ -1581,8 +1568,8 @@ export class TranslationSession {
             code: 'asr-failing',
             message:
               event.state === 'unavailable'
-                ? '语音识别服务暂不可用（模型未就绪或服务繁忙），部分音频未能识别。'
-                : '部分音频识别失败，已跳过。请检查语音识别服务状态。',
+                ? t('background.session.asrUnavailable')
+                : t('background.session.asrFailing'),
             level: 'warning',
           };
         } else if (
@@ -1741,7 +1728,7 @@ export class TranslationSession {
           code: 'video-ended',
           category: 'youtube',
           retryable: true,
-          message: '视频已结束，已停止音频捕获与识别。',
+          message: t('background.session.videoEnded'),
           at: this.host.deps.now(),
         });
         return;
@@ -1921,7 +1908,7 @@ export class TranslationSession {
         code: 'backfill-unsupported',
         category: 'unsupported',
         retryable: false,
-        message: '只有读取到完整字幕轨道时才能翻译全片；当前字幕来源只覆盖已播放的部分。',
+        message: t('background.session.backfillUnsupported'),
       });
     }
     this.backfill = enabled;
@@ -2082,19 +2069,24 @@ export class TranslationSession {
     const buffer = this.bufferState()?.snapshot;
     if (this.phase === 'running' && buffer && buffer.state !== 'ready')
       return buffer.state === 'preparing'
-        ? `正在缓冲翻译 · ${(buffer.readyAheadMs / 1000).toFixed(0)} 秒`
-        : '缓冲暂停，详见侧栏';
+        ? t('background.session.statusBuffering', {
+            seconds: (buffer.readyAheadMs / 1000).toFixed(0),
+          })
+        : t('background.session.statusBufferPaused');
     switch (this.phase) {
       case 'starting':
-        return '正在准备';
+        return t('background.session.statusPreparing');
       case 'paused':
-        return '翻译已暂停';
+        return t('background.session.statusPaused');
       case 'running': {
         const notice = this.translationNotice();
-        if (notice?.code === 'translation-blocked') return '翻译已停止，详见侧栏';
-        if (notice?.code === 'translation-rate-limited') return '服务限流，稍后自动重试';
-        if (notice?.code === 'translation-failing') return '部分字幕翻译失败，正在重试';
-        return this.sourceMode === 'asr' ? '语音识别翻译中' : '翻译中';
+        if (notice?.code === 'translation-blocked') return t('background.session.statusBlocked');
+        if (notice?.code === 'translation-rate-limited')
+          return t('background.session.statusRateLimited');
+        if (notice?.code === 'translation-failing') return t('background.session.statusFailing');
+        return this.sourceMode === 'asr'
+          ? t('background.session.statusAsrRunning')
+          : t('background.session.statusRunning');
       }
       default:
         return undefined;
@@ -2108,7 +2100,9 @@ export class TranslationSession {
     if (stats.blockedError) {
       return {
         code: 'translation-blocked',
-        message: `已停止发送翻译请求：${stats.blockedError.message}`,
+        message: t('background.session.translationBlocked', {
+          message: stats.blockedError.message,
+        }),
         level: 'error',
       };
     }
@@ -2117,14 +2111,16 @@ export class TranslationSession {
       const seconds = Math.ceil((stats.rateLimitedUntil - now) / 1000);
       return {
         code: 'translation-rate-limited',
-        message: `服务限流，约 ${seconds} 秒后自动重试。`,
+        message: t('background.session.rateLimited', { seconds }),
         level: 'warning',
       };
     }
     if (this.lastTranslationFailure) {
       return {
         code: 'translation-failing',
-        message: `部分字幕翻译失败：${this.lastTranslationFailure.message}`,
+        message: t('background.session.translationFailing', {
+          message: this.lastTranslationFailure.message,
+        }),
         level: 'warning',
       };
     }
@@ -2210,7 +2206,7 @@ export class TranslationSession {
       if (this.isStopping) return;
       this.notice = {
         code: 'transcript-save-failed',
-        message: '字幕记录保存失败，本次字幕仅保留在内存中。',
+        message: t('background.session.saveTranscriptFailed'),
         level: 'warning',
       };
       this.host.publish();
@@ -2265,7 +2261,7 @@ export class TranslationSession {
     if (!notice && dub?.state === 'unavailable') {
       notice = {
         code: 'tts-unavailable',
-        message: dub.lastError?.message ?? '当前目标语言没有可用的配音声音，已降级为仅字幕。',
+        message: dub.lastError?.message ?? t('background.session.noDubVoice'),
         level: 'warning',
       };
     }

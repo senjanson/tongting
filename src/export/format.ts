@@ -8,9 +8,12 @@
  * - 结束时间必须大于开始时间，否则修正并计数。
  * - 统一使用 \n 换行；去掉会破坏格式的空行与 `-->`；VTT 转义 & < >。
  * - 覆盖范围如实说明，部分字幕不能标成全视频字幕。
+ * - 文件头说明、覆盖统计、文件名标签与正文中的标记（[未翻译]、[临时]）按 locale（界面语言，
+ *   默认中文）生成；字幕正文与时间轴不随界面语言变化。
  */
 import type { Cue, SubtitleCoverage } from '../domain/cue';
 import type { SourceMode } from '../domain/session';
+import { translate, type Locale, type MessageKey } from '../i18n';
 import { describeCoverage, formatHms } from './coverage';
 
 export type ExportFormat = 'srt' | 'vtt' | 'txt';
@@ -35,6 +38,8 @@ export interface ExportInput {
   videoId?: string;
   targetLanguage?: string;
   sourceLanguage?: string;
+  /** 文件头说明、覆盖统计与文件名标签使用的界面语言，默认中文。 */
+  locale?: Locale;
 }
 
 export interface ExportResult {
@@ -69,8 +74,19 @@ export const EXPORT_MIME: Record<ExportFormat, string> = {
   txt: 'text/plain',
 };
 
-export const UNTRANSLATED_MARK = '[未翻译]';
-export const INTERIM_MARK = '[临时]';
+const MARKS: Record<Locale, { untranslated: string; interim: string }> = {
+  'zh-CN': { untranslated: '[未翻译]', interim: '[临时]' },
+  en: { untranslated: '[untranslated]', interim: '[provisional]' },
+};
+/** 正文标记：未完成翻译以原文输出、临时识别结果。按界面语言，默认中文。 */
+export function untranslatedMark(locale: Locale = 'zh-CN'): string {
+  return MARKS[locale].untranslated;
+}
+export function interimMark(locale: Locale = 'zh-CN'): string {
+  return MARKS[locale].interim;
+}
+export const UNTRANSLATED_MARK = untranslatedMark();
+export const INTERIM_MARK = interimMark();
 /** 修正无效结束时间时使用的最短时长。 */
 export const FIXED_MIN_DURATION_MS = 1_000;
 
@@ -179,7 +195,7 @@ function prepare(input: ExportInput): Prepared {
         stats.skippedUntranslated++;
         continue;
       }
-      lines = [`${UNTRANSLATED_MARK} ${original[0]}`, ...original.slice(1)];
+      lines = [`${untranslatedMark(input.locale)} ${original[0]}`, ...original.slice(1)];
       markedUntranslated = true;
     } else {
       const translated = translationLines(cue);
@@ -195,7 +211,7 @@ function prepare(input: ExportInput): Prepared {
       continue;
     }
     if (interim) {
-      lines = [`${INTERIM_MARK} ${lines[0]}`, ...lines.slice(1)];
+      lines = [`${interimMark(input.locale)} ${lines[0]}`, ...lines.slice(1)];
       stats.markedInterim++;
     }
     if (markedUntranslated) stats.markedUntranslated++;
@@ -229,57 +245,75 @@ function escapeVtt(line: string): string {
   return line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-const LANGUAGE_NAMES: Record<string, string> = {
-  'zh-CN': '简体中文',
-  'zh-TW': '繁體中文',
-  zh: '中文',
-  en: '英语',
-  ja: '日语',
-  ko: '韩语',
-  es: '西班牙语',
-  fr: '法语',
-  de: '德语',
-  ru: '俄语',
-  pt: '葡萄牙语',
-  und: '语言未知',
+const LANGUAGE_NAME_KEYS: Record<string, MessageKey> = {
+  'zh-CN': 'options.export.lang.zh-CN',
+  'zh-TW': 'options.export.lang.zh-TW',
+  zh: 'options.export.lang.zh',
+  en: 'options.export.lang.en',
+  ja: 'options.export.lang.ja',
+  ko: 'options.export.lang.ko',
+  es: 'options.export.lang.es',
+  fr: 'options.export.lang.fr',
+  de: 'options.export.lang.de',
+  ru: 'options.export.lang.ru',
+  pt: 'options.export.lang.pt',
+  und: 'options.export.lang.unknown',
 };
 
 /** 头部说明中的语言名：未知代码原样显示，但与其他头部字段一样单行化并替换 `-->`。 */
-function languageName(code: string | undefined): string {
-  if (!code || code === 'auto') return '语言未知';
-  return LANGUAGE_NAMES[code] ?? (singleLine(code) || '语言未知');
+function languageName(code: string | undefined, locale: Locale): string {
+  const unknown = translate(locale, 'options.export.lang.unknown');
+  if (!code || code === 'auto') return unknown;
+  const key = LANGUAGE_NAME_KEYS[code];
+  return key ? translate(locale, key) : singleLine(code) || unknown;
 }
 
 function contentDescription(input: ExportInput): string {
+  const locale = input.locale ?? 'zh-CN';
   switch (input.content) {
     case 'original':
-      return `仅原文（${languageName(input.sourceLanguage)}）`;
+      return translate(locale, 'options.export.file.contentOriginal', {
+        language: languageName(input.sourceLanguage, locale),
+      });
     case 'translation':
-      return `仅译文（${languageName(input.targetLanguage)}）`;
+      return translate(locale, 'options.export.file.contentTranslation', {
+        language: languageName(input.targetLanguage, locale),
+      });
     case 'bilingual':
-      return `双语：译文（${languageName(input.targetLanguage)}）+ 原文（${languageName(input.sourceLanguage)}）`;
+      return translate(locale, 'options.export.file.contentBilingual', {
+        target: languageName(input.targetLanguage, locale),
+        source: languageName(input.sourceLanguage, locale),
+      });
   }
 }
 
-/** 覆盖范围 + 本次导出统计，面向用户的一段中文说明。 */
+/** 覆盖范围 + 本次导出统计，面向用户的一段说明（按 input.locale，默认中文）。 */
 export function buildCoverageSummary(input: ExportInput, stats: Prepared['stats']): string {
-  const parts: string[] = [describeCoverage(input.coverage, input.sourceMode)];
-  const exportParts: string[] = [`本次导出 ${stats.includedCount} 条`];
-  if (input.scope === 'favorites') exportParts.push('仅收藏');
-  if (stats.missingFavorites) exportParts.push(`收藏中 ${stats.missingFavorites} 条已不在当前记录`);
+  const locale = input.locale ?? 'zh-CN';
+  const t = (key: MessageKey, count?: number) =>
+    translate(locale, key, {
+      count: count ?? 0,
+      mark: key.endsWith('Interim') ? interimMark(locale) : untranslatedMark(locale),
+    });
+  const parts: string[] = [describeCoverage(input.coverage, input.sourceMode, locale)];
+  const exportParts: string[] = [t('options.export.summary.count', stats.includedCount)];
+  if (input.scope === 'favorites') exportParts.push(t('options.export.summary.favoritesOnly'));
+  if (stats.missingFavorites)
+    exportParts.push(t('options.export.summary.missingFavorites', stats.missingFavorites));
   if (stats.skippedUntranslated)
-    exportParts.push(`未完成翻译 ${stats.skippedUntranslated} 条已排除`);
+    exportParts.push(t('options.export.summary.skippedUntranslated', stats.skippedUntranslated));
   if (stats.markedUntranslated)
-    exportParts.push(
-      `未完成翻译 ${stats.markedUntranslated} 条以原文输出并标记${UNTRANSLATED_MARK}`,
-    );
-  if (stats.skippedInterim) exportParts.push(`临时识别结果 ${stats.skippedInterim} 条已排除`);
+    exportParts.push(t('options.export.summary.markedUntranslated', stats.markedUntranslated));
+  if (stats.skippedInterim)
+    exportParts.push(t('options.export.summary.skippedInterim', stats.skippedInterim));
   if (stats.markedInterim)
-    exportParts.push(`包含临时识别结果 ${stats.markedInterim} 条（已标记${INTERIM_MARK}）`);
-  if (stats.skippedInvalid) exportParts.push(`空白或时间无效 ${stats.skippedInvalid} 条已跳过`);
-  if (stats.fixedTimings) exportParts.push(`修正结束时间 ${stats.fixedTimings} 条`);
-  parts.push(exportParts.join('，'));
-  return parts.join('。');
+    exportParts.push(t('options.export.summary.markedInterim', stats.markedInterim));
+  if (stats.skippedInvalid)
+    exportParts.push(t('options.export.summary.skippedInvalid', stats.skippedInvalid));
+  if (stats.fixedTimings)
+    exportParts.push(t('options.export.summary.fixedTimings', stats.fixedTimings));
+  parts.push(exportParts.join(t('options.export.summary.clauseSeparator')));
+  return parts.join(t('options.export.summary.sentenceSeparator'));
 }
 
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|com\d|lpt\d)$/i;
@@ -297,6 +331,7 @@ export function buildExportFilename(input: {
   format: ExportFormat;
   scope?: ExportScope;
   content?: ExportContent;
+  locale?: Locale;
 }): string {
   let base = (input.title ?? '')
     // eslint-disable-next-line no-control-regex
@@ -314,8 +349,10 @@ export function buildExportFilename(input: {
   if (WINDOWS_RESERVED.test(base)) base = `_${base}`;
   const language = (input.language ?? '').replace(/[^A-Za-z0-9-]/g, '') || 'und';
   const tags: string[] = [];
-  if (input.scope === 'favorites') tags.push('收藏');
-  if (input.content === 'bilingual') tags.push('双语');
+  const locale = input.locale ?? 'zh-CN';
+  if (input.scope === 'favorites') tags.push(translate(locale, 'options.export.file.tagFavorites'));
+  if (input.content === 'bilingual')
+    tags.push(translate(locale, 'options.export.file.tagBilingual'));
   return [base, ...tags, language, EXPORT_EXTENSIONS[input.format]].join('.');
 }
 
@@ -345,12 +382,19 @@ export function formatSrt(input: ExportInput): ExportResult {
 export function formatVtt(input: ExportInput): ExportResult {
   const { entries, stats } = prepare(input);
   const coverageSummary = buildCoverageSummary(input, stats);
-  const noteLines = ['NOTE 同听 Tongting 导出'];
+  const locale = input.locale ?? 'zh-CN';
+  const noteLines = [`NOTE ${translate(locale, 'options.export.file.vttNote')}`];
   const title = singleLine(input.title);
-  if (title) noteLines.push(`标题：${title}`);
-  noteLines.push(`内容：${contentDescription(input)}`);
+  if (title) noteLines.push(translate(locale, 'options.export.file.title', { title }));
+  noteLines.push(
+    translate(locale, 'options.export.file.content', { content: contentDescription(input) }),
+  );
   // NOTE 内容不能含空行或 `-->`。
-  noteLines.push(...normalizeCueLines(`覆盖：${coverageSummary}`));
+  noteLines.push(
+    ...normalizeCueLines(
+      translate(locale, 'options.export.file.coverage', { coverage: coverageSummary }),
+    ),
+  );
   const blocks = [
     'WEBVTT',
     noteLines.join('\n'),
@@ -372,15 +416,23 @@ export function formatVtt(input: ExportInput): ExportResult {
 export function formatTxt(input: ExportInput): ExportResult {
   const { entries, stats } = prepare(input);
   const coverageSummary = buildCoverageSummary(input, stats);
-  const header = ['同听 Tongting 字幕导出'];
+  const locale = input.locale ?? 'zh-CN';
+  const header = [translate(locale, 'options.export.file.txtHeader')];
   const title = singleLine(input.title);
-  if (title) header.push(`标题：${title}`);
-  if (input.videoId) header.push(`视频 ID：${singleLine(input.videoId)}`);
-  header.push(`内容：${contentDescription(input)}`);
-  header.push(`覆盖：${singleLine(coverageSummary)}`);
+  if (title) header.push(translate(locale, 'options.export.file.title', { title }));
+  if (input.videoId)
+    header.push(
+      translate(locale, 'options.export.file.videoId', { id: singleLine(input.videoId) }),
+    );
+  header.push(
+    translate(locale, 'options.export.file.content', { content: contentDescription(input) }),
+  );
+  header.push(
+    translate(locale, 'options.export.file.coverage', { coverage: singleLine(coverageSummary) }),
+  );
   const body = entries.length
     ? entries.map((entry) => `[${formatHms(entry.startMs)}] ${entry.lines.join('\n')}`).join('\n\n')
-    : '（没有可导出的字幕）';
+    : translate(locale, 'options.export.file.empty');
   return {
     ...stats,
     text: `${header.join('\n')}\n\n${body}\n`,

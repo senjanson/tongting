@@ -2,6 +2,7 @@
  * 从快照派生界面状态（纯函数，便于单测）。
  *
  * 原则：只展示快照里的真实状态；没有数据时显示「未知 / 未检测」，不预填示例数字。
+ * 面向用户的文案由最后一个参数 locale 决定；省略时使用当前页面语言（getLocale）。
  */
 import type { AppErrorInfo } from '../../domain/errors';
 import type { PageInfo, PlayerState, SessionSnapshot } from '../../domain/session';
@@ -9,6 +10,7 @@ import type { Settings } from '../../domain/settings';
 import type { AppSnapshot, TtsVoiceInfo } from '../../messaging/ui-protocol';
 import { normalizeBaseUrl } from '../../providers/text/base-url';
 import { voiceLanguageRank } from '../../providers/tts/voices';
+import { getLocale, translate, type Locale } from '../../i18n';
 import { languageLabel, sourceLanguageLabel } from '../format';
 import type { ConnectionStatus } from './client';
 
@@ -80,7 +82,10 @@ export interface ServiceConfigState {
   message: string;
 }
 
-export function deriveServiceConfig(snapshot: AppSnapshot | null): ServiceConfigState {
+export function deriveServiceConfig(
+  snapshot: AppSnapshot | null,
+  locale: Locale = getLocale(),
+): ServiceConfigState {
   if (!snapshot) {
     return {
       ready: false,
@@ -99,14 +104,15 @@ export function deriveServiceConfig(snapshot: AppSnapshot | null): ServiceConfig
   const missingPermission = !missingBaseUrl && !invalidBaseUrl && !snapshot.hostPermission.granted;
   let message = '';
   if (invalidBaseUrl && normalized && !normalized.ok) {
-    message = `服务地址无效：${normalized.error.message}`;
-  } else {
-    const missing: string[] = [];
-    if (missingBaseUrl) missing.push('服务地址');
-    if (missingKey) missing.push('API Key');
-    if (missing.length) message = `尚未配置 sub2api ${missing.join('与')}，请先在设置中填写。`;
-    else if (missingPermission)
-      message = '尚未授予扩展访问服务地址的权限，请在设置中点击「授予访问权限」。';
+    message = translate(locale, 'common.config.invalidUrl', { detail: normalized.error.message });
+  } else if (missingBaseUrl && missingKey) {
+    message = translate(locale, 'common.config.missingBoth');
+  } else if (missingBaseUrl) {
+    message = translate(locale, 'common.config.missingUrl');
+  } else if (missingKey) {
+    message = translate(locale, 'common.config.missingKey');
+  } else if (missingPermission) {
+    message = translate(locale, 'common.config.missingPermission');
   }
   return {
     ready: !missingBaseUrl && !invalidBaseUrl && !missingKey && !missingPermission,
@@ -149,34 +155,40 @@ export interface StatusInfo {
   tone: StatusTone;
 }
 
-export function sessionPhaseStatus(session: SessionSnapshot): StatusInfo | undefined {
+export function sessionPhaseStatus(
+  session: SessionSnapshot,
+  locale: Locale = getLocale(),
+): StatusInfo | undefined {
   const problem = sessionProblem(session);
+  const label = (key: Parameters<typeof translate>[1]) => translate(locale, key);
   switch (session.phase) {
     case 'error':
-      return { label: '出错', tone: 'danger' };
+      return { label: label('common.status.error'), tone: 'danger' };
     case 'configuring':
     case 'starting':
-      return problem ? { label: '启动受阻', tone: 'danger' } : { label: '启动中', tone: 'busy' };
+      return problem
+        ? { label: label('common.status.startBlocked'), tone: 'danger' }
+        : { label: label('common.status.starting'), tone: 'busy' };
     case 'running':
-      if (problem) return { label: '翻译受阻', tone: 'danger' };
+      if (problem) return { label: label('common.status.translationBlocked'), tone: 'danger' };
       switch (session.playbackBuffer?.state) {
         case 'preparing':
-          return { label: '缓冲中', tone: 'busy' };
+          return { label: label('common.status.buffering'), tone: 'busy' };
         case 'blocked':
-          return { label: '缓冲受阻', tone: 'warning' };
+          return { label: label('common.status.bufferBlocked'), tone: 'warning' };
         case 'unavailable':
-          return { label: '无法预读', tone: 'warning' };
+          return { label: label('common.status.preloadUnavailable'), tone: 'warning' };
         default:
-          return { label: '运行中', tone: 'accent' };
+          return { label: label('common.status.running'), tone: 'accent' };
       }
     case 'pausing':
-      return { label: '正在暂停', tone: 'busy' };
+      return { label: label('common.status.pausing'), tone: 'busy' };
     case 'paused':
       return problem
-        ? { label: '已暂停 · 有错误', tone: 'danger' }
-        : { label: '翻译已暂停', tone: 'warning' };
+        ? { label: label('common.status.pausedWithError'), tone: 'danger' }
+        : { label: label('common.status.paused'), tone: 'warning' };
     case 'stopping':
-      return { label: '正在停止', tone: 'busy' };
+      return { label: label('common.status.stopping'), tone: 'busy' };
     case 'idle':
       return undefined;
   }
@@ -187,31 +199,33 @@ export function deriveStatus(args: {
   snapshot: AppSnapshot | null;
   tabContext: TabContext;
   config: ServiceConfigState;
+  locale?: Locale;
 }): StatusInfo {
-  const { connection, snapshot, tabContext, config } = args;
+  const { connection, snapshot, tabContext, config, locale = getLocale() } = args;
+  const label = (key: Parameters<typeof translate>[1]) => translate(locale, key);
   if (!snapshot) {
     return connection === 'reconnecting'
-      ? { label: '正在重新连接', tone: 'warning' }
-      : { label: '正在连接', tone: 'busy' };
+      ? { label: label('common.status.reconnecting'), tone: 'warning' }
+      : { label: label('common.status.connecting'), tone: 'busy' };
   }
   if (tabContext.kind === 'video' && tabContext.session) {
-    const phase = sessionPhaseStatus(tabContext.session);
+    const phase = sessionPhaseStatus(tabContext.session, locale);
     if (phase) return phase;
   }
   if (!config.ready) {
     return config.invalidBaseUrl
-      ? { label: '地址无效', tone: 'danger' }
-      : { label: '未配置服务', tone: 'warning' };
+      ? { label: label('common.status.invalidUrl'), tone: 'danger' }
+      : { label: label('common.status.notConfigured'), tone: 'warning' };
   }
   switch (tabContext.kind) {
     case 'loading':
-      return { label: '读取标签页', tone: 'busy' };
+      return { label: label('common.status.readingTab'), tone: 'busy' };
     case 'waking':
-      return { label: '正在连接页面', tone: 'busy' };
+      return { label: label('common.status.wakingPage'), tone: 'busy' };
     case 'video':
-      return { label: '可开始', tone: 'neutral' };
+      return { label: label('common.status.ready'), tone: 'neutral' };
     default:
-      return { label: '非视频页', tone: 'neutral' };
+      return { label: label('common.status.notVideo'), tone: 'neutral' };
   }
 }
 
@@ -232,14 +246,19 @@ export function derivePrimaryAction(
   session: SessionSnapshot | undefined,
   config: ServiceConfigState,
   connection: ConnectionStatus,
+  locale: Locale = getLocale(),
 ): PrimaryAction {
-  const notConnected = connection !== 'connected' ? '正在连接后台服务，请稍候。' : undefined;
+  const notConnected =
+    connection !== 'connected' ? translate(locale, 'common.primary.notConnected') : undefined;
   if (
     !session ||
     session.phase === 'idle' ||
     (session.desiredState === 'stopped' && session.phase !== 'stopping')
   ) {
-    const label = session?.phase === 'error' ? '重新开始翻译' : '开始翻译';
+    const label = translate(
+      locale,
+      session?.phase === 'error' ? 'common.primary.restart' : 'common.primary.start',
+    );
     return {
       kind: 'start',
       label,
@@ -247,19 +266,31 @@ export function derivePrimaryAction(
     };
   }
   if (session.desiredState === 'stopped') {
-    return { kind: 'busy', label: '正在停止…', disabledReason: '正在停止并释放资源。' };
+    return {
+      kind: 'busy',
+      label: translate(locale, 'common.primary.stopping'),
+      disabledReason: translate(locale, 'common.primary.stoppingReason'),
+    };
   }
   if (session.phase === 'error') {
     return {
       kind: 'start',
-      label: '重试',
+      label: translate(locale, 'common.retry'),
       disabledReason: notConnected ?? (config.ready ? undefined : config.message),
     };
   }
   if (session.desiredState === 'paused') {
-    return { kind: 'resume', label: '继续翻译', disabledReason: notConnected };
+    return {
+      kind: 'resume',
+      label: translate(locale, 'common.primary.resume'),
+      disabledReason: notConnected,
+    };
   }
-  return { kind: 'pause', label: '暂停翻译', disabledReason: notConnected };
+  return {
+    kind: 'pause',
+    label: translate(locale, 'common.primary.pause'),
+    disabledReason: notConnected,
+  };
 }
 
 /** 是否显示「停止并释放音频」。已结束的会话不再持有资源。 */
@@ -288,40 +319,42 @@ export interface NextStep {
   hint?: string;
 }
 
-export const CAPTURE_GESTURE_HINT =
-  '音频采集需要新的用户操作：请点击浏览器工具栏中的同听图标，或按 Alt+T 后再继续。';
+/** 中文版本的采集手势提示（兼容旧引用）；界面请用 errorNextStep 的 hint。 */
+export const CAPTURE_GESTURE_HINT = translate('zh-CN', 'common.nextStep.captureGesture');
 
 /** 错误 → 可执行的下一步。 */
 export function errorNextStep(
   error: Pick<AppErrorInfo, 'category' | 'retryable'> & { code?: string },
+  locale: Locale = getLocale(),
 ): NextStep {
+  const label = (key: Parameters<typeof translate>[1]) => translate(locale, key);
   if (error.code === 'capture-not-allowed' || error.category === 'capture') {
-    return { action: 'none', label: '', hint: CAPTURE_GESTURE_HINT };
+    return { action: 'none', label: '', hint: label('common.nextStep.captureGesture') };
   }
   // 播放器数据尚未就绪（不是视频没有字幕）：稍后重试即可，不引导去配置识别。
-  if (error.code === 'captions-not-ready') return { action: 'retry', label: '重试' };
+  if (error.code === 'captions-not-ready') return { action: 'retry', label: label('common.retry') };
   switch (error.category) {
     case 'config':
     case 'auth':
     case 'permission':
     case 'quota':
-      return { action: 'open-settings', label: '检查设置' };
+      return { action: 'open-settings', label: label('common.nextStep.checkSettings') };
     case 'captions':
     case 'asr':
-      return { action: 'open-settings', label: '配置语音识别' };
+      return { action: 'open-settings', label: label('common.nextStep.configureAsr') };
     case 'tts':
-      return { action: 'open-settings', label: '检查配音设置' };
+      return { action: 'open-settings', label: label('common.nextStep.checkTts') };
     case 'youtube':
-      return { action: 'reload-tab', label: '刷新 YouTube 页面' };
+      return { action: 'reload-tab', label: label('common.nextStep.reloadYoutube') };
     case 'storage':
     case 'cancelled':
       return { action: 'none', label: '' };
     case 'rate-limit':
-      return { action: 'retry', label: '稍后重试' };
+      return { action: 'retry', label: label('common.nextStep.retryLater') };
     default:
       return error.retryable
-        ? { action: 'retry', label: '重试' }
-        : { action: 'open-settings', label: '检查设置' };
+        ? { action: 'retry', label: label('common.retry') }
+        : { action: 'open-settings', label: label('common.nextStep.checkSettings') };
   }
 }
 
@@ -339,14 +372,17 @@ export function noticeHasSettingsAction(code: string): boolean {
   return NOTICE_SETTINGS_CODES.has(code);
 }
 
-export function playerStatusLabel(player: PlayerState | undefined): string {
-  if (!player) return '未获取到播放器状态';
-  if (player.ad) return '广告播放中';
-  if (player.ended) return '视频已结束';
-  if (player.seeking) return '正在跳转';
-  if (player.buffering) return '缓冲中';
-  if (player.paused) return '视频已暂停';
-  return '视频播放中';
+export function playerStatusLabel(
+  player: PlayerState | undefined,
+  locale: Locale = getLocale(),
+): string {
+  if (!player) return translate(locale, 'common.player.none');
+  if (player.ad) return translate(locale, 'common.player.ad');
+  if (player.ended) return translate(locale, 'common.player.ended');
+  if (player.seeking) return translate(locale, 'common.player.seeking');
+  if (player.buffering) return translate(locale, 'common.player.buffering');
+  if (player.paused) return translate(locale, 'common.player.paused');
+  return translate(locale, 'common.player.playing');
 }
 
 /** 播放器快照在采样后的时间推算；最多外推 5 秒，避免快照停止更新时时间一直走。 */
@@ -362,20 +398,23 @@ export function estimatePlayerTimeMs(
   return player.durationMs ? Math.min(estimate, player.durationMs) : estimate;
 }
 
-export function sourceModeShortLabel(mode: SessionSnapshot['sourceMode'] | undefined): string {
+export function sourceModeShortLabel(
+  mode: SessionSnapshot['sourceMode'] | undefined,
+  locale: Locale = getLocale(),
+): string {
   switch (mode) {
     case 'full-track':
-      return '完整字幕轨道';
+      return translate(locale, 'common.sourceMode.fullTrack');
     case 'incremental-captions':
-      return '增量字幕';
+      return translate(locale, 'common.sourceMode.incremental');
     case 'asr':
-      return '语音识别';
+      return translate(locale, 'common.sourceMode.asr');
     case 'asr-preload':
-      return '音频预读';
+      return translate(locale, 'common.sourceMode.asrPreload');
     case 'none':
-      return '暂无来源';
+      return translate(locale, 'common.sourceMode.none');
     default:
-      return '未知';
+      return translate(locale, 'common.unknown');
   }
 }
 
@@ -388,16 +427,29 @@ export interface SourceLanguageInfo {
 export function describeSourceLanguage(
   settings: Settings,
   session: SessionSnapshot | undefined,
+  locale: Locale = getLocale(),
 ): SourceLanguageInfo {
-  const selected = sourceLanguageLabel(settings.sourceLanguage);
+  const selected = sourceLanguageLabel(settings.sourceLanguage, locale);
   const parts: string[] = [];
   if (session?.sourceTrack) {
-    parts.push(`字幕轨道 ${session.sourceTrack.label}（${session.sourceTrack.languageCode}）`);
+    parts.push(
+      translate(locale, 'common.source.track', {
+        label: session.sourceTrack.label,
+        code: session.sourceTrack.languageCode,
+      }),
+    );
   }
   if (session?.detectedSourceLanguage && session.detectedSourceLanguage !== 'und') {
-    parts.push(`检测为${sourceLanguageLabel(session.detectedSourceLanguage)}`);
+    parts.push(
+      translate(locale, 'common.source.detected', {
+        name: sourceLanguageLabel(session.detectedSourceLanguage, locale),
+      }),
+    );
   }
-  return { selected, actual: parts.length ? parts.join(' · ') : '尚未检测' };
+  return {
+    selected,
+    actual: parts.length ? parts.join(' · ') : translate(locale, 'common.source.notDetected'),
+  };
 }
 
 /**
@@ -442,33 +494,35 @@ export interface VoiceAvailability {
 export function deriveVoiceAvailability(
   snapshot: AppSnapshot,
   voiceList: VoiceListState,
+  locale: Locale = getLocale(),
 ): VoiceAvailability {
   const { settings, capabilities } = snapshot;
-  const language = languageLabel(settings.targetLanguage);
+  const language = languageLabel(settings.targetLanguage, locale);
   if (settings.tts.backend === 'none') {
-    return { state: 'unavailable', reason: '语音合成设置为「不使用」，当前仅字幕。', voices: [] };
+    return { state: 'unavailable', reason: translate(locale, 'common.voice.ttsNone'), voices: [] };
   }
   if (settings.tts.backend === 'sub2api') {
     const cap = capabilities.tts;
     if (cap?.status === 'failed' || cap?.status === 'unsupported') {
       return {
         state: 'unavailable',
-        reason: `sub2api 语音合成不可用${cap.message ? `：${cap.message}` : ''}，当前仅字幕。`,
+        reason: cap.message
+          ? translate(locale, 'common.voice.sub2apiUnavailableDetail', { detail: cap.message })
+          : translate(locale, 'common.voice.sub2apiUnavailable'),
         voices: [],
       };
     }
     if (!settings.tts.sub2apiModel) {
       return {
         state: 'unavailable',
-        reason: '尚未填写 sub2api 语音合成模型，当前仅字幕。',
+        reason: translate(locale, 'common.voice.sub2apiNoModel'),
         voices: [],
       };
     }
     if (cap?.status !== 'verified') {
       return {
         state: 'unknown',
-        reason:
-          'sub2api 语音合成尚未实测；可在设置页勾选「允许实际调用」后检查。仍可选择配音，调用失败时会提示并降级为仅字幕。',
+        reason: translate(locale, 'common.voice.sub2apiUnverified'),
         voices: [],
       };
     }
@@ -478,15 +532,19 @@ export function deriveVoiceAvailability(
   switch (voiceList.status) {
     case 'idle':
     case 'loading':
-      return { state: 'unknown', reason: '正在读取系统声音列表…', voices: [] };
+      return { state: 'unknown', reason: translate(locale, 'common.voice.loading'), voices: [] };
     case 'error':
-      return { state: 'unknown', reason: `无法读取系统声音列表：${voiceList.message}`, voices: [] };
+      return {
+        state: 'unknown',
+        reason: translate(locale, 'common.voice.loadFailed', { detail: voiceList.message }),
+        voices: [],
+      };
     case 'ready': {
       const voices = filterVoicesForLanguage(voiceList.voices, settings.targetLanguage);
       if (voices.length === 0) {
         return {
           state: 'unavailable',
-          reason: `系统没有可用的「${language}」声音，配音不可用，当前仅字幕。可在设置中改用 sub2api 语音合成。`,
+          reason: translate(locale, 'common.voice.noVoice', { language }),
           voices,
         };
       }

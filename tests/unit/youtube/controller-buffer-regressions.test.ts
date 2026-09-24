@@ -169,6 +169,7 @@ function start() {
       type: 'welcome',
       protocolVersion: CONTENT_PROTOCOL_VERSION,
       workerInstanceId: 'w-1',
+      locale: 'zh-CN',
     });
   const session = (phase: 'starting' | 'running', epoch: number, readyUntilMs: number) =>
     port().receive({

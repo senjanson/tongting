@@ -21,6 +21,7 @@ import {
   normalizeLoopbackBaseUrl,
   redactUrl,
 } from './http';
+import { t as tr } from '../../i18n';
 
 /** 识别结果 JSON 上限。 */
 const RESULT_MAX_BYTES = 1024 * 1024;
@@ -74,7 +75,7 @@ export function createLocalAsrProvider(params: {
       code: 'asr-local-token-missing',
       category: 'config',
       retryable: false,
-      message: '尚未与本地识别服务配对',
+      message: tr('background.localAsr.notPaired'),
     });
   }
 
@@ -86,7 +87,7 @@ export function createLocalAsrProvider(params: {
           code: 'audio-too-large',
           category: 'format',
           retryable: false,
-          message: '识别分段超过本地服务的大小限制',
+          message: tr('background.localAsr.segmentTooLarge'),
         });
       }
       const url = `${joinApiPath(base, '/v1/transcribe')}?language=${encodeURIComponent(asrLanguageParam(options.language))}`;
@@ -142,7 +143,7 @@ function formatError(origin: string, cause?: unknown): AppError {
       code: 'asr-local-bad-response',
       category: 'format',
       retryable: false,
-      message: '本地识别服务返回的数据格式不符合约定',
+      message: tr('background.localAsr.badResponse'),
       detail: origin,
     },
     { cause },
@@ -205,7 +206,7 @@ export async function checkLocalAsrHealth(
         code: 'internal',
         category: 'internal',
         retryable: false,
-        message: '本地识别健康检查失败',
+        message: tr('background.localAsr.healthFailed'),
         at: Date.now(),
       },
     };

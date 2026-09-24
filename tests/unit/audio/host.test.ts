@@ -294,6 +294,22 @@ describe('offscreen host', () => {
     });
   });
 
+  it('uses the locale sent by the worker for errors it reports', async () => {
+    const { host, ports, request } = setup();
+    host.start();
+    const port = ports[0]!;
+    port.deliver({ type: 'welcome', workerInstanceId: 'wk1', locale: 'en' });
+    const rid = request(port, { kind: 'capture/set-epoch', leaseId: 'lease-none-1', epoch: 3 });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(port.replies().find((r) => r.requestId === rid)).toMatchObject({
+      ok: false,
+      error: {
+        code: 'lease-mismatch',
+        message: 'The audio capture lease has expired or belongs to another session. Start again.',
+      },
+    });
+  });
+
   it('T21: stops capture and playback when the lease is not renewed', async () => {
     const { host, ports, sessions, tts, request } = setup();
     host.start();

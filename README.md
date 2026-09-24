@@ -53,9 +53,9 @@ System voices, or sub2api speech synthesis once it has been verified against you
 
 Search, bookmarks, timestamped notes, copy, and export to SRT / VTT / TXT with an honest statement of what the record actually covers.
 
-### Find videos in Chinese
+### Find videos in another language
 
-Type what you are looking for in Chinese; the side panel's Search tab generates three English search phrases with Chinese annotations, each editable, copyable and openable in a new tab. Recent searches stay on your machine. It reuses whichever translation service and model you already configured.
+Type what you are looking for in your own language; the side panel's Search tab generates three search phrases in the search language you pick (English by default), with annotations in your language, each editable, copyable and openable in a new tab. "My language" defaults to your translation target language, which follows the browser UI language. Output quality varies by model and language pair. Recent searches stay on your machine. It reuses whichever translation service and model you already configured.
 
 ### Demo mode
 

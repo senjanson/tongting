@@ -8,6 +8,14 @@ import type { PortLike } from '@src/youtube/port-client';
 import { startYoutubeContent } from '@src/youtube/controller';
 import { guardInvalidation, isTrustedWake } from '@src/youtube/lifecycle';
 
+function uiLanguage(): string | undefined {
+  try {
+    return browser.i18n.getUILanguage();
+  } catch {
+    return navigator.language;
+  }
+}
+
 export default defineContentScript({
   matches: ['https://www.youtube.com/*'],
   runAt: 'document_idle',
@@ -47,6 +55,7 @@ export default defineContentScript({
         };
       },
       pageInstanceId: randomId('pg-'),
+      uiLanguage: uiLanguage(),
     });
   },
 });
