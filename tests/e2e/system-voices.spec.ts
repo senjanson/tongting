@@ -54,7 +54,12 @@ test('voice browsing, audition, selection, extension reload and browser restart 
     let ui = await UiDriver.open(context, ext.extensionId);
     await ui.ok({
       kind: 'settings/update',
-      patch: { outputMode: 'subtitle-voice', audio: { voiceName: 'Tingting' } },
+      // 默认目标语言跟随浏览器界面语言；本用例浏览的是普通话声音。
+      patch: {
+        targetLanguage: 'zh-CN',
+        outputMode: 'subtitle-voice',
+        audio: { voiceName: 'Tingting' },
+      },
     });
     await ui.page.setViewportSize({ width: 320, height: 1000 });
     await ui.page.getByRole('tab', { name: '设置', exact: true }).click();
@@ -134,7 +139,7 @@ test('real Chrome system voices: two different local Mandarin voices start succe
     expect((await ui.snapshot())!.credential.configured).toBe(false);
     await ui.ok({
       kind: 'settings/update',
-      patch: { outputMode: 'subtitle-voice', audio: { dubVolume: 0 } },
+      patch: { targetLanguage: 'zh-CN', outputMode: 'subtitle-voice', audio: { dubVolume: 0 } },
     });
     await ui.page.getByRole('tab', { name: '设置', exact: true }).click();
     await ext.serviceWorker.evaluate(() => {

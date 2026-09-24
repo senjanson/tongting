@@ -18,6 +18,11 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: 'sm' | 'md';
   icon?: ReactNode;
   block?: boolean;
+  /**
+   * 只显示「处理中」（转圈与 aria-busy），不阻止点击：主按钮在命令进行中仍要接受新的意图
+   * （例如启动中点「暂停翻译」），不能因 busy 丢掉。不应重复触发的按钮由调用方自行禁用或忽略点击
+   * （例如 CheckRunner 在检查进行中忽略重复点击）。
+   */
   busy?: boolean;
 }
 

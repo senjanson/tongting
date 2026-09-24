@@ -2,11 +2,15 @@
  * 分项连接检查：按 scope 发送 connection/check，只展示与本区块相关的检查项。
  *
  * - sub2api 语音识别/合成的检查需要一次实际调用（可能计费）：只有用户勾选「允许实际调用」时才发送
- *   allowBilledAudioProbe: true，且每次检查后恢复为不勾选；未探测的项目显示「未检测」。
+ *   allowBilledAudioProbe: true；勾选在点击检查时即清空（本次请求仍带点击时的值），只对本次有效；
+ *   未探测的项目显示「未检测」。
+ * - 同一页面同一时刻只进行一项检查：任一检查进行中时，本页所有检查按钮都不可用，避免双击等重复触发
+ *   发出多次（可能计费的）检查。
+ * - worker 用更新的检查取代本次检查时（错误码 check-replaced），静默结束：不提示失败，不覆盖已有结果。
  * - 配置版本、凭证代数或主机权限变化后，结果标为过期，不再显示「通过」。
  */
 import { PlugZap } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { CapabilityKey } from '../../domain/capability';
 import type {
   AppSnapshot,
@@ -15,8 +19,10 @@ import type {
 } from '../../messaging/ui-protocol';
 import { Button, Checkbox, Hint } from '../components/controls';
 import { Callout } from '../components/layout';
+import { useToast } from '../components/toast';
 import { formatDateTime, formatLatency } from '../format';
-import { useCommandRunner } from '../shared/hooks';
+import { errorInfoOf, errorMessageOf, type UiClient } from '../state/client';
+import { useUiClient } from '../state/hooks';
 import { StatusIcon } from './common';
 import styles from './options.module.css';
 
@@ -91,9 +97,61 @@ export function isReportStale(
   );
 }
 
+/** worker 以同 scope（或 all）的新检查取代旧检查时，旧请求的错误码（category: cancelled）。 */
+export const CHECK_REPLACED_CODE = 'check-replaced';
+
+export type CheckScope = 'text' | 'asr' | 'tts';
+
+/**
+ * 一个页面（同一 UI 客户端）正在进行的检查。放在组件之外，以便同页的多个 CheckRunner 共享，
+ * 并在点击时同步判断（不依赖重新渲染后按钮才变为不可用）。
+ */
+class ActiveCheck {
+  private scope: CheckScope | null = null;
+  private readonly listeners = new Set<() => void>();
+
+  readonly get = (): CheckScope | null => this.scope;
+
+  readonly subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  /** 开始一项检查；已有检查进行中时返回 null（不应发送）。返回的函数结束本项检查，可重复调用。 */
+  begin(scope: CheckScope): (() => void) | null {
+    if (this.scope) return null;
+    this.scope = scope;
+    this.emit();
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      this.scope = null;
+      this.emit();
+    };
+  }
+
+  private emit(): void {
+    for (const listener of [...this.listeners]) listener();
+  }
+}
+
+const ACTIVE_CHECKS = new WeakMap<UiClient, ActiveCheck>();
+
+function activeCheckOf(client: UiClient): ActiveCheck {
+  let active = ACTIVE_CHECKS.get(client);
+  if (!active) {
+    active = new ActiveCheck();
+    ACTIVE_CHECKS.set(client, active);
+  }
+  return active;
+}
+
 export interface CheckRunnerProps {
   snapshot: AppSnapshot;
-  scope: 'text' | 'asr' | 'tts';
+  scope: CheckScope;
   keys: readonly CapabilityKey[];
   buttonLabel: string;
   resultLabel: string;
@@ -119,8 +177,12 @@ export function CheckRunner({
   billable = false,
 }: CheckRunnerProps) {
   const [allowBilled, setAllowBilled] = useState(false);
-  const { run, isBusy } = useCommandRunner();
-  const busyKey = `check:${scope}`;
+  const client = useUiClient();
+  const notify = useToast();
+  const active = activeCheckOf(client);
+  const activeScope = useSyncExternalStore(active.subscribe, active.get, active.get);
+  const checking = activeScope === scope;
+  const otherChecking = activeScope !== null && !checking;
   const granted = snapshot.hostPermission.granted;
   const snapshotReport = snapshot.lastConnectionReport;
   const [local, setLocal] = useState<Observed | null>(null);
@@ -160,13 +222,28 @@ export function CheckRunner({
   const stale = !!observed && isReportStale(observed.report, context, observed.grantedAtCheck);
 
   const check = async () => {
-    const result = await run(
-      { kind: 'connection/check', scope, allowBilledAudioProbe: billable && allowBilled },
-      { key: busyKey, errorPrefix: '检查失败' },
-    );
-    // 计费确认只对本次检查有效。
+    const finish = active.begin(scope);
+    // 本页已有检查进行中：按钮已不可用，这里再挡住同一帧内的重复点击（例如双击）。
+    if (!finish) return;
+    // 计费确认只对本次检查有效：点击时同步取值并清空；检查进行中再勾选属于下一次检查。
+    const allowBilledAudioProbe = billable && allowBilled;
     setAllowBilled(false);
-    if (result) setLocal({ report: result, grantedAtCheck: snapshot.hostPermission.granted });
+    const grantedAtCheck = snapshot.hostPermission.granted;
+    try {
+      const report = await client.sendCommand({
+        kind: 'connection/check',
+        scope,
+        allowBilledAudioProbe,
+      });
+      setLocal({ report, grantedAtCheck });
+    } catch (error) {
+      // 本次检查已被更新的检查取代（例如另一页面发起了同类检查）：新结果会随快照到达，
+      // 不提示失败，也不改动已有结果。
+      if (errorInfoOf(error)?.code === CHECK_REPLACED_CODE) return;
+      notify(`检查失败：${errorMessageOf(error)}`, 'danger');
+    } finally {
+      finish();
+    }
   };
 
   return (
@@ -175,13 +252,19 @@ export function CheckRunner({
         <Button
           variant={scope === 'text' ? 'primary' : 'secondary'}
           icon={<PlugZap size={15} aria-hidden="true" />}
-          busy={isBusy(busyKey)}
-          disabled={!!disabledReason}
+          busy={checking}
+          disabled={!!disabledReason || otherChecking}
+          // 进行中的按钮不设 disabled，避免键盘焦点丢失；重复点击由 check() 忽略。
+          aria-disabled={checking || undefined}
           onClick={() => void check()}
         >
           {buttonLabel}
         </Button>
-        {disabledReason && <Hint>{disabledReason}</Hint>}
+        {disabledReason ? (
+          <Hint>{disabledReason}</Hint>
+        ) : (
+          otherChecking && <Hint>另一项检查正在进行，完成后可再检查。</Hint>
+        )}
       </div>
       {billable && (
         <Checkbox

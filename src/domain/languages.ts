@@ -48,7 +48,7 @@ export const SOURCE_LANGUAGES: readonly { code: string; label: string }[] = [
 export const DEFAULT_TARGET_LANGUAGE = 'zh-CN';
 
 /**
- * 首次安装（或设置损坏被重置）时按浏览器界面语言挑默认目标语言。
+ * 首次安装、设置损坏回退或「恢复默认设置」时按浏览器界面语言挑默认目标语言。
  * 中文界面按简繁保持中文；其余界面优先匹配受支持的同一语言，匹配不到用英文——
  * 看不懂中文的人不应该默认拿到中文字幕。检测不到界面语言时保持内置默认值。
  * 只用于产生初始默认值，绝不覆盖用户已保存的选择。

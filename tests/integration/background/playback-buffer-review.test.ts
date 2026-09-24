@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '@src/domain/errors';
 import type {
   YoutubePreloadRequest,
@@ -10,8 +10,10 @@ const active: Harness[] = [];
 afterEach(async () => {
   for (const h of active.splice(0)) {
     await h.coordinator.handleCommand({ kind: 'session/stop', tabId: 1 });
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(10_000);
     await h.coordinator.idle();
   }
+  vi.useRealTimers();
 });
 
 async function startPreload() {
@@ -59,32 +61,41 @@ describe('buffered playback failure and configuration recovery', () => {
     expect(requests).toHaveLength(2);
   });
 
+  // Retryable preload failures (model loading, a full queue, network) recover on their own: the
+  // buffer keeps preparing and the preloader re-requests after Retry-After or backoff.
+  const retryable = {
+    network: { retryAfterMs: undefined, window: [500, 1_000] },
+    timeout: { retryAfterMs: undefined, window: [500, 1_000] },
+    'rate-limit': { retryAfterMs: 3_000, window: [3_000, 3_500] },
+  } as const;
+  const preloadFailure = (category: keyof typeof retryable) =>
+    new AppError({
+      code: 'preload-test-failure',
+      category,
+      retryable: true,
+      message: '请重试',
+      ...(retryable[category].retryAfterMs !== undefined
+        ? { retryAfterMs: retryable[category].retryAfterMs }
+        : {}),
+    });
+
   it.each(['network', 'timeout', 'rate-limit'] as const)(
-    'retries a %s preload error through the UI callout session/start command',
+    'keeps preparing after a single %s preload failure and re-requests after the backoff',
     async (category) => {
       const { h, requests } = await startPreload();
-      requests[0]!.reject(
-        new AppError({
-          code: 'preload-test-failure',
-          category,
-          retryable: true,
-          message: '请重试',
-        }),
-      );
-      await wait(10);
-      expect(latest(h).playbackBuffer?.state).toBe('blocked');
-      expect(latest(h).translation.failed).toBe(0);
-
-      await h.coordinator.handleCommand({ kind: 'session/start', tabId: 1 });
-      await h.coordinator.idle();
-      expect(requests).toHaveLength(2);
-      expect(latest(h).error).toBeUndefined();
+      vi.useFakeTimers();
+      requests[0]!.reject(preloadFailure(category));
+      await vi.advanceTimersByTimeAsync(10);
       expect(latest(h).playbackBuffer?.state).toBe('preparing');
-      expect(latest(h).resources.asr).toBe('running');
-      // Repeated clicks while the retry is in flight must not create duplicate requests.
-      await h.coordinator.handleCommand({ kind: 'session/start', tabId: 1 });
-      await h.coordinator.idle();
+      expect(latest(h).error).toBeUndefined();
+      // Still starting up rather than failed: no chunk has been recognized yet.
+      expect(latest(h).resources.asr).toBe('loading');
+      const [earliest, latestRetry] = retryable[category].window;
+      await vi.advanceTimersByTimeAsync(earliest - 11);
+      expect(requests).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(latestRetry - earliest + 20);
       expect(requests).toHaveLength(2);
+      expect(requests[1]!.request).toMatchObject({ startMs: 30000, durationMs: 20000 });
       requests[1]!.resolve({
         startMs: 30000,
         durationMs: 20000,
@@ -92,7 +103,54 @@ describe('buffered playback failure and configuration recovery', () => {
         language: 'en',
         segments: [{ startMs: 0, endMs: 4000, text: 'Hello' }],
       });
-      await wait(10);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(latest(h).playbackBuffer?.state).toBe('preparing');
+      expect(latest(h).resources.asr).toBe('running');
+      expect(FakeScheduler.all.at(-1)!.cues).toHaveLength(1);
+    },
+  );
+
+  it.each(['network', 'timeout', 'rate-limit'] as const)(
+    'retries a %s preload error through the UI callout session/start command once automatic retries run out',
+    async (category) => {
+      const { h, requests } = await startPreload();
+      vi.useFakeTimers();
+      // The first failure plus five automatic retries; only the last one blocks playback.
+      for (let i = 0; i < 6; i++) {
+        requests[i]!.reject(preloadFailure(category));
+        await vi.advanceTimersByTimeAsync(10);
+        if (i === 5) break;
+        expect(latest(h).playbackBuffer?.state).toBe('preparing');
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(requests).toHaveLength(i + 2);
+      }
+      expect(latest(h).playbackBuffer?.state).toBe('blocked');
+      expect(latest(h).error).toMatchObject({ code: 'preload-test-failure' });
+      expect(latest(h).resources.asr).toBe('error');
+      expect(latest(h).translation.failed).toBe(0);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(requests).toHaveLength(6);
+
+      await h.coordinator.handleCommand({ kind: 'session/start', tabId: 1 });
+      await vi.advanceTimersByTimeAsync(0);
+      await h.coordinator.idle();
+      expect(requests).toHaveLength(7);
+      expect(latest(h).error).toBeUndefined();
+      expect(latest(h).playbackBuffer?.state).toBe('preparing');
+      expect(latest(h).resources.asr).toBe('running');
+      // Repeated clicks while the retry is in flight must not create duplicate requests.
+      await h.coordinator.handleCommand({ kind: 'session/start', tabId: 1 });
+      await vi.advanceTimersByTimeAsync(0);
+      await h.coordinator.idle();
+      expect(requests).toHaveLength(7);
+      requests[6]!.resolve({
+        startMs: 30000,
+        durationMs: 20000,
+        text: 'Hello',
+        language: 'en',
+        segments: [{ startMs: 0, endMs: 4000, text: 'Hello' }],
+      });
+      await vi.advanceTimersByTimeAsync(10);
       expect(latest(h).playbackBuffer?.state).toBe('preparing');
       const scheduler = FakeScheduler.all.at(-1)!;
       scheduler.emit(
@@ -103,7 +161,7 @@ describe('buffered playback failure and configuration recovery', () => {
           translatedText: '你好',
         })),
       );
-      await wait(10);
+      await vi.advanceTimersByTimeAsync(10);
       expect(latest(h).playbackBuffer).toMatchObject({ state: 'ready', readyAheadMs: 20000 });
       expect(latest(h).error).toBeUndefined();
     },

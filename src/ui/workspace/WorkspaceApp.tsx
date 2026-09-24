@@ -3,6 +3,9 @@
  *
  * - 源标签页仍在快照 pages 中时可点击时间跳转；否则提示播放控制不可用。
  * - 与会话匹配（快照 recordId）时显示实时字幕；会话结束、点「刷新记录」或窗口获得焦点时重新读取记录。
+ * - 实时会话出现、结束或 recordId 变化时（去抖后）重新读取记录列表；刚结束的会话在重新读取完成前保留条目，
+ *   之后由它写入的本地记录取代。
+ * - 属于未结束会话的记录不能删除：worker 在防抖保存与停止时会写回完整记录。
  * - 未显式选择时，首次隐式选中的记录会被固定，重新读取列表不会跳到别的记录。
  * - 笔记按 videoId 保存，与字幕记录独立；保存按 updatedAt 检测冲突，保存失败的内容保留为草稿。
  */
@@ -36,6 +39,9 @@ import { clearNoteDraft, readNoteDraft, writeNoteDraft, type NoteDraft } from '.
 import styles from './workspace.module.css';
 
 const RECORD_LIST_LIMIT = 200;
+/** 实时会话变化后，重新读取记录列表前的去抖时间。 */
+const LIVE_RELOAD_DEBOUNCE_MS = 300;
+export const DELETE_IN_USE_REASON = '翻译进行中，停止后才能删除这条记录。';
 const NOTES_CHANNEL = 'tongting:notes';
 
 function initialVideoId(): string | null {
@@ -59,7 +65,58 @@ export function WorkspaceApp() {
 }
 
 type RecordsState =
-  { status: 'loading' } | { status: 'ready'; records: TranscriptSummary[] } | { status: 'error' };
+  | { status: 'loading' }
+  | {
+      status: 'ready';
+      records: TranscriptSummary[];
+      /** 开始读取时的实时会话变化代数（见 LiveRecords.generation）。 */
+      generation: number;
+    }
+  | { status: 'error' };
+
+/** 离开实时状态（结束，或通常直接从快照中移除）的会话。 */
+interface EndedLive {
+  /** 离开时的变化代数：此后开始的列表读取才一定包含它最后写入的记录。 */
+  generation: number;
+  /** 最后已知的会话快照，用于在重新读取完成前暂时保留列表条目。 */
+  session: SessionSnapshot;
+}
+
+/** 快照中未结束的会话及其变化历史。 */
+interface LiveRecords {
+  /** 未结束会话的 recordId 与 sessionId（排序后序列化），用于判断是否变化。 */
+  key: string;
+  /** recordId → 未结束的会话（上次变化时的快照）。 */
+  sessions: ReadonlyMap<string, SessionSnapshot>;
+  /** 变化代数：会话出现、结束或 recordId 变化时加一（按次数计，A→B→A 也会重新读取）。 */
+  generation: number;
+  ended: ReadonlyMap<string, EndedLive>;
+}
+
+function liveSessionsKey(snapshot: AppSnapshot | null): string {
+  const pairs: string[] = [];
+  for (const session of snapshot?.sessions ?? []) {
+    if (session.recordId && !isSessionEnded(session))
+      pairs.push(`${session.recordId}\n${session.identity.sessionId}`);
+  }
+  return JSON.stringify(pairs.sort());
+}
+
+/** recordId → 未结束的会话（同一记录有多个时取最近更新的）。 */
+function liveSessionsByRecord(snapshot: AppSnapshot | null): Map<string, SessionSnapshot> {
+  const sessions = new Map<string, SessionSnapshot>();
+  for (const session of snapshot?.sessions ?? []) {
+    if (!session.recordId || isSessionEnded(session)) continue;
+    const current = sessions.get(session.recordId);
+    if (!current || session.updatedAt > current.updatedAt) sessions.set(session.recordId, session);
+  }
+  return sessions;
+}
+
+/** 记录是否属于未结束的会话：worker 在防抖保存与停止时会写回完整记录，此时删除会被写回。 */
+export function isRecordInUse(snapshot: AppSnapshot | null, recordId: string): boolean {
+  return !!snapshot?.sessions.some((s) => s.recordId === recordId && !isSessionEnded(s));
+}
 
 /** 列表条目：本地记录，或尚未写入本地记录的实时会话。 */
 interface ListEntry {
@@ -73,6 +130,8 @@ interface ListEntry {
   cueCount?: number;
   updatedAt: number;
   liveOnly: boolean;
+  /** 仅 liveOnly：会话已结束，正在等待重新读取它写入的本地记录。 */
+  ended: boolean;
 }
 
 /** 与记录匹配的会话：只按快照 recordId 匹配，优先未出错、最近更新的。 */
@@ -90,7 +149,35 @@ export function findLiveSession(
     })[0];
 }
 
-function buildEntries(records: TranscriptSummary[], snapshot: AppSnapshot | null): ListEntry[] {
+function sessionEntry(
+  recordId: string,
+  session: SessionSnapshot,
+  snapshot: AppSnapshot | null,
+  ended: boolean,
+): ListEntry {
+  const page = snapshot?.pages.find(
+    (p) => p.tabId === session.identity.tabId && p.videoId === session.identity.videoId,
+  );
+  return {
+    recordId,
+    videoId: session.identity.videoId,
+    title: page?.title ?? session.player?.title,
+    sourceLanguage: session.sourceTrack?.languageCode ?? session.detectedSourceLanguage ?? 'und',
+    targetLanguage: session.targetLanguage,
+    sourceMode: session.sourceMode,
+    complete: isCompleteCoverage(session.coverage, session.sourceMode),
+    updatedAt: session.updatedAt,
+    liveOnly: true,
+    ended,
+  };
+}
+
+function buildEntries(
+  records: TranscriptSummary[],
+  readGeneration: number,
+  ended: ReadonlyMap<string, EndedLive>,
+  snapshot: AppSnapshot | null,
+): ListEntry[] {
   const entries: ListEntry[] = records.map((r) => ({
     recordId: r.recordId,
     videoId: r.videoId,
@@ -102,23 +189,21 @@ function buildEntries(records: TranscriptSummary[], snapshot: AppSnapshot | null
     cueCount: r.cueCount,
     updatedAt: r.updatedAt,
     liveOnly: false,
+    ended: false,
   }));
   const known = new Set(entries.map((e) => e.recordId));
   for (const session of snapshot?.sessions ?? []) {
     if (!session.recordId || known.has(session.recordId) || isSessionEnded(session)) continue;
     known.add(session.recordId);
-    const page = snapshot?.pages.find((p) => p.tabId === session.identity.tabId);
-    entries.unshift({
-      recordId: session.recordId,
-      videoId: session.identity.videoId,
-      title: page?.title ?? session.player?.title,
-      sourceLanguage: session.sourceTrack?.languageCode ?? session.detectedSourceLanguage ?? 'und',
-      targetLanguage: session.targetLanguage,
-      sourceMode: session.sourceMode,
-      complete: isCompleteCoverage(session.coverage, session.sourceMode),
-      updatedAt: session.updatedAt,
-      liveOnly: true,
-    });
+    entries.unshift(sessionEntry(session.recordId, session, snapshot, false));
+  }
+  // 刚结束的会话（正常停止后会从快照中移除）：在本次列表读取开始之后才结束时暂时保留条目——
+  // 它最后写入的记录可能不在读取结果中；会话变化触发的重新读取完成后由本地记录取代，从未写入时随之消失。
+  for (const [recordId, { generation, session }] of ended) {
+    if (known.has(recordId) || generation <= readGeneration) continue;
+    known.add(recordId);
+    const latest = findLiveSession(snapshot, recordId) ?? session;
+    entries.unshift(sessionEntry(recordId, latest, snapshot, true));
   }
   return entries;
 }
@@ -133,12 +218,48 @@ function WorkspaceView() {
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  // 记录实时会话的变化与刚结束的会话（渲染期间按条件更新，React 推荐的派生方式）。
+  const liveKey = liveSessionsKey(snapshot);
+  const [live, setLive] = useState<LiveRecords>(() => ({
+    key: liveKey,
+    sessions: liveSessionsByRecord(snapshot),
+    generation: 0,
+    ended: new Map(),
+  }));
+  if (live.key !== liveKey) {
+    const sessions = liveSessionsByRecord(snapshot);
+    const generation = live.generation + 1;
+    const readGeneration = records.status === 'ready' ? records.generation : -1;
+    // 已被某次读取覆盖的结束会话不再需要保留。
+    const ended = new Map([...live.ended].filter(([, e]) => e.generation > readGeneration));
+    for (const [recordId, session] of live.sessions) {
+      if (!sessions.has(recordId)) ended.set(recordId, { generation, session });
+    }
+    for (const recordId of sessions.keys()) ended.delete(recordId);
+    setLive({ key: liveKey, sessions, generation, ended });
+  }
+  // 列表读取开始时记录当前代数；在读取的 effect 之前更新（同一次提交中按声明顺序执行）。
+  const liveGeneration = useRef(live.generation);
+  useEffect(() => {
+    liveGeneration.current = live.generation;
+  }, [live.generation]);
+  // 会话变化后去抖再重新读取：同一时刻多个会话开始/结束只读取一次。
+  const [listGeneration, setListGeneration] = useState(live.generation);
+  useEffect(() => {
+    if (listGeneration === live.generation) return undefined;
+    const target = live.generation;
+    const timer = setTimeout(() => setListGeneration(target), LIVE_RELOAD_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [live.generation, listGeneration]);
+
   useEffect(() => {
     let cancelled = false;
+    const generation = liveGeneration.current;
+    // 依赖变化时取消上一次读取：迟到的旧结果不会覆盖更新的列表。
     listTranscriptSummaries({ limit: RECORD_LIST_LIMIT }).then(
       (list) => {
         if (cancelled) return;
-        setRecords({ status: 'ready', records: list });
+        setRecords({ status: 'ready', records: list, generation });
         // 首次隐式选择后固定 recordId，后续重新读取不再跳到别的记录。
         setSelection((prev) => {
           if (prev.recordId) return prev;
@@ -153,7 +274,7 @@ function WorkspaceView() {
     return () => {
       cancelled = true;
     };
-  }, [reloadNonce]);
+  }, [reloadNonce, listGeneration]);
 
   useEffect(() => {
     const onFocus = () => setReloadNonce((n) => n + 1);
@@ -161,9 +282,13 @@ function WorkspaceView() {
     return () => window.removeEventListener('focus', onFocus);
   }, []);
 
+  const ended = live.ended;
   const entries = useMemo(
-    () => (records.status === 'ready' ? buildEntries(records.records, snapshot) : []),
-    [records, snapshot],
+    () =>
+      records.status === 'ready'
+        ? buildEntries(records.records, records.generation, ended, snapshot)
+        : [],
+    [records, ended, snapshot],
   );
   const selected = selection.recordId
     ? entries.find((e) => e.recordId === selection.recordId)
@@ -172,6 +297,12 @@ function WorkspaceView() {
 
   const onDelete = async () => {
     if (!selected) return;
+    if (isRecordInUse(snapshot, selected.recordId)) {
+      // 确认期间开始了翻译：删除会被 worker 写回，不执行。
+      notify(DELETE_IN_USE_REASON, 'warning');
+      setConfirmDelete(false);
+      return;
+    }
     try {
       await deleteTranscript(selected.recordId);
       notify('已删除字幕记录。该视频的笔记与收藏已保留。', 'success');
@@ -297,7 +428,9 @@ function RecordList({
             </span>
             <span className={styles.recordMeta}>
               {entry.liveOnly
-                ? '实时会话 · 尚未保存为本地记录'
+                ? entry.ended
+                  ? '翻译已结束 · 正在读取本地记录…'
+                  : '实时会话 · 尚未保存为本地记录'
                 : `${entry.complete ? '完整轨道' : '部分字幕'} · ${entry.cueCount ?? 0} 条 · ${formatDateTime(entry.updatedAt)}`}
             </span>
           </button>
@@ -343,8 +476,13 @@ function useRecord(recordId: string | undefined, reloadKey: string): LoadState {
       cancelled = true;
     };
   }, [recordId, key]);
-  // 重新读取期间保留上一次结果，避免闪烁。
-  return state?.value ?? { status: 'loading' };
+  // 重新读取期间保留上一次结果，避免闪烁；但不沿用「记录不存在」：会话刚结束时，
+  // 它最后写入的记录正在读取，不能先显示「已不存在」。
+  if (!state) return { status: 'loading' };
+  if (state.key !== key && state.value.status === 'ready' && !state.value.loaded) {
+    return { status: 'loading' };
+  }
+  return state.value;
 }
 
 function sessionReloadKey(session: SessionSnapshot | undefined, reloadNonce: number): string {
@@ -374,6 +512,7 @@ function RecordDetail({
   const page = findSourcePage(snapshot, entry.videoId, session);
   const time = usePlayerClock(page?.player);
   const useLive = !!liveSession && liveCues.status === 'ready';
+  const inUse = isRecordInUse(snapshot, entry.recordId);
 
   const source: TranscriptSource = useMemo(
     () => ({
@@ -441,7 +580,8 @@ function RecordDetail({
               size="sm"
               variant="danger"
               icon={<Trash size={14} aria-hidden="true" />}
-              disabled={loaded?.readOnly}
+              disabled={loaded?.readOnly || inUse}
+              title={inUse ? DELETE_IN_USE_REASON : undefined}
               onClick={onDelete}
             >
               删除记录
@@ -449,6 +589,7 @@ function RecordDetail({
           )}
         </div>
       </div>
+      {record && inUse && <Hint>{DELETE_IN_USE_REASON}</Hint>}
       {loaded?.readOnly && (
         <Callout tone="warning">
           这条记录由更新版本的同听创建，当前只读显示，部分内容可能无法识别。

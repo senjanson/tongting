@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   clearSecret,
+  credentialPlacement,
   loadSecret,
   loadSettings,
   maskSecret,
@@ -25,12 +26,41 @@ describe('settings store', () => {
     const local = new MemoryArea();
     local.data.set('settings', { schemaVersion: 1, captions: { fontSizePx: 'huge' } });
     const loaded = await loadSettings(local, logger);
-    expect(loaded.recoveredFromCorruption).toBe(true);
+    expect(loaded.status).toBe('recovered');
     expect(loaded.settings).toEqual(defaultSettings());
     expect(local.data.get('settings.corruptBackup')).toEqual({
       schemaVersion: 1,
       captions: { fontSizePx: 'huge' },
     });
+  });
+
+  it('reports a failed read as unreadable instead of pretending nothing was stored', async () => {
+    const local = new MemoryArea();
+    local.data.set('settings', { ...defaultSettings(), targetLanguage: 'ja' });
+    local.get = async () => {
+      throw new Error('io');
+    };
+    const loaded = await loadSettings(local, logger, 'en-US');
+    expect(loaded.status).toBe('unreadable');
+    expect(loaded.settings.targetLanguage).toBe('en');
+  });
+
+  it('treats invalid settings whose backup failed as unreadable and leaves the original in place', async () => {
+    const local = new MemoryArea();
+    const future = { ...defaultSettings(), schemaVersion: 3 };
+    local.data.set('settings', future);
+    local.failWrites = true;
+    const loaded = await loadSettings(local, logger);
+    expect(loaded.status).toBe('unreadable');
+    expect(local.data.get('settings')).toEqual(future);
+    expect(local.data.has('settings.corruptBackup')).toBe(false);
+  });
+
+  it('marks first-install defaults as initial so the caller can persist them', async () => {
+    expect((await loadSettings(new MemoryArea(), logger, 'ja-JP')).status).toBe('initial');
+    const local = new MemoryArea();
+    await saveSettings(local, defaultSettings());
+    expect((await loadSettings(local, logger)).status).toBe('stored');
   });
 
   it('migrates legacy settings without schemaVersion and fills defaults', async () => {
@@ -107,6 +137,19 @@ describe('secrets', () => {
     });
     expect(areas.local.data.has('secret.asrToken')).toBe(false);
     expect(areas.secureLocal.data.get('secret.asrToken')).toBe('legacy-token-000001');
+  });
+
+  it('derives the remember choice from where saved credentials actually live', () => {
+    const none = { value: undefined, storage: 'none' } as const;
+    expect(credentialPlacement(none, none)).toBeUndefined();
+    expect(credentialPlacement({ value: 'k', storage: 'local' }, none)).toBe('local');
+    expect(credentialPlacement({ value: 'k', storage: 'session' }, none)).toBe('session');
+    // 任一凭证仅临时保存即视为未选择记住，不能据此把它写入磁盘。
+    expect(
+      credentialPlacement({ value: 'k', storage: 'local' }, { value: 't', storage: 'session' }),
+    ).toBe('session');
+    // 未能保存（storage=none）的值不代表任何存储选择。
+    expect(credentialPlacement({ value: 'k', storage: 'none' }, none)).toBeUndefined();
   });
 
   it('masks all but the last 4 characters and hides short secrets fully', () => {

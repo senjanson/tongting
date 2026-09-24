@@ -1,17 +1,17 @@
 /**
  * 设置与凭证存储（仅在 service worker 中使用）。
  *
- * - 非敏感设置：storage.local `settings`，带 schemaVersion；损坏时保留备份并回到默认值。
+ * - 非敏感设置：storage.local `settings`，带 schemaVersion；损坏时保留备份并回到默认值，
+ *   读取失败时如实报告，由调用方避免用默认值覆盖原设置。
  * - API Key / 本地识别令牌：默认写扩展 IndexedDB；主动取消「记住在本机」时才写 storage.session。
  *   storage.local 只保存非敏感位置/删除标记；所有区域均限于可信扩展上下文。
  * - 写入失败不得报告为已保存；调用方拿到 persisted=false 后提示「仅本次生效」。
  */
 import type { KeyValueArea } from './deps';
-import { defaultTargetLanguageFor } from '../domain/languages';
 import {
   SETTINGS_SCHEMA_VERSION,
   SettingsSchema,
-  defaultSettings,
+  initialSettings,
   type Settings,
 } from '../domain/settings';
 
@@ -20,10 +20,17 @@ const SETTINGS_BACKUP_KEY = 'settings.corruptBackup';
 const API_KEY = 'secret.apiKey';
 const ASR_TOKEN_KEY = 'secret.asrToken';
 
+/**
+ * - stored：读到有效设置（可能已迁移）。
+ * - initial：尚未保存过设置（首次安装），返回按界面语言生成的默认值，调用方应落盘固定下来。
+ * - recovered：已保存设置无效，原数据已备份，返回默认值。
+ * - unreadable：读取失败，或设置无效且未能备份；返回默认值，调用方不得写盘覆盖原设置。
+ */
+export type SettingsLoadStatus = 'stored' | 'initial' | 'recovered' | 'unreadable';
+
 export interface LoadedSettings {
   settings: Settings;
-  /** 读取到损坏数据并回退默认值。 */
-  recoveredFromCorruption: boolean;
+  status: SettingsLoadStatus;
   /** 已成功迁移的旧设置需要落盘，避免下次启动重复应用升级默认值。 */
   needsPersistence?: boolean;
 }
@@ -34,31 +41,32 @@ export async function loadSettings(
   /** 浏览器界面语言，用于首次安装时挑默认目标语言；省略则使用内置默认。 */
   uiLanguage?: string,
 ): Promise<LoadedSettings> {
-  const initial = () => defaultSettings(defaultTargetLanguageFor(uiLanguage));
+  const initial = () => initialSettings(uiLanguage);
   let raw: unknown;
   try {
     raw = (await local.get([SETTINGS_KEY]))[SETTINGS_KEY];
   } catch (error) {
     logger.warn('[tongting] settings read failed', error instanceof Error ? error.name : 'unknown');
-    return { settings: initial(), recoveredFromCorruption: false };
+    return { settings: initial(), status: 'unreadable' };
   }
-  if (raw === undefined) return { settings: initial(), recoveredFromCorruption: false };
+  if (raw === undefined) return { settings: initial(), status: 'initial' };
   const migrated = migrateSettings(raw);
   const parsed = SettingsSchema.safeParse(migrated);
   if (parsed.success)
     return {
       settings: parsed.data,
-      recoveredFromCorruption: false,
+      status: 'stored',
       needsPersistence: migrated !== raw,
     };
-  // 保留损坏数据备份，不静默丢弃。
+  // 保留损坏数据备份，不静默丢弃；备份失败时原数据仍只在 settings 中，不能被覆盖。
   try {
     await local.set({ [SETTINGS_BACKUP_KEY]: raw });
   } catch {
-    // 备份失败不影响继续使用默认设置。
+    logger.warn('[tongting] settings invalid and backup failed; keeping original untouched');
+    return { settings: initial(), status: 'unreadable' };
   }
   logger.warn('[tongting] settings invalid, using defaults; backup kept');
-  return { settings: initial(), recoveredFromCorruption: true };
+  return { settings: initial(), status: 'recovered' };
 }
 
 /** v2 将默认凭证策略改为持久保存；之后用户显式选择的临时模式不会被再次覆盖。 */
@@ -86,6 +94,16 @@ export interface SecretState {
   storage: 'none' | 'session' | 'local';
   /** 旧副本未确认全部清除；UI 保留重试清理入口，不代表凭证仍可使用。 */
   cleanupPending?: boolean;
+}
+
+/**
+ * 已保存凭证的实际位置，即用户对「记住在本机」的真实选择；任一凭证仅临时保存即视为未选择记住。
+ * 没有已保存的凭证时返回 undefined。
+ */
+export function credentialPlacement(...secrets: SecretState[]): 'session' | 'local' | undefined {
+  const saved = secrets.filter((secret) => secret.value && secret.storage !== 'none');
+  if (!saved.length) return undefined;
+  return saved.some((secret) => secret.storage === 'session') ? 'session' : 'local';
 }
 
 function secretKey(kind: SecretKind): string {

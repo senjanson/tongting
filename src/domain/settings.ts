@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DEFAULT_TARGET_LANGUAGE } from './languages';
+import { DEFAULT_TARGET_LANGUAGE, defaultTargetLanguageFor } from './languages';
 import { DEFAULT_TEXT_MODEL } from './translation-models';
 
 export const SETTINGS_SCHEMA_VERSION = 2;
@@ -106,6 +106,11 @@ export function defaultSettings(targetLanguage?: string): Settings {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
     ...(targetLanguage ? { targetLanguage } : {}),
   });
+}
+
+/** 首次安装、设置无法使用与「恢复默认设置」共用的默认值：目标语言按浏览器界面语言选择。 */
+export function initialSettings(uiLanguage: string | undefined): Settings {
+  return defaultSettings(defaultTargetLanguageFor(uiLanguage));
 }
 
 type NestedSettingsKey = 'captions' | 'audio' | 'provider' | 'asr' | 'tts';

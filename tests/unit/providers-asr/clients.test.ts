@@ -14,6 +14,8 @@ import {
 } from '@src/providers/asr/local-client';
 import { createAsrProviderFromRoute } from '@src/providers/asr/route';
 import { createSub2apiAsrProvider, supportsVerboseJson } from '@src/providers/asr/sub2api-client';
+import { errorFromHttpStatus } from '@src/providers/text/http-errors';
+import { synthesizeSpeech } from '@src/providers/tts/sub2api-speech';
 
 const wav = () => encodeWavPcm16(new Float32Array(16000), 16000);
 const json = (body: unknown, init: ResponseInit = {}) =>
@@ -84,6 +86,60 @@ describe('asr http helpers', () => {
   ] as const)('maps HTTP %i to %s (retryable=%s)', (status, category, retryable) => {
     const e = mapHttpStatus(status, undefined, undefined, 'sub2api-asr', 'https://api.example.com');
     expect(e.info).toMatchObject({ category, retryable, httpStatus: status });
+  });
+
+  it('classifies a 403 balance rejection as quota, like the text endpoints', async () => {
+    const bodies = [
+      { error: { type: 'insufficient_quota', code: 'insufficient_quota', message: 'x' } },
+      { error: { code: 'x', type: 'insufficient_balance' } },
+      { error: { message: '用户余额不足' } },
+    ];
+    for (const body of bodies) {
+      const text = errorFromHttpStatus(403, new Headers(), JSON.stringify(body));
+      expect(text).toMatchObject({ category: 'quota', retryable: false });
+      const asr = createSub2apiAsrProvider({
+        baseUrl: 'https://api.example.com',
+        apiKey: 'k',
+        model: 'whisper-1',
+        fetchImpl: async () => json(body, { status: 403 }),
+      });
+      await expect(asr.transcribe(wav(), opts())).rejects.toMatchObject({
+        info: { code: 'quota-exceeded', category: 'quota', retryable: false, httpStatus: 403 },
+      });
+      await expect(
+        synthesizeSpeech({
+          baseUrl: 'https://api.example.com',
+          apiKey: 'k',
+          model: 'tts-1',
+          voice: 'alloy',
+          text: '你好',
+          speed: 1,
+          signal: new AbortController().signal,
+          fetchImpl: async () => json(body, { status: 403 }),
+        }),
+      ).rejects.toMatchObject({ info: { code: 'quota-exceeded', category: 'quota' } });
+    }
+    // Plain 403 stays a permission problem; the local service's 403 keeps its own meaning.
+    const forbidden = createSub2apiAsrProvider({
+      baseUrl: 'https://api.example.com',
+      apiKey: 'k',
+      model: 'whisper-1',
+      fetchImpl: async () => json({ error: { code: 'model_forbidden' } }, { status: 403 }),
+    });
+    await expect(forbidden.transcribe(wav(), opts())).rejects.toMatchObject({
+      info: { code: 'permission-denied', category: 'permission' },
+    });
+    const local = createLocalAsrProvider({
+      baseUrl: 'http://127.0.0.1:8765',
+      token: 't',
+      fetchImpl: async () => json({ error: { code: 'insufficient_quota' } }, { status: 403 }),
+    });
+    await expect(local.transcribe(wav(), opts())).rejects.toMatchObject({
+      info: { code: 'asr-local-forbidden', category: 'permission' },
+    });
+    expect(
+      mapHttpStatus(403, 'insufficient_quota', undefined, 'sub2api-tts', 'o').info,
+    ).toMatchObject({ category: 'quota' });
   });
 
   it('treats 429 insufficient_quota as quota', () => {

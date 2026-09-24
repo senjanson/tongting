@@ -244,9 +244,10 @@ const LANGUAGE_NAMES: Record<string, string> = {
   und: '语言未知',
 };
 
+/** 头部说明中的语言名：未知代码原样显示，但与其他头部字段一样单行化并替换 `-->`。 */
 function languageName(code: string | undefined): string {
   if (!code || code === 'auto') return '语言未知';
-  return LANGUAGE_NAMES[code] ?? code;
+  return LANGUAGE_NAMES[code] ?? (singleLine(code) || '语言未知');
 }
 
 function contentDescription(input: ExportInput): string {

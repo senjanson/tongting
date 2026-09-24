@@ -256,6 +256,8 @@ export interface Harness {
   secureLocal: MemoryArea;
   offscreen: FakeOffscreen;
   permissionGranted: { value: boolean; delay?: Promise<void> };
+  /** worker 通过 permissions.remove 回收的主机权限模式（按调用顺序）。 */
+  removedPermissions: string[];
   captureResult: { value: 'ok' | 'error' };
   transcripts: Map<string, unknown>;
   ui(): UiClient;
@@ -263,7 +265,13 @@ export interface Harness {
 }
 
 export function createHarness(
-  options: { local?: MemoryArea; session?: MemoryArea; secureLocal?: MemoryArea } = {},
+  options: {
+    local?: MemoryArea;
+    session?: MemoryArea;
+    secureLocal?: MemoryArea;
+    /** 浏览器界面语言（首次安装与恢复默认时的目标语言）。 */
+    uiLanguage?: string;
+  } = {},
 ): Harness {
   FakeScheduler.all = [];
   FakeDubbing.all = [];
@@ -272,6 +280,7 @@ export function createHarness(
   const secureLocal = options.secureLocal ?? new MemoryArea();
   const offscreen = new FakeOffscreen();
   const permissionGranted: Harness['permissionGranted'] = { value: true };
+  const removedPermissions: string[] = [];
   const captureResult: Harness['captureResult'] = { value: 'ok' };
   const transcripts = new Map<string, unknown>();
   let idCounter = 0;
@@ -290,10 +299,15 @@ export function createHarness(
     storage: { local, session, secureLocal },
     runtimeId: RUNTIME_ID,
     extensionOrigin: EXT_ORIGIN,
+    uiLanguage: options.uiLanguage,
     permissions: {
       contains: async () => {
         if (permissionGranted.delay) await permissionGranted.delay;
         return permissionGranted.value;
+      },
+      remove: async (originPattern) => {
+        removedPermissions.push(originPattern);
+        return true;
       },
     },
     tabCapture: {
@@ -312,7 +326,8 @@ export function createHarness(
           ok: true,
           baseUrl: root,
           origin: u.origin,
-          originPattern: `${u.protocol}//${u.hostname}/*`,
+          // 与真实 normalizeBaseUrl 一致：非默认端口保留在匹配模式中。
+          originPattern: `${u.protocol}//${u.host}/*`,
         };
       } catch {
         return {
@@ -405,6 +420,7 @@ export function createHarness(
     secureLocal,
     offscreen,
     permissionGranted,
+    removedPermissions,
     captureResult,
     transcripts,
     ui: () => new UiClient(coordinator),

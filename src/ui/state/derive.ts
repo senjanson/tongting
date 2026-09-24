@@ -468,7 +468,7 @@ export function deriveVoiceAvailability(
       return {
         state: 'unknown',
         reason:
-          'sub2api 语音合成尚未实测（扩展暂未实现该项实测检查）。仍可选择配音，调用失败时会提示并降级为仅字幕。',
+          'sub2api 语音合成尚未实测；可在设置页勾选「允许实际调用」后检查。仍可选择配音，调用失败时会提示并降级为仅字幕。',
         voices: [],
       };
     }

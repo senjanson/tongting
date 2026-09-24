@@ -139,7 +139,12 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
   const duck = createDuckController();
   const hider = createNativeCaptionHider(doc);
   const overlay = createCaptionOverlay({ doc, win });
-  const playbackBuffer = createPlaybackBufferController({ getVideo: () => adapter?.video ?? null });
+  const playbackBuffer = createPlaybackBufferController({
+    getVideo: () => adapter?.video ?? null,
+    // 广告是页面事实：每次评估实时读取播放器状态。适配器只在变化时发出一次 ad-start，
+    // welcome / 会话清空触发的 reset 之后不会补发，不能只靠事件记录。
+    isAdShowing: () => isAdShowing(adapter?.root ?? null),
+  });
 
   const captions = createCaptionSource({
     bridge: {
@@ -342,6 +347,7 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
             epoch: next.epoch,
             videoId: next.videoId,
             enabled: true,
+            // starting 阶段闸门同样生效；worker 在 starting 与 running 期间都会为跳转递增 epoch。
             active: next.phase === 'starting' || next.phase === 'running',
             ...next.playbackBuffer,
           }

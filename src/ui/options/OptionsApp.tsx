@@ -56,10 +56,21 @@ function OptionsView() {
             ))}
           </nav>
           <main className={styles.main}>
-            {!snapshot.settingsPersisted && (
-              <Callout tone="warning" title="设置未能保存">
-                最近的设置修改仅本次生效，浏览器重启后会丢失。
+            {snapshot.settingsRecovery === 'recovered' && (
+              <Callout tone="warning" title="设置已恢复为默认值">
+                已保存的设置无法识别（可能来自更新版本的同听，或数据已损坏），当前使用默认设置。原设置已在本机备份，不会被删除。保存任一设置后此提示消失。
               </Callout>
+            )}
+            {snapshot.settingsRecovery === 'unreadable' ? (
+              <Callout tone="warning" title="暂时无法读取已保存的设置">
+                当前显示的是默认设置。为避免覆盖原设置，修改只在本次生效、不会保存；每次修改时会重新读取，读取成功后会在原设置上应用这些修改。
+              </Callout>
+            ) : (
+              !snapshot.settingsPersisted && (
+                <Callout tone="warning" title="设置未能保存">
+                  最近的设置修改仅本次生效，浏览器重启后会丢失。
+                </Callout>
+              )
             )}
             <ConnectionSection snapshot={snapshot} />
             <ProcessingSection snapshot={snapshot} />

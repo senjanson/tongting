@@ -1,7 +1,9 @@
 /**
  * 模拟 worker 端口：收到 subscribe 后推送快照，收到 command 后按 handler 返回 result。
+ * handler 可以返回 Promise（在其完成后才回复），抛出 AppError 时按其错误信息回复。
  */
 import type { Cue } from '@src/domain/cue';
+import { AppError, type AppErrorInfo } from '@src/domain/errors';
 import type { AppSnapshot, UiCommand, UiToBackground } from '@src/messaging/ui-protocol';
 
 export interface FakeWorker {
@@ -35,26 +37,31 @@ export function createFakeWorker(
       }
       if (message.type === 'command') {
         const handler = handlers[message.command.kind];
+        const { requestId } = message;
+        const fail = (error: unknown) => {
+          const info: AppErrorInfo =
+            error instanceof AppError
+              ? error.info
+              : {
+                  code: 'test',
+                  category: 'internal',
+                  retryable: false,
+                  message: String((error as Error).message),
+                };
+          emit({ type: 'result', requestId, ok: false, error: info });
+        };
         queueMicrotask(() => {
+          let data: unknown;
           try {
-            emit({
-              type: 'result',
-              requestId: message.requestId,
-              ok: true,
-              data: handler ? handler(message.command) : { accepted: true },
-            });
+            data = handler ? handler(message.command) : { accepted: true };
           } catch (error) {
-            emit({
-              type: 'result',
-              requestId: message.requestId,
-              ok: false,
-              error: {
-                code: 'test',
-                category: 'internal',
-                retryable: false,
-                message: String((error as Error).message),
-              },
-            });
+            fail(error);
+            return;
+          }
+          if (data instanceof Promise) {
+            data.then((value) => emit({ type: 'result', requestId, ok: true, data: value }), fail);
+          } else {
+            emit({ type: 'result', requestId, ok: true, data });
           }
         });
       }

@@ -7,7 +7,7 @@ import {
 import type { AppSnapshot } from '../../messaging/ui-protocol';
 import { Button, Hint, SelectField, TextField } from '../components/controls';
 import { Callout } from '../components/layout';
-import { errorMessageOf } from '../state/client';
+import { errorInfoOf, errorMessageOf } from '../state/client';
 import { useClientState, useUiClient } from '../state/hooks';
 
 /** 不使用 Key 本身；worker 重启、服务变化、凭证代数和撤回权限都会使列表过期。 */
@@ -130,7 +130,10 @@ function ModelSelectorFields({
       const result = await client.sendCommand({ kind: 'models/discover' });
       if (isCurrent()) setDiscovery({ source, models: result.models });
     } catch (error) {
-      if (isCurrent()) setDiscovery({ source, error: errorMessageOf(error) });
+      if (!isCurrent()) return;
+      // 另一页面发起的获取取代了本次：不是失败，回到可重新获取的状态。
+      if (errorInfoOf(error)?.code === 'discovery-replaced') setDiscovery(null);
+      else setDiscovery({ source, error: errorMessageOf(error) });
     } finally {
       if (request.current?.id === id) request.current = null;
     }

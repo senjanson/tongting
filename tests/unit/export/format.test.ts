@@ -245,6 +245,28 @@ describe('formatVtt', () => {
     expect(tree.errors).toEqual([]);
     expect(tree.cues).toHaveLength(0);
   });
+
+  it('keeps unknown language codes on one line in the NOTE header', () => {
+    // 未知语言代码原样输出时，换行会提前结束 NOTE 块，`-->` 会让后面的行被当成字幕时间。
+    const result = formatVtt(
+      baseInput({
+        content: 'bilingual',
+        sourceLanguage: 'x\n\n01:00.000 --> 02:00.000',
+        targetLanguage: 'y\r\n\r\nz',
+      }),
+    );
+    const note = result.text.split('\n\n')[1]!;
+    expect(note).toContain('内容：双语：译文（y z）+ 原文（x 01:00.000 → 02:00.000）');
+    expect(note).not.toContain('-->');
+    const tree = new WebVTTParser().parse(result.text, 'metadata');
+    expect(tree.errors).toEqual([]);
+    expect(tree.cues.map((c) => c.startTime)).toEqual([1, 3.5, 7, 10, 12.5]);
+  });
+
+  it('falls back to 语言未知 when a language code is only whitespace or control characters', () => {
+    const result = formatVtt(baseInput({ content: 'original', sourceLanguage: ' \n\u0000 ' }));
+    expect(result.text.split('\n\n')[1]).toContain('内容：仅原文（语言未知）');
+  });
 });
 
 describe('formatTxt', () => {
@@ -255,6 +277,21 @@ describe('formatTxt', () => {
     expect(result.text).toContain('[00:00:01] 你好 → 世界\nHello → world');
     expect(result.text).toContain('[00:00:07] 第三句\nThird line');
     expect(result.filename.endsWith('.txt')).toBe(true);
+  });
+
+  it('keeps unknown language codes on one line in the header', () => {
+    const result = formatTxt(
+      baseInput({ content: 'original', sourceLanguage: 'x\n\n[00:01:00] --> fake' }),
+    );
+    const [header] = result.text.split('\n\n');
+    expect(header!.split('\n')).toEqual([
+      '同听 Tongting 字幕导出',
+      '标题：My: "Video" / Test?',
+      '视频 ID：abcdefghijk',
+      '内容：仅原文（x [00:01:00] → fake）',
+      expect.stringMatching(/^覆盖：/),
+    ]);
+    expect(result.text).not.toContain('-->');
   });
 
   it('dispatches by format', () => {

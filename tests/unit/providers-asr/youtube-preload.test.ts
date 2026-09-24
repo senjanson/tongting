@@ -3,6 +3,8 @@ import { AppError } from '@src/domain/errors';
 import { mapHttpStatus } from '@src/providers/asr/http';
 import { errorNextStep } from '@src/ui/state/derive';
 import {
+  MEDIA_END_HEADER,
+  PreloadRangeError,
   preloadYoutubeAudio,
   type YoutubePreloadRequest,
 } from '@src/providers/asr/youtube-preload';
@@ -109,6 +111,31 @@ describe('authenticated loopback YouTube preloader', () => {
       }
     },
   );
+  it('passes on where the service says readable audio ends', async () => {
+    const outOfRange = (headers: Record<string, string>) => async () =>
+      new Response(JSON.stringify({ error: { code: 'youtube_range_unavailable', message: 'x' } }), {
+        status: 416,
+        headers: { 'Content-Type': 'application/json', ...headers },
+      });
+    const error = await preloadYoutubeAudio(
+      request(),
+      outOfRange({ [MEDIA_END_HEADER]: '213461' }),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(PreloadRangeError);
+    expect(error).toMatchObject({
+      mediaEndMs: 213461,
+      info: { code: 'preload-range-unavailable', httpStatus: 416 },
+    });
+    // Older services send no end; malformed values are ignored rather than trusted.
+    for (const value of [undefined, '', 'abc', '-1', '1e5', '2.5', '99999999999']) {
+      const legacy = await preloadYoutubeAudio(
+        request(),
+        outOfRange(value === undefined ? {} : { [MEDIA_END_HEADER]: value }),
+      ).catch((e: unknown) => e);
+      expect(legacy).toBeInstanceOf(PreloadRangeError);
+      expect((legacy as PreloadRangeError).mediaEndMs).toBeUndefined();
+    }
+  });
   it('keeps real model loading retryable and never guesses it from preload/download substrings', () => {
     expect(mapHttpStatus(503, 'model_loading', 5000, 'local-asr', '').info).toMatchObject({
       code: 'asr-local-model-loading',

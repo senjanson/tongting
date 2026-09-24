@@ -4,7 +4,7 @@
 
 A Chrome MV3 extension that gives YouTube videos translated subtitles in your target language while you watch, and can optionally read the translation aloud. Text translation runs through **your own** [sub2api](https://github.com/Wei-Shaw/sub2api) deployment — the extension ships no keys and no hosted backend. Videos without readable captions need a separate speech-recognition service; a local one is included in this repository.
 
-On a fresh install the target language follows your browser's UI language: Chinese browsers get Simplified or Traditional Chinese, other browsers get their own language when it is one of the supported targets, and English otherwise. You can change it at any time — the default is only ever applied once.
+The default target language comes from your browser's UI language: Chinese browsers get Simplified or Traditional Chinese, other browsers get their own language when it is one of the target languages on offer, and English otherwise. The default is picked and saved on first install, so changing the browser language later does not move it; **恢复默认设置** (restore defaults) picks it again the same way. You can change it at any time.
 
 ![Bilingual subtitle overlay on the player](docs/screenshots/youtube-overlay.png)
 
@@ -152,14 +152,16 @@ Then open `chrome://extensions`, turn on **Developer mode**, click **Load unpack
 
 ### Point it at your sub2api deployment
 
-1. Open the extension's settings page (toolbar popup → **设置**).
-2. Fill in **sub2api 服务地址 (Base URL)** and **API Key**. HTTPS only, except `http://127.0.0.1:<port>` for local debugging.
-3. "记住在本机" is on by default: the key is kept on this machine and survives reloads and browser restarts. Turn it off to keep it in session storage only.
-4. Click **获取模型列表**, choose a model, then **检查连接** — it verifies host permission, reachability, auth, the model list, the model itself, a small translation and streaming, one item at a time.
+1. Open the extension's settings page (toolbar popup → **设置**). Steps 2–6 all happen in its **模型连接** section.
+2. Fill in **sub2api 服务地址（Base URL）** and click **保存地址**. HTTPS only, except `http://127.0.0.1:<port>` for local debugging.
+3. Click **授予访问权限** and allow Chrome's prompt. Until access is granted, the extension sends nothing to that address.
+4. Paste your **API Key**. "记住在本机" is on by default: the key is kept on this machine and survives reloads and browser restarts; turn it off to keep it in session storage only. Then click **保存 Key**.
+5. Click **获取模型列表** — it stays disabled until the address and key are saved and access is granted. Choose a model and click **保存模型**; picking from the list alone does not save it.
+6. Click **检查连接** — it verifies host permission, reachability, auth, the model list, the model itself, a small translation and streaming, one item at a time.
 
-The extension asks for host permission for a single origin — the one you entered. Nothing is sent anywhere else.
+The extension only asks for host permission for the service address you currently have saved — a single origin. When you change the address (or **恢复默认设置** clears it), the extension removes the permission for the old origin once the new settings are saved, unless another setting (such as the local recognition address) still uses that origin. If you use the local speech-recognition service, clicking **授予本机服务访问权限** under **识别与播放** additionally asks for `http://127.0.0.1:<port>`, with the port you configured. Subtitle text for translation goes only to your sub2api origin.
 
-Speech recognition and speech synthesis are separate capabilities with their own configuration and their own checks. A sub2api audio check costs one real billed call, so it only runs after you explicitly opt in.
+Speech recognition and speech synthesis are separate capabilities, configured and checked under **识别与播放** (**检查语音识别** / **检查语音合成**). Checking the local recognition service or system voices costs nothing. A sub2api audio check makes one real, possibly billed call, so it only runs after you tick the opt-in box for that one check.
 
 Step-by-step instructions are in [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
@@ -230,8 +232,9 @@ docs/                           documentation (index below)
 ## Privacy and security
 
 - **Your key stays yours.** The API key and the local-ASR pairing token never enter snapshot broadcasts, content scripts, the DOM, URLs, logs, error messages, exported settings, test fixtures or documentation.
-- **One origin.** Host permission is requested for the single sub2api origin you configured, nothing else.
+- **Only the addresses you configure.** Host permission is requested only for the sub2api origin you currently have saved and, if you use local recognition, for `http://127.0.0.1:<port>`. Once a changed address is saved, the extension removes the permission for any old origin that no configured service still uses.
 - **Translation requests carry subtitle text only** — cue ids, text, target language and prompt. No page URL, no video title, no signed player parameters.
+- **System voices can be online.** Dubbing with system voices hands the translated text to Chrome's speech engine (`chrome.tts`). Voices labelled 联网声音 in the voice list are synthesized remotely, so the text they read is sent to that voice's provider — Google, for Chrome's online Google voices. Voices labelled 本机声音 are synthesized on your machine. The automatic choice prefers a local voice when one matches the target language equally well; pick a 本机声音 yourself if the text must not leave your computer.
 - **Everything local stays local.** Transcripts, bookmarks, notes and the translation cache live in your browser's IndexedDB. The local ASR service binds to `127.0.0.1` and never downloads media to disk.
 - **Untrusted by default.** MAIN-world and page data, storage reads, and model/service responses are all validated with zod before use.
 - **No fake success.** Capability state comes only from real calls. Failures never silently fall back to demo data; with no data the UI says "未知 / 未检测" rather than guessing.

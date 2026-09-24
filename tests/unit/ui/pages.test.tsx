@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
+import { AppError } from '@src/domain/errors';
 import type { UiToBackground } from '@src/messaging/ui-protocol';
 import { OptionsApp } from '@src/ui/options/OptionsApp';
 import { PopupApp } from '@src/ui/popup/PopupApp';
@@ -232,6 +233,149 @@ describe('options page', () => {
     expect(
       within(screen.getByRole('list', { name: '连接检查结果' })).queryByText(/通过/),
     ).toBeNull();
+  });
+
+  it('sends one billed probe on a double click, clears the confirmation at click time, and blocks other checks until it finishes', async () => {
+    const snapshot = makeSnapshot(
+      {},
+      {
+        provider: { baseUrl: 'https://api.example.com' },
+        asr: { backend: 'local' },
+        tts: { backend: 'sub2api', sub2apiModel: 'tts-x' },
+      },
+    );
+    const releases: (() => void)[] = [];
+    useWorker(
+      createFakeWorker(snapshot, {
+        'connection/check': () =>
+          new Promise((resolve) => {
+            releases.push(() =>
+              resolve({
+                checkedAt: Date.now(),
+                configRevision: 1,
+                credentialGeneration: 1,
+                items: [{ key: 'tts', status: 'verified', message: '合成成功' }],
+              }),
+            );
+          }),
+      }),
+    );
+    const checks = () => worker.commands().filter((c) => c.kind === 'connection/check');
+    render(<OptionsApp />);
+    const allow = (await screen.findByRole('checkbox', {
+      name: /允许实际调用 sub2api 音频接口/,
+    })) as HTMLInputElement;
+    fireEvent.click(allow);
+    expect(allow.checked).toBe(true);
+
+    const tts = screen.getByRole('button', { name: '检查语音合成' }) as HTMLButtonElement;
+    const text = screen.getByRole('button', { name: '检查连接' }) as HTMLButtonElement;
+    const asr = screen.getByRole('button', { name: '检查语音识别' }) as HTMLButtonElement;
+    fireEvent.click(tts);
+    fireEvent.click(tts);
+    // 计费确认在点击时即清空；本次请求仍带点击时的值。
+    expect(allow.checked).toBe(false);
+    await waitFor(() => expect(checks()).toHaveLength(1));
+    expect(checks()[0]).toEqual({
+      kind: 'connection/check',
+      scope: 'tts',
+      allowBilledAudioProbe: true,
+    });
+    // 进行中：本按钮显示处理中且保留焦点（不设 disabled），其他检查按钮不可用并说明原因。
+    expect(tts.getAttribute('aria-busy')).toBe('true');
+    expect(tts.getAttribute('aria-disabled')).toBe('true');
+    expect(tts.disabled).toBe(false);
+    expect(text.disabled).toBe(true);
+    expect(asr.disabled).toBe(true);
+    expect(screen.getAllByText('另一项检查正在进行，完成后可再检查。')).toHaveLength(2);
+    fireEvent.click(text);
+    fireEvent.click(asr);
+    // 进行中再次勾选确认并点击：不会发出第二次（计费）检查，勾选留给下一次。
+    fireEvent.click(allow);
+    fireEvent.click(tts);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(checks()).toHaveLength(1);
+    expect(allow.checked).toBe(true);
+
+    await act(async () => releases[0]!());
+    expect(
+      within(await screen.findByRole('list', { name: '语音合成检查结果' })).getByText(
+        /通过 · 合成成功/,
+      ),
+    ).toBeTruthy();
+    expect(text.disabled).toBe(false);
+    expect(asr.disabled).toBe(false);
+    expect(tts.getAttribute('aria-busy')).toBeNull();
+    expect(screen.queryByText('另一项检查正在进行，完成后可再检查。')).toBeNull();
+
+    fireEvent.click(asr);
+    await waitFor(() => expect(checks()).toHaveLength(2));
+    expect(checks()[1]).toEqual({
+      kind: 'connection/check',
+      scope: 'asr',
+      allowBilledAudioProbe: false,
+    });
+    // 进行中勾选的确认只属于语音合成的下一次检查。
+    expect(allow.checked).toBe(true);
+    await act(async () => releases[1]!());
+    expect(tts.disabled).toBe(false);
+  });
+
+  it('stays silent when the worker replaces a check with a newer one, but reports real failures', async () => {
+    let outcome: 'ok' | 'replaced' | 'failed' = 'ok';
+    useWorker(
+      createFakeWorker(makeSnapshot(), {
+        'connection/check': () => {
+          if (outcome === 'replaced') {
+            throw new AppError({
+              code: 'check-replaced',
+              category: 'cancelled',
+              retryable: false,
+              message: '已被新的检查取代。',
+            });
+          }
+          if (outcome === 'failed') {
+            throw new AppError({
+              code: 'network-error',
+              category: 'network',
+              retryable: true,
+              message: '无法连接服务。',
+            });
+          }
+          return {
+            checkedAt: 1_000,
+            configRevision: 1,
+            credentialGeneration: 1,
+            items: [{ key: 'auth', status: 'verified', message: '认证通过' }],
+          };
+        },
+      }),
+    );
+    const checks = () => worker.commands().filter((c) => c.kind === 'connection/check');
+    render(<OptionsApp />);
+    const button = (await screen.findByRole('button', { name: '检查连接' })) as HTMLButtonElement;
+    fireEvent.click(button);
+    const results = await screen.findByRole('list', { name: '连接检查结果' });
+    expect(within(results).getByText(/通过 · 认证通过/)).toBeTruthy();
+
+    outcome = 'replaced';
+    fireEvent.click(button);
+    await waitFor(() => expect(checks()).toHaveLength(2));
+    await waitFor(() => expect(button.getAttribute('aria-busy')).toBeNull());
+    expect(screen.queryByText(/检查失败/)).toBeNull();
+    expect(
+      within(screen.getByRole('list', { name: '连接检查结果' })).getByText(/通过 · 认证通过/),
+    ).toBeTruthy();
+
+    outcome = 'failed';
+    fireEvent.click(button);
+    expect(await screen.findByText('检查失败：无法连接服务。')).toBeTruthy();
+    // 失败不清空之前的结果，按钮恢复可用。
+    expect(
+      within(screen.getByRole('list', { name: '连接检查结果' })).getByText(/通过 · 认证通过/),
+    ).toBeTruthy();
+    expect(button.getAttribute('aria-busy')).toBeNull();
+    expect(checks()).toHaveLength(3);
   });
 
   it('drops a local check result when the worker clears lastConnectionReport', async () => {

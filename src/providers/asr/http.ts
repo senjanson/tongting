@@ -7,6 +7,11 @@
  * - 错误信息只包含脱敏后的 origin 和服务返回的错误码，不含 Key、请求头与完整 URL。
  */
 import { AppError, redactSecrets, redactUrl, type AppErrorInfo } from '../../domain/errors';
+import {
+  isQuotaForbidden,
+  parseServiceErrorBody,
+  type ParsedServiceError,
+} from '../text/http-errors';
 
 export type AudioServiceKind = 'local-asr' | 'sub2api-asr' | 'sub2api-tts';
 
@@ -295,11 +300,16 @@ export async function httpError(
   origin: string,
   nowMs: number,
 ): Promise<AppError> {
-  let parsed: unknown;
+  let text = '';
   try {
-    parsed = JSON.parse(await body.truncatedText(ERROR_BODY_MAX_BYTES));
+    text = await body.truncatedText(ERROR_BODY_MAX_BYTES);
   } catch (error) {
     if (error instanceof AppError) throw error;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
     parsed = undefined;
   }
   return mapHttpStatus(
@@ -308,15 +318,21 @@ export async function httpError(
     parseRetryAfterMs(response.headers.get('retry-after'), nowMs),
     service,
     origin,
+    parseServiceErrorBody(text),
   );
 }
 
+/**
+ * @param serviceError 完整的服务错误字段，只用于判断额度不足（sub2api 的 403 可能只有中文消息）；
+ *   省略时按 serviceCode 判断。
+ */
 export function mapHttpStatus(
   status: number,
   serviceCode: string | undefined,
   retryAfterMs: number | undefined,
   service: AudioServiceKind,
   origin: string,
+  serviceError?: ParsedServiceError,
 ): AppError {
   const label = SERVICE_LABEL[service];
   const local = service === 'local-asr';
@@ -391,7 +407,9 @@ export function mapHttpStatus(
           ? '本地识别服务配对令牌无效，请在设置中重新配对。'
           : 'API Key 无效或已失效，请在设置中检查。',
       });
-    case status === 402:
+    // 与文本接口使用同一额度判断；本地识别服务的 403 只表示来源或地址被拒绝。
+    case status === 402 ||
+      (status === 403 && !local && isQuotaForbidden(serviceError ?? { code: serviceCode })):
       return info({
         code: 'quota-exceeded',
         category: 'quota',

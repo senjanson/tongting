@@ -80,6 +80,8 @@ export async function configureProvider(
     kind: 'settings/update',
     patch: {
       playbackMode: 'continuous',
+      // 默认目标语言跟随浏览器界面语言（随机器而定）；夹具与断言按简体中文编写，显式指定。
+      targetLanguage: 'zh-CN',
       ...patch,
       provider: {
         baseUrl: fc.mock.baseUrl,

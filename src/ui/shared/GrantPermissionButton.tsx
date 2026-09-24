@@ -1,6 +1,7 @@
 /**
  * 「授予访问权限」：必须在点击处理函数中同步调用 permissions.request 以保留用户手势，
- * 之后通知 worker 重新核对权限。只申请由地址计算出的单一 origin。
+ * 之后通知 worker 重新核对权限。只申请由地址计算出的单一 origin；更换地址后，
+ * 不再被任何配置使用的旧 origin 由 worker 在设置保存成功后通过 permissions.remove 回收。
  */
 import { KeyRound } from 'lucide-react';
 import { browser } from 'wxt/browser';

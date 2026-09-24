@@ -3,6 +3,9 @@
  *
  * - 输入后延迟保存；保存串行执行，保存期间的新输入在当前保存结束后再保存最新内容。
  * - 保存失败显示 error，内容保留等待重试；不会显示「已保存」。
+ * - 冲突（笔记已被其他页面修改）后保持 conflict：后续输入只更新待保存内容，不自动保存、
+ *   也不降级为 saved/pending（即使文本改回本页上次保存的版本，存储里仍是另一页面的内容），
+ *   直到用户选择覆盖（retry）或载入最新版本（调用方丢弃本实例）。
  * - dispose 时尽力保存尚未保存的内容，之后不再回调状态。
  */
 export type NoteSaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error' | 'conflict';
@@ -20,7 +23,8 @@ export interface NoteAutosaverOptions {
 }
 
 export class NoteAutosaver {
-  private lastSaved: string;
+  /** 本页最后确认写入存储的内容；冲突后存储里是其他页面的内容，置为 null，覆盖时必须实际写入。 */
+  private lastSaved: string | null;
   private pendingText: string | null = null;
   private inFlight: Promise<void> | null = null;
   private timer: unknown = null;
@@ -55,8 +59,10 @@ export class NoteAutosaver {
   change(text: string): void {
     if (this.disposed) return;
     this.pendingText = text;
-    if (!this.inFlight) this.setStatus(text === this.lastSaved ? 'saved' : 'pending');
     this.cancelTimer();
+    // 冲突待用户决定：保留最新输入供「覆盖」使用，不自动保存（必然再次冲突），状态保持 conflict。
+    if (this.status === 'conflict') return;
+    if (!this.inFlight) this.setStatus(text === this.lastSaved ? 'saved' : 'pending');
     this.timer = this.setTimer(() => {
       this.timer = null;
       void this.flush();
@@ -69,10 +75,13 @@ export class NoteAutosaver {
     while (this.inFlight) {
       await this.inFlight;
     }
+    // 冲突期间只有 retry（用户选择覆盖）才会写入；冲突前排定的定时保存、dispose 与 beforeunload
+    // 不再尝试，内容保留在 pendingText，由调用方写入草稿。
+    if (this.status === 'conflict') return;
     const text = this.pendingText;
     if (text === null) return;
     this.pendingText = null;
-    if (text === this.lastSaved && this.status !== 'error' && this.status !== 'conflict') {
+    if (text === this.lastSaved && this.status !== 'error') {
       this.setStatus('saved');
       return;
     }
@@ -84,6 +93,7 @@ export class NoteAutosaver {
       },
       (error: unknown) => {
         failed = this.options.isConflict?.(error) ? 'conflict' : 'error';
+        if (failed === 'conflict') this.lastSaved = null;
         // 保留内容以便重试（除非期间已有更新的输入）。
         if (this.pendingText === null) this.pendingText = text;
       },
@@ -104,6 +114,7 @@ export class NoteAutosaver {
     }
   }
 
+  /** 重试保存，或冲突时用户选择「用本页内容覆盖」：立即写入最新输入（冲突后总会实际写入）。 */
   retry(): Promise<void> {
     if (this.pendingText === null) return Promise.resolve();
     this.status = 'pending';

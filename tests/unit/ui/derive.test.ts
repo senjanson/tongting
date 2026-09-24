@@ -418,7 +418,7 @@ describe('options helpers', () => {
 });
 
 describe('sub2api tts unknown is not treated as unavailable', () => {
-  it('reports unknown honestly (probe not implemented), and system voices rely only on the actual list', () => {
+  it('reports unknown honestly (not probed yet, checkable in settings), and system voices rely only on the actual list', () => {
     const cloud = makeSnapshot(
       { capabilities: { tts: { status: 'unknown', configRevision: 1, reasonCode: 'not-probed' } } },
       { tts: { backend: 'sub2api', sub2apiModel: 'tts-x' } },
@@ -426,6 +426,9 @@ describe('sub2api tts unknown is not treated as unavailable', () => {
     const result = deriveVoiceAvailability(cloud, { status: 'idle' });
     expect(result.state).toBe('unknown');
     expect(result.reason).toContain('尚未实测');
+    // 设置页已提供需勾选「允许实际调用」的检查，不能再说扩展没有实现该检查。
+    expect(result.reason).toContain('可在设置页勾选「允许实际调用」后检查');
+    expect(result.reason).not.toContain('暂未实现');
     expect(result.reason).toContain('仍可选择配音');
     expect(result.reason).not.toContain('计费');
     const system = makeSnapshot({

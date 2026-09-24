@@ -62,6 +62,7 @@ export function startBackground(): Coordinator {
     extensionOrigin: `chrome-extension://${browser.runtime.id}`,
     permissions: {
       contains: (originPattern) => browser.permissions.contains({ origins: [originPattern] }),
+      remove: (originPattern) => browser.permissions.remove({ origins: [originPattern] }),
     },
     tabCapture: {
       getMediaStreamId: (targetTabId) =>

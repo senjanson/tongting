@@ -340,6 +340,8 @@ export class TranslationSession {
         level: 'info',
       };
     }
+    // 在第一个 await 之前开始心跳：权限检查与首次协议探测也属于 starting 阶段。
+    if (settings.playbackMode === 'buffered') this.startBufferHeartbeat();
 
     const providerConfig = await this.resolveProviderConfig(settings, check, signal);
     check();
@@ -352,15 +354,15 @@ export class TranslationSession {
     this.schedulerUnsub = this.scheduler.onUpdate((updates) =>
       this.applyTranslationUpdates(updates),
     );
-    if (settings.outputMode === 'subtitle-voice') this.setupDubbing(settings);
-    if (settings.playbackMode === 'buffered') {
-      // Publish a hold immediately; failed setup must never masquerade as ready.
-      this.bufferTimer = setInterval(() => {
-        if (this.isStopping) return;
-        this.pushSessionState();
-        this.host.publish();
-      }, 1_000);
-      this.pushSessionState();
+    // 上面的 await 期间用户可能已跳转：调度器一建立就按最新播放位置排序。
+    const playerAtSetup = this.lastPlayer ?? this.host.page(this.identity.tabId)?.player;
+    if (playerAtSetup) this.syncSchedulerPlayhead(playerAtSetup);
+    // 音频类设置不在启动指纹内：await 期间的修改不会重启会话，onNonTranslationSettingsChanged
+    // 也可能已按新设置建好控制器。这里按最新设置建立或更新唯一的配音控制器，不用启动时捕获的旧设置。
+    const latest = this.host.settings();
+    if (latest.outputMode === 'subtitle-voice') {
+      if (this.dubbing) this.dubbing.setConfig(this.dubbingConfig(latest));
+      else this.setupDubbing(latest);
     }
 
     const page = this.host.page(this.identity.tabId);
@@ -435,6 +437,22 @@ export class TranslationSession {
     this.refeedDubbing();
     this.setDuck(false);
     this.touch();
+  }
+
+  /**
+   * 缓冲模式向内容端闸门发送的 session/state 心跳（每秒一次）。闸门租约 10 秒，
+   * 整个 starting 阶段都必须按时续约，否则闸门过期后放弃保持，视频停在暂停状态。
+   * 调度器建立前状态为「准备中」，readyUntilMs 等于当前播放位置，不会谎报就绪；
+   * 立即推送一次，启动失败也不会被当作已就绪。定时器由 doStop 清除（启动失败同样经过 stop）。
+   */
+  private startBufferHeartbeat(): void {
+    if (this.bufferTimer || this.isStopping) return;
+    this.bufferTimer = setInterval(() => {
+      if (this.isStopping) return;
+      this.pushSessionState();
+      this.host.publish();
+    }, 1_000);
+    this.pushSessionState();
   }
 
   private async resolveProviderConfig(
@@ -1035,7 +1053,20 @@ export class TranslationSession {
     capture.renewTimer = setInterval(renew, leaseRenewMs);
   }
 
+  /** 释放当前配音控制器（停止朗读、退订事件）；调用方负责随后归还原声音量。 */
+  private disposeDubbing(): void {
+    const dubbing = this.dubbing;
+    const unsub = this.dubbingUnsub;
+    this.dubbing = undefined;
+    this.dubbingUnsub = undefined;
+    this.dubbingSpeaking = false;
+    unsub?.();
+    dubbing?.dispose();
+  }
+
   private setupDubbing(settings: Settings): void {
+    // 任何时候最多一个配音控制器：替换时先释放旧控制器，避免它继续朗读或泄漏。
+    this.disposeDubbing();
     this.host.cancelVoicePreview?.();
     const { deps } = this.host;
     let engine: TtsEngine | undefined;
@@ -1687,16 +1718,12 @@ export class TranslationSession {
     }
     if (discontinuity) this.discontinuityId++;
     let refeed = false;
-    if (seek && this.phase === 'running') {
+    // starting 阶段内容端缓冲闸门已生效：跳转后它只在 epoch 递增后才恢复播放，
+    // 因此 starting 与 running 一样递增 epoch（调度器可能尚未建立，建立时读取 lastPlayer）。
+    if (seek && (this.phase === 'running' || this.phase === 'starting')) {
       refeed = true;
       // 先告知调度器新播放位置，再递增 epoch：否则 setEpoch 会按旧位置立即发起请求。
-      if (!this.endedPaused) {
-        this.scheduler?.setPlayhead({
-          mediaTimeMs: state.currentTimeMs,
-          playing: !state.paused && !state.buffering && !state.ad && !state.ended,
-          playbackRate: state.playbackRate,
-        });
-      }
+      this.syncSchedulerPlayhead(state);
       this.bumpEpoch();
       if (this.incremental) {
         const flushed = this.incremental.flush(prev?.currentTimeMs ?? state.currentTimeMs);
@@ -1744,15 +1771,22 @@ export class TranslationSession {
     if (ready.length) this.dubbing.upsertCues(ready);
   }
 
+  /**
+   * 调度器按播放位置选择要翻译的字幕。starting 阶段也保持同步：启动末尾换入轨道字幕时
+   * 即从当前位置开始，而不是从调度器默认的 0 开始。
+   */
+  private syncSchedulerPlayhead(state: PlayerState): void {
+    if ((this.phase !== 'running' && this.phase !== 'starting') || this.endedPaused) return;
+    this.scheduler?.setPlayhead({
+      mediaTimeMs: state.currentTimeMs,
+      playing: !state.paused && !state.buffering && !state.ad && !state.ended,
+      playbackRate: state.playbackRate,
+    });
+  }
+
   private feedPlayer(state: PlayerState, reason: string): void {
-    if (this.phase === 'running' && !this.endedPaused) {
-      this.scheduler?.setPlayhead({
-        mediaTimeMs: state.currentTimeMs,
-        playing: !state.paused && !state.buffering && !state.ad && !state.ended,
-        playbackRate: state.playbackRate,
-      });
-      this.dubbing?.onPlayer(state, reason);
-    }
+    this.syncSchedulerPlayhead(state);
+    if (this.phase === 'running' && !this.endedPaused) this.dubbing?.onPlayer(state, reason);
     if (this.capture?.state === 'active') {
       this.host.deps.offscreen
         .request(
@@ -1842,11 +1876,7 @@ export class TranslationSession {
       prev.tts.sub2apiVoice !== next.tts.sub2apiVoice ||
       prev.audio.voiceName !== next.audio.voiceName;
     if (this.dubbing && (routeChanged || next.outputMode !== 'subtitle-voice')) {
-      this.dubbingUnsub?.();
-      this.dubbing.dispose();
-      this.dubbing = undefined;
-      this.dubbingUnsub = undefined;
-      this.dubbingSpeaking = false;
+      this.disposeDubbing();
     }
     try {
       if (next.outputMode === 'subtitle-voice' && !this.dubbing) {

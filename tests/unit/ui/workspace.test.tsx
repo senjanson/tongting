@@ -4,7 +4,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { RECORD_SCHEMA_VERSION, resetDbForTests, transcriptRecordId } from '@src/storage/db';
-import { putTranscript } from '@src/storage/transcripts';
+import { loadTranscript, putTranscript } from '@src/storage/transcripts';
 import { WorkspaceApp } from '@src/ui/workspace/WorkspaceApp';
 import { makeCue, makePage, makeSession, makeSnapshot, TAB_ID, VIDEO_ID } from './fixtures';
 import { createFakeWorker, type FakeWorker } from './fake-worker-port';
@@ -202,6 +202,178 @@ describe('workspace', () => {
     window.history.replaceState({}, '', '/workspace.html');
     start(makeSnapshot({ sessions: [session] }));
     expect(await screen.findByText('实时会话 · 尚未保存为本地记录')).toBeTruthy();
+  });
+
+  // 正常停止后 worker 把会话从快照中移除；出错结束的会话以 error 快照保留。两种都要覆盖。
+  it.each([
+    ['removed from the snapshot', 'removed'],
+    ['kept as an ended snapshot', 'ended'],
+  ] as const)(
+    'keeps a live-only entry through the session end (%s) and replaces it with the record it saved',
+    async (_label, endShape) => {
+      const liveVideo = 'yyyyyyyyyyy';
+      const liveRecord = transcriptRecordId(liveVideo, 'zh-CN', 'asr');
+      const identity = {
+        sessionId: 'session-live-0001',
+        tabId: TAB_ID,
+        documentId: 'doc-1',
+        videoId: liveVideo,
+        epoch: 0,
+        configRevision: 1,
+      };
+      const session = makeSession({
+        identity,
+        recordId: liveRecord,
+        sourceMode: 'asr',
+        sourceTrack: undefined,
+      });
+      const snapshot = makeSnapshot({ sessions: [session] });
+      window.history.replaceState({}, '', '/workspace.html');
+      worker = createFakeWorker(
+        snapshot,
+        {},
+        new Map([[identity.sessionId, [makeCue('a', 1_000)]]]),
+      );
+      vi.spyOn(fakeBrowser.runtime, 'connect').mockImplementation(() => worker.port as never);
+      render(<WorkspaceApp />);
+      fireEvent.click(await screen.findByText('实时会话 · 尚未保存为本地记录'));
+      await screen.findByText('译文 a');
+
+      // worker 在会话停止前写入记录，然后快照显示会话已结束（或已移除）。
+      await putTranscript({
+        schemaVersion: RECORD_SCHEMA_VERSION,
+        recordId: liveRecord,
+        videoId: liveVideo,
+        targetLanguage: 'zh-CN',
+        sourceLanguage: 'en',
+        sourceMode: 'asr',
+        sourceKey: 'asr',
+        lastSessionId: identity.sessionId,
+        cues: [makeCue('a', 1_000)],
+        coverage: { complete: false, ranges: [{ startMs: 1_000, endMs: 3_000 }], gaps: [] },
+        createdAt: 1,
+        updatedAt: 2,
+      });
+      act(() => {
+        worker.emit({
+          type: 'snapshot',
+          snapshot: {
+            ...snapshot,
+            snapshotVersion: 2,
+            sessions:
+              endShape === 'removed'
+                ? []
+                : [{ ...session, phase: 'idle', desiredState: 'stopped' }],
+          },
+        });
+      });
+      // 重新读取完成前：条目保留，不显示空状态，也不先显示「已不存在」。
+      expect(screen.getByText('翻译已结束 · 正在读取本地记录…')).toBeTruthy();
+      expect(screen.queryByText(/还没有保存的字幕记录|没有选中的字幕记录/)).toBeNull();
+      expect(screen.queryByText('这条字幕记录已不存在')).toBeNull();
+      // 去抖后重新读取列表：条目由刚写入的本地记录取代，仍保持选中。
+      expect(await screen.findByText(/部分字幕 · 1 条/)).toBeTruthy();
+      expect(screen.queryByText('翻译已结束 · 正在读取本地记录…')).toBeNull();
+      expect(screen.queryByText(/还没有保存的字幕记录|没有选中的字幕记录/)).toBeNull();
+      expect(await screen.findByText('译文 a')).toBeTruthy();
+      expect(screen.queryByText('这条字幕记录已不存在')).toBeNull();
+    },
+  );
+
+  it('drops an ended session that never saved a record once the list is re-read', async () => {
+    const liveVideo = 'yyyyyyyyyyy';
+    const liveRecord = transcriptRecordId(liveVideo, 'zh-CN', 'asr');
+    const session = makeSession({
+      identity: {
+        sessionId: 'session-live-0001',
+        tabId: TAB_ID,
+        documentId: 'doc-1',
+        videoId: liveVideo,
+        epoch: 0,
+        configRevision: 1,
+      },
+      recordId: liveRecord,
+      sourceMode: 'asr',
+      sourceTrack: undefined,
+    });
+    const snapshot = makeSnapshot({ sessions: [session] });
+    start(snapshot);
+    expect(await screen.findByText('实时会话 · 尚未保存为本地记录')).toBeTruthy();
+    act(() => {
+      worker.emit({
+        type: 'snapshot',
+        snapshot: {
+          ...snapshot,
+          snapshotVersion: 2,
+          sessions: [{ ...session, phase: 'error', desiredState: 'stopped' }],
+        },
+      });
+    });
+    await waitFor(() =>
+      expect(screen.queryByText(/实时会话 · 尚未保存为本地记录|翻译已结束/)).toBeNull(),
+    );
+    expect(screen.getAllByText('记录中的视频标题').length).toBeGreaterThan(0);
+  });
+
+  it('disables deleting a record while its translation is still running', async () => {
+    const session = makeSession({ recordId });
+    const snapshot = makeSnapshot({ sessions: [session] });
+    start(snapshot);
+    const button = (await screen.findByRole('button', { name: '删除记录' })) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText('翻译进行中，停止后才能删除这条记录。')).toBeTruthy();
+
+    // 停止中（尚未结束）仍会写回记录：保持禁用。
+    act(() => {
+      worker.emit({
+        type: 'snapshot',
+        snapshot: {
+          ...snapshot,
+          snapshotVersion: 2,
+          sessions: [{ ...session, phase: 'stopping', desiredState: 'stopped' }],
+        },
+      });
+    });
+    expect((screen.getByRole('button', { name: '删除记录' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    act(() => {
+      worker.emit({
+        type: 'snapshot',
+        snapshot: {
+          ...snapshot,
+          snapshotVersion: 3,
+          sessions: [{ ...session, phase: 'idle', desiredState: 'stopped' }],
+        },
+      });
+    });
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: '删除记录' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+    expect(screen.queryByText('翻译进行中，停止后才能删除这条记录。')).toBeNull();
+  });
+
+  it('refuses to delete when a translation of the record starts while the dialog is open', async () => {
+    const snapshot = makeSnapshot();
+    start(snapshot);
+    fireEvent.click(await screen.findByRole('button', { name: '删除记录' }));
+    const dialog = await screen.findByRole('dialog');
+    act(() => {
+      worker.emit({
+        type: 'snapshot',
+        snapshot: { ...snapshot, snapshotVersion: 2, sessions: [makeSession({ recordId })] },
+      });
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '删除记录' }));
+    expect(
+      await screen.findByText('翻译进行中，停止后才能删除这条记录。', { selector: 'span' }),
+    ).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(await loadTranscript(recordId)).toBeDefined();
+    expect(screen.getAllByText('记录中的视频标题').length).toBeGreaterThan(0);
   });
 
   it('shows a conflict instead of overwriting a note changed elsewhere, and offers draft recovery', async () => {

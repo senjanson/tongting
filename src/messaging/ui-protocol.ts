@@ -9,6 +9,8 @@
 import { z } from 'zod';
 import { AppErrorInfoSchema } from '../domain/errors';
 import {
+  CAPABILITY_MESSAGE_MAX,
+  CAPABILITY_REASON_CODE_MAX,
   CapabilityKeySchema,
   CapabilityStatusSchema,
   ProviderCapabilitySchema,
@@ -37,9 +39,9 @@ export type TtsVoiceInfo = z.infer<typeof TtsVoiceInfoSchema>;
 export const ConnectionCheckItemSchema = z.object({
   key: CapabilityKeySchema,
   status: CapabilityStatusSchema,
-  message: z.string().max(300),
+  message: z.string().max(CAPABILITY_MESSAGE_MAX),
   latencyMs: z.number().nonnegative().optional(),
-  reasonCode: z.string().max(80).optional(),
+  reasonCode: z.string().max(CAPABILITY_REASON_CODE_MAX).optional(),
 });
 export type ConnectionCheckItem = z.infer<typeof ConnectionCheckItemSchema>;
 
@@ -146,6 +148,13 @@ export const AppSnapshotSchema = z.object({
   settings: SettingsSchema,
   /** 最近一次设置持久化是否成功；失败时 UI 须提示「仅本次生效」。 */
   settingsPersisted: z.boolean(),
+  /**
+   * 已保存设置无法使用时的状态，UI 须提示当前是默认设置：
+   * - recovered：原设置无效（例如来自更新版本或已损坏），已备份并恢复为默认值；成功保存设置后消失。
+   * - unreadable：原设置暂时无法读取（或无效且未能备份）；为避免覆盖原设置，修改只在内存中生效，
+   *   每次修改前重新读取，读到后在原设置上应用这些修改。
+   */
+  settingsRecovery: z.enum(['recovered', 'unreadable']).optional(),
   configRevision: z.number().int().nonnegative(),
   credential: CredentialStateSchema,
   asrToken: CredentialStateSchema,

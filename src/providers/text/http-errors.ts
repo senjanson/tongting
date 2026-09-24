@@ -119,6 +119,14 @@ export function isQuotaCode(code: string | undefined, type: string | undefined):
   return QUOTA_CODES.has((code ?? '').toLowerCase()) || QUOTA_CODES.has((type ?? '').toLowerCase());
 }
 
+/**
+ * 403 是否表示余额或额度不足（而不是无权限）：错误码 / 类型命中，或消息是明确的余额提示。
+ * 文本与语音接口共用，保证同一 sub2api 响应得到同一分类。
+ */
+export function isQuotaForbidden(parsed: ParsedServiceError): boolean {
+  return isQuotaCode(parsed.code, parsed.type) || QUOTA_MESSAGE_PATTERN.test(parsed.message ?? '');
+}
+
 /** 400 是否明确指向本请求发送的可选参数（param 字段优先，其次是去掉 URL 后的消息正文）。 */
 function rejectsOptionalParameter(parsed: ParsedServiceError): boolean {
   const param = (parsed.param ?? '').toLowerCase();
@@ -174,11 +182,10 @@ export function errorFromHttpStatus(
       message: 'API Key 无效或已失效（401）：请在设置中重新填写 Key 后再试。',
     });
   }
-  const quotaByCode = isQuotaCode(parsed.code, parsed.type);
   if (
     status === 402 ||
-    (status === 429 && quotaByCode) ||
-    (status === 403 && (quotaByCode || QUOTA_MESSAGE_PATTERN.test(parsed.message ?? '')))
+    (status === 429 && isQuotaCode(parsed.code, parsed.type)) ||
+    (status === 403 && isQuotaForbidden(parsed))
   ) {
     return info({
       ...base,

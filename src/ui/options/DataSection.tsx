@@ -113,7 +113,9 @@ export function DataSection({ snapshot }: { snapshot: AppSnapshot }) {
             );
         }}
       >
-        服务地址、模型、字幕与声音等设置会恢复为默认值。Key、配对令牌、字幕记录、收藏与笔记不受影响。
+        服务地址、模型、目标语言（按浏览器界面语言选择）、字幕与声音等设置会恢复为默认值，不再使用的服务地址的访问权限会被移除。API
+        Key、本地识别配对令牌及「记住在本机」的选择保持不变；字幕记录、收藏与笔记不受影响。
+        {snapshot.settingsRecovery === 'unreadable' && ' 暂时无法读取的原设置也会被默认值覆盖。'}
       </ConfirmDialog>
     </Section>
   );

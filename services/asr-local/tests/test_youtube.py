@@ -136,7 +136,9 @@ def loader_with_fake_process(monkeypatch, metadata=None, pcm=None):
 
     async def run(args, *, max_bytes):
         calls.append((args, max_bytes))
-        return json.dumps(metadata or MEDIA).encode() if "tongting_asr.youtube_resolver" in args else (pcm or b"\0\0" * 16_000)
+        if "tongting_asr.youtube_resolver" in args:
+            return json.dumps(metadata or MEDIA).encode()
+        return b"\0\0" * 16_000 if pcm is None else pcm
 
     monkeypatch.setattr(loader, "_run", run)
     return loader, calls
@@ -208,7 +210,136 @@ def test_end_range_is_explicit_and_does_not_decode(monkeypatch):
     with pytest.raises(ApiError) as error:
         asyncio.run(loader.fetch(YoutubeWindow(BODY["videoId"], 70_000, 20_000, "auto")))
     assert error.value.status == 416
+    assert error.value.headers == {youtube.MEDIA_END_HEADER: "70000"}
     assert len(calls) == 1
+    assert len(loader._cache) == 1  # The URL itself is fine; reaching the end is not a failure.
+
+
+def test_uses_the_fractional_format_duration_instead_of_whole_seconds(monkeypatch):
+    # yt-dlp's duration is lengthSeconds (213); the signed URL carries the audio format's 213.461 s.
+    media = {**MEDIA, "duration": 213, "url": "https://rr1.example.googlevideo.com/videoplayback?dur=213.461&secret=TEST"}
+    loader, calls = loader_with_fake_process(monkeypatch, media)
+
+    async def scenario():
+        await loader.fetch(YoutubeWindow(BODY["videoId"], 213_000, 20_000, "auto"))
+        with pytest.raises(ApiError) as error:
+            await loader.fetch(YoutubeWindow(BODY["videoId"], 213_461, 20_000, "auto"))
+        return error.value
+
+    error = asyncio.run(scenario())
+    assert calls[1][0][calls[1][0].index("-t") + 1] == "0.461"
+    assert error.status == 416 and error.headers[youtube.MEDIA_END_HEADER] == "213461"
+
+
+@pytest.mark.parametrize(
+    "query,expected",
+    [
+        ("dur=213.461", 213_461),
+        ("itag=140&dur=0.5&sig=x", 500),
+        ("", None),
+        ("dur=", None),
+        ("dur=abc", None),
+        ("dur=nan", None),
+        ("dur=inf", None),
+        ("dur=0", None),
+        ("dur=-3", None),
+        ("dur=0.0001", None),
+        ("dur=86400.001", None),
+        ("dur=1&dur=2", None),
+    ],
+)
+def test_format_duration_from_signed_url(query, expected):
+    assert youtube.format_duration_ms(f"https://rr1.example.googlevideo.com/videoplayback?{query}") == expected
+
+
+def test_empty_audio_at_the_end_reports_where_audio_stops(monkeypatch):
+    # The audio track can end slightly before the format duration: report EOF at the request start.
+    loader, _ = loader_with_fake_process(monkeypatch, pcm=b"")
+    with pytest.raises(ApiError) as error:
+        asyncio.run(loader.fetch(YoutubeWindow(BODY["videoId"], 69_000, 20_000, "auto")))
+    assert error.value.status == 416 and error.value.headers[youtube.MEDIA_END_HEADER] == "69000"
+    assert len(loader._cache) == 1
+    # Far from the end, empty output means the read failed; the URL may be the cause.
+    with pytest.raises(ApiError) as error:
+        asyncio.run(loader.fetch(YoutubeWindow(BODY["videoId"], 40_000, 20_000, "auto")))
+    assert error.value.status == 502 and error.value.code == "youtube_audio_failed"
+    assert not loader._cache
+
+
+def cancel_second_decode(monkeypatch, *, cached_first: bool):
+    """Resolve (and optionally decode once), then cancel a decode as a client seek would."""
+    loader = YoutubePreloader(enabled=False)
+    loader.available = True
+    loader.ffmpeg = "/bin/ffmpeg"
+    loader.node = "/bin/node"
+    calls = []
+    hang = asyncio.Event()
+
+    async def run(args, *, max_bytes):
+        kind = "resolve" if "tongting_asr.youtube_resolver" in args else "decode"
+        calls.append(kind)
+        if kind == "resolve":
+            return json.dumps(MEDIA).encode()
+        if calls.count("decode") == (2 if cached_first else 1):
+            hang.set()
+            await asyncio.Event().wait()
+        return b"\0\0" * 16_000
+
+    monkeypatch.setattr(loader, "_run", run)
+
+    async def scenario():
+        if cached_first:
+            await loader.fetch(YoutubeWindow(BODY["videoId"], 0, 1000, "auto"))
+        task = asyncio.create_task(loader.fetch(YoutubeWindow(BODY["videoId"], 30_000, 1000, "auto")))
+        await hang.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        cached = list(loader._cache)
+        await loader.fetch(YoutubeWindow(BODY["videoId"], 50_000, 1000, "auto"))
+        return cached
+
+    return asyncio.run(scenario()), calls
+
+
+def test_cancelled_request_keeps_a_previously_cached_url(monkeypatch):
+    cached, calls = cancel_second_decode(monkeypatch, cached_first=True)
+    assert cached == [BODY["videoId"]]
+    assert calls == ["resolve", "decode", "decode", "decode"]  # Seeking does not rerun yt-dlp.
+
+
+def test_cancelled_request_does_not_retain_a_url_it_resolved(monkeypatch):
+    cached, calls = cancel_second_decode(monkeypatch, cached_first=False)
+    assert cached == []
+    assert calls == ["resolve", "decode", "resolve", "decode"]
+
+
+@pytest.mark.parametrize("failure", ["decoder", "timeout"])
+def test_decode_failure_or_stall_drops_a_cached_url(monkeypatch, failure):
+    # A signed URL can expire or be throttled before its TTL; the next request resolves again.
+    loader, calls = loader_with_fake_process(monkeypatch)
+    original = loader._run
+
+    async def failing(args, *, max_bytes):
+        if "tongting_asr.youtube_resolver" in args:
+            return await original(args, max_bytes=max_bytes)
+        calls.append((args, max_bytes))
+        if failure == "timeout":
+            await asyncio.Event().wait()
+        raise ApiError(502, "youtube_audio_failed", "无法读取公开视频音频。")
+
+    async def scenario():
+        await loader.fetch(YoutubeWindow(BODY["videoId"], 0, 1000, "auto"))
+        assert len(loader._cache) == 1
+        monkeypatch.setattr(loader, "_run", failing)
+        monkeypatch.setattr(youtube, "FETCH_TIMEOUT_S", 0.05)
+        with pytest.raises(ApiError) as error:
+            await loader.fetch(YoutubeWindow(BODY["videoId"], 30_000, 1000, "auto"))
+        return error.value
+
+    error = asyncio.run(scenario())
+    assert error.code == ("youtube_preload_timeout" if failure == "timeout" else "youtube_audio_failed")
+    assert not loader._cache
 
 
 def test_fetch_timeout_cancels_work_and_drops_cache(monkeypatch):
@@ -403,6 +534,15 @@ def test_api_rejects_foreign_origin_invalid_mime_and_large_body(fake_preloader):
             "payload_too_large",
         )
         assert not h.client.app.state.youtube.calls
+
+
+def test_api_reports_end_of_media_header(fake_preloader):
+    with running_app(youtube_preload=True) as h:
+        h.client.app.state.youtube.error = youtube.range_unavailable(213_461)
+        response = h.client.post("/v1/youtube/transcribe", json=BODY, headers=h.auth)
+        assert_error(response, 416, "youtube_range_unavailable")
+        assert response.headers[youtube.MEDIA_END_HEADER] == "213461"
+        assert response.headers["cache-control"] == "no-store"
 
 
 def test_api_failure_frees_slot(fake_preloader):

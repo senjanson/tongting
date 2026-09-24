@@ -59,6 +59,8 @@ export interface CoordinatorDeps {
 
   permissions: {
     contains(originPattern: string): Promise<boolean>;
+    /** 回收不再使用的可选主机权限（browser.permissions.remove）；返回是否实际移除。 */
+    remove(originPattern: string): Promise<boolean>;
   };
   tabCapture: {
     /** 必须在扩展被用户调用（activeTab）后才能成功。 */

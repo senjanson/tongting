@@ -374,6 +374,39 @@ describe('playback buffer controller', () => {
     expect(gate.stats().holding).toBe(false);
   });
 
+  it('an ad survives reset and a cleared session, so a new policy never pauses the playing ad', () => {
+    gate.onMediaEvent('video-replaced');
+    gate.onMediaEvent('ad-start');
+    // welcome resets the gate; a cleared session arrives as update(null).
+    gate.reset();
+    gate.update(policy({ readyUntilMs: 0 }));
+    gate.update(null);
+    gate.update(policy({ sessionId: 'session-b', readyUntilMs: 0 }));
+    vi.advanceTimersByTime(500);
+    expect(video.pause).not.toHaveBeenCalled();
+    // After the ad the gate supervises the main video again.
+    gate.onMediaEvent('ad-end');
+    expect(video.pause).toHaveBeenCalledTimes(1);
+    expect(gate.stats().holding).toBe(true);
+  });
+
+  it('a live ad reader is authoritative even when no ad event reached the gate', () => {
+    gate.dispose();
+    let adShowing = true;
+    gate = createPlaybackBufferController({
+      getVideo: () => current as unknown as HTMLVideoElement | null,
+      isAdShowing: () => adShowing,
+    });
+    gate.update(policy({ readyUntilMs: 0 }));
+    gate.reset();
+    gate.update(policy({ readyUntilMs: 0 }));
+    vi.advanceTimersByTime(500);
+    expect(video.pause).not.toHaveBeenCalled();
+    adShowing = false;
+    vi.advanceTimersByTime(100);
+    expect(video.pause).toHaveBeenCalledTimes(1);
+  });
+
   it('worker silence revokes auto-resume while a periodic heartbeat preserves ownership', () => {
     gate.update(policy());
     vi.advanceTimersByTime(9_000);

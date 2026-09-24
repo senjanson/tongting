@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { launchExtension } from './helpers/extension';
+import { defaultTargetLanguageFor } from '../../src/domain/languages';
 
 test('extension loads with MV3 service worker and expected manifest', async () => {
   const ext = await launchExtension();
@@ -27,6 +28,34 @@ test('extension loads with MV3 service worker and expected manifest', async () =
       expect(res?.ok()).toBe(true);
       await p.close();
     }
+  } finally {
+    await ext.close();
+  }
+});
+
+test('first install saves a default target language that follows the browser UI language', async () => {
+  const ext = await launchExtension();
+  try {
+    type World = {
+      chrome: {
+        i18n: { getUILanguage(): string };
+        storage: { local: { get(key: string): Promise<Record<string, unknown>> } };
+      };
+    };
+    const uiLanguage = await ext.serviceWorker.evaluate(() =>
+      (globalThis as unknown as World).chrome.i18n.getUILanguage(),
+    );
+    // 首次安装的默认值会落盘，之后切换浏览器界面语言不再改变它。
+    await expect
+      .poll(() =>
+        ext.serviceWorker.evaluate(async () => {
+          const { settings } = await (globalThis as unknown as World).chrome.storage.local.get(
+            'settings',
+          );
+          return (settings as { targetLanguage?: string } | undefined)?.targetLanguage ?? null;
+        }),
+      )
+      .toBe(defaultTargetLanguageFor(uiLanguage));
   } finally {
     await ext.close();
   }

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AppError } from '../../domain/errors';
+import { AppError, type AppErrorInfo } from '../../domain/errors';
 import { MAX_MEDIA_TIME_MS } from '../../domain/cue';
 import { asrLanguageParam, TranscriptionSchema } from './local-client';
 import {
@@ -16,6 +16,25 @@ const ResultSchema = TranscriptionSchema.extend({
 });
 
 export type YoutubePreloadResult = z.infer<typeof ResultSchema>;
+
+/** 416 响应头：服务端可读取音频的实际结尾（毫秒）。旧版服务不提供。 */
+export const MEDIA_END_HEADER = 'X-Tongting-Media-End-Ms';
+
+/** 预读起点已超过服务端可读取的音频结尾（416）。mediaEndMs 为服务端报告的结尾，旧版服务为 undefined。 */
+export class PreloadRangeError extends AppError {
+  constructor(
+    info: AppErrorInfo,
+    readonly mediaEndMs: number | undefined,
+  ) {
+    super(info);
+  }
+}
+
+function mediaEndMs(header: string | null): number | undefined {
+  if (!header || !/^\d{1,10}$/.test(header.trim())) return undefined;
+  const value = Number(header.trim());
+  return value <= MAX_MEDIA_TIME_MS ? value : undefined;
+}
 export interface YoutubePreloadRequest {
   baseUrl: string;
   token: string;
@@ -63,7 +82,15 @@ export async function preloadYoutubeAudio(
           retryable: false,
           message: '本地识别服务需要更新并启用音频预读。也可切换为「连续播放」。',
         });
-      if (!response.ok) throw await httpError(response, body, 'local-asr', origin, Date.now());
+      if (!response.ok) {
+        const error = await httpError(response, body, 'local-asr', origin, Date.now());
+        if (error.info.code === 'preload-range-unavailable')
+          throw new PreloadRangeError(
+            error.info,
+            mediaEndMs(response.headers.get(MEDIA_END_HEADER)),
+          );
+        throw error;
+      }
       return body.json(1024 * 1024);
     },
   );

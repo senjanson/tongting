@@ -50,6 +50,11 @@ const NATIVE_TOGGLE_GRACE_MS = 1_000;
  */
 export function createPlaybackBufferController(opts: {
   getVideo(): HTMLVideoElement | null;
+  /**
+   * Live read of whether the player is showing an ad. When supplied it is
+   * authoritative; otherwise the gate relies on ad-start/ad-end events.
+   */
+  isAdShowing?(): boolean;
   now?(): number;
   onStatus?(status: PlaybackBufferStats): void;
 }): PlaybackBufferController {
@@ -62,6 +67,8 @@ export function createPlaybackBufferController(opts: {
   let primed = false;
   let disposed = false;
   let expired = false;
+  // An ad is a page fact, not gate state: reset() keeps it because the adapter
+  // reports each ad edge only once and will not repeat it after a reconnect.
   let ad = false;
   let blockedAcknowledged = false;
   let awaitingVideoPolicy = false;
@@ -81,6 +88,10 @@ export function createPlaybackBufferController(opts: {
   const ownPlayEvents = new WeakMap<HTMLVideoElement, number>();
   const playRevisions = new WeakMap<HTMLVideoElement, number>();
   let lastStatus: PlaybackBufferStats = { holding: false, userPaused: false };
+
+  function adShowing() {
+    return opts.isAdShowing ? opts.isAdShowing() : ad;
+  }
 
   function publish() {
     if (holding === lastStatus.holding && userPaused === lastStatus.userPaused) return;
@@ -211,7 +222,7 @@ export function createPlaybackBufferController(opts: {
       return;
     }
     const target = syncVideo();
-    if (!target || ad || awaitingVideoPolicy || pauseFailed) return;
+    if (!target || adShowing() || awaitingVideoPolicy || pauseFailed) return;
     if (target.ended) {
       release();
       publish();
@@ -259,7 +270,14 @@ export function createPlaybackBufferController(opts: {
     release();
     seeking = true;
     inProgressSeekEpoch = expectedEpoch;
-    if (resumeAfterSeek && policy.enabled && policy.active && !policy.blocked && !expired && !ad) {
+    if (
+      resumeAfterSeek &&
+      policy.enabled &&
+      policy.active &&
+      !policy.blocked &&
+      !expired &&
+      !adShowing()
+    ) {
       seekIntent = { sessionId: policy.sessionId, epoch: expectedEpoch - 1, video: target };
       holding = pause(target);
       pauseFailed = !holding;
@@ -300,7 +318,6 @@ export function createPlaybackBufferController(opts: {
     userPaused = false;
     pauseIntentUntil = 0;
     expired = false;
-    ad = false;
     blockedAcknowledged = false;
     awaitingVideoPolicy = false;
     completedSeekEpoch = 0;

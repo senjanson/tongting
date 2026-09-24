@@ -94,7 +94,12 @@ function AddressFields({
   let hint: string;
   if (!check) hint = '只支持 https；本机调试服务可用 http://127.0.0.1:<端口>。';
   else if (!check.ok) hint = '';
-  else if (dirty) hint = `请先保存地址，保存成功后再授予访问 ${check.pattern} 的权限。`;
+  else if (dirty)
+    hint = `请先保存地址，保存成功后再授予访问 ${check.pattern} 的权限。${
+      granted && savedCheck?.ok && !sameOrigin(savedCheck.origin, check.origin)
+        ? `保存后，不再使用的旧地址 ${savedCheck.origin} 的访问权限会被移除。`
+        : ''
+    }`;
   else if (granted) hint = `已授予访问 ${check.origin} 的权限。`;
   else hint = `尚未授予访问 ${check.pattern} 的权限，扩展无法向该地址发送请求。`;
 

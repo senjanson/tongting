@@ -15,7 +15,14 @@ import {
   toAppErrorInfo,
   type AppErrorInfo,
 } from '../domain/errors';
-import type { CapabilityKey, CapabilityMatrix, ProviderCapability } from '../domain/capability';
+import {
+  clampCapabilityFields,
+  parseCapabilityMatrix,
+  truncateText,
+  type CapabilityKey,
+  type CapabilityMatrix,
+  type ProviderCapability,
+} from '../domain/capability';
 import {
   PageInfoSchema,
   SessionSnapshotSchema,
@@ -26,6 +33,7 @@ import { MAX_MEDIA_TIME_MS } from '../domain/cue';
 import {
   applySettingsPatch,
   defaultSettings,
+  initialSettings,
   translationFingerprint,
   type Settings,
   type SettingsPatch,
@@ -68,6 +76,7 @@ import {
   beginSecretRevocation,
   type SecretRevocation,
   clearSecret,
+  credentialPlacement,
   loadSecret,
   loadSettings,
   maskSecret,
@@ -86,6 +95,25 @@ const CAPABILITIES_KEY = 'capabilities';
 const RECOVERY_WINDOW_MS = 6 * 3600_000;
 const ORPHAN_LEASE_GRACE_MS = 45_000;
 const SNAPSHOT_DEBOUNCE_MS = 40;
+/**
+ * 收敛循环在「页面身份、意图与启动配置都没有变化」的情况下最多连续执行的轮次。
+ * 换视频、新命令或配置变化是新的收敛目标，重新计数；只有无外部变化的反复启动/取消才会耗尽。
+ */
+const CONVERGE_MAX_ROUNDS = 16;
+
+type ConnectionCheckScope = 'text' | 'asr' | 'tts' | 'all';
+
+/** 进行中的连接检查。被 scope 重叠的新检查取代时 replaced 置位，与配置变化导致的作废区分。 */
+interface ConnectionCheckOp {
+  scope: ConnectionCheckScope;
+  controller: AbortController;
+  replaced: boolean;
+}
+
+/** 检查 scope 是否包含某一类检查项（all 包含全部）。 */
+function checkScopeCovers(scope: ConnectionCheckScope, part: 'text' | 'asr' | 'tts'): boolean {
+  return scope === 'all' || scope === part;
+}
 
 /** 持久化到 storage.session 的会话记录，用于 worker 重启后核对恢复。 */
 export interface SessionRecord {
@@ -139,6 +167,15 @@ export class Coordinator implements SessionHost {
 
   private settingsValue: Settings = defaultSettings();
   private settingsPersisted = true;
+  /** 已保存设置无法使用（见快照 settingsRecovery）。 */
+  private settingsRecovery?: 'recovered' | 'unreadable';
+  /**
+   * 原设置读取失败期间只在内存中生效的修改；undefined 表示可以正常写盘。
+   * 期间不写盘，避免用默认值覆盖原设置；重新读到原设置后把这些修改应用在原设置上。
+   */
+  private unreadableEdits?: SettingsPatch[];
+  /** 已不在配置中、等待回收主机权限的 origin → 匹配模式（设置写盘成功后才回收）。 */
+  private readonly releasedOrigins = new Map<string, string>();
   private configRevisionValue = 0;
   private apiKeyState: SecretState = { value: undefined, storage: 'none' };
   private asrTokenState: SecretState = { value: undefined, storage: 'none' };
@@ -156,8 +193,15 @@ export class Coordinator implements SessionHost {
   private recordsTimer?: ReturnType<typeof setTimeout>;
   private orphanTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private lastOffscreenInstanceId?: string;
+  /**
+   * 配置、凭证或权限变化时由各处 abort()：作废当时所有在途连接检查（结果按 check-superseded 处理）。
+   * 下一次检查发现它已中止时换新；检查之间的互相取代见 connectionChecks。
+   */
   private connectionCheckAbort?: AbortController;
+  private readonly connectionChecks = new Set<ConnectionCheckOp>();
   private modelDiscoveryAbort?: AbortController;
+  /** 被新一次模型发现取代（而不是因地址或 Key 变化）而中止的请求。 */
+  private readonly replacedDiscoveries = new WeakSet<AbortController>();
   private sessionProvider?: { key: string; apiKey: string; provider: TextProvider };
   /** 凭证代数：更换/删除 API Key 或本地识别令牌时递增（Key 本身不参与 configRevision）。 */
   private credentialGeneration = 0;
@@ -210,22 +254,40 @@ export class Coordinator implements SessionHost {
     const { deps } = this;
     const loaded = await loadSettings(deps.storage.local, deps.logger, deps.uiLanguage);
     this.settingsValue = loaded.settings;
+    if (loaded.status === 'unreadable') this.unreadableEdits = [];
+    if (loaded.status === 'recovered' || loaded.status === 'unreadable')
+      this.settingsRecovery = loaded.status;
     const [apiKey, asrToken] = await Promise.all([
       loadSecret(deps.storage, 'apiKey'),
       loadSecret(deps.storage, 'asrToken'),
     ]);
     this.apiKeyState = apiKey;
     this.asrTokenState = asrToken;
-    // 在发布首个快照前迁移仍可读取的临时凭证。只移动权威读取结果，不能复活已删除的旧副本。
-    // 若上次写入失败而临时副本仍存在，下次启动会重试；已经被 Chrome 清空的值无法恢复。
-    if (
-      this.settingsValue.rememberCredentials &&
-      [apiKey, asrToken].some((secret) => secret.value && secret.storage !== 'local')
-    )
-      this.settingsPersisted = await this.moveSecrets(true);
+    // 首次安装的默认值（含按界面语言选择的目标语言）落盘后固定，之后切换界面语言不再改变它。
+    let persist = loaded.status === 'initial';
     if (loaded.needsPersistence) {
-      const persisted = await saveSettings(deps.storage.local, this.settingsValue);
-      this.settingsPersisted = persisted && this.settingsPersisted;
+      // v1 升级把默认策略改为「记住在本机」：在发布首个快照前迁移仍可读取的临时凭证。
+      // 只移动权威读取结果，不能复活已删除的旧副本。迁移失败时不写入升级后的设置，
+      // 下次启动仍按升级处理并重试；已经被 Chrome 清空的值无法恢复。
+      persist = true;
+      if ([apiKey, asrToken].some((secret) => secret.value && secret.storage !== 'local')) {
+        this.settingsPersisted = await this.moveSecrets(true);
+        persist = this.settingsPersisted;
+      }
+    } else {
+      // 其余情况下「记住在本机」以凭证实际所在位置为准：设置可能是读取失败或损坏后的默认值，
+      // 也可能没能保存用户最后一次的选择。绝不据此把仅临时保存的凭证写入磁盘。
+      const placement = credentialPlacement(apiKey, asrToken);
+      if (placement && (placement === 'local') !== this.settingsValue.rememberCredentials) {
+        this.settingsValue = { ...this.settingsValue, rememberCredentials: placement === 'local' };
+        persist ||= loaded.status === 'stored';
+      }
+    }
+    if (persist) {
+      const persisted = await this.writeSettings(this.settingsValue);
+      if (loaded.needsPersistence) this.settingsPersisted = persisted && this.settingsPersisted;
+      // 其余写入只是把已生效的值固定下来：失败不阻塞启动，下次启动会重新计算并再次尝试。
+      else if (!persisted) deps.logger.warn('[tongting] initial settings not persisted');
     }
     try {
       const stored = await deps.storage.session.get([
@@ -250,8 +312,13 @@ export class Coordinator implements SessionHost {
           }
         }
       }
-      const caps = stored[CAPABILITIES_KEY];
-      if (caps && typeof caps === 'object') this.capabilities = caps as CapabilityMatrix;
+      // 逐项校验：旧版本写入的超长说明等非法项只丢弃该项（并回写清理结果），不影响其他能力结论与快照。
+      const caps = parseCapabilityMatrix(stored[CAPABILITIES_KEY]);
+      this.capabilities = caps.matrix;
+      if (caps.dropped) {
+        this.deps.logger.warn('[tongting] dropped invalid stored capabilities', caps.dropped);
+        this.persistCapabilities();
+      }
     } catch {
       // session 区域不可用时从零开始
     }
@@ -308,14 +375,19 @@ export class Coordinator implements SessionHost {
     ]);
   }
 
-  /** 凭证变化：递增代数，作废在途连接检查与模型发现（结果不得归到新凭证名下）。 */
+  /** 凭证变化：递增代数，作废依赖该凭证的在途连接检查与模型发现（结果不得归到新凭证名下）。 */
   private invalidateCredentials(which: 'apiKey' | 'asrToken'): void {
     if (which === 'apiKey') this.search.cancelAll();
     if (which === 'apiKey') this.apiKeyGeneration++;
     else this.asrTokenGeneration++;
     this.credentialGeneration++;
-    this.connectionCheckAbort?.abort();
-    this.modelDiscoveryAbort?.abort();
+    if (which === 'apiKey') {
+      this.connectionCheckAbort?.abort();
+      this.modelDiscoveryAbort?.abort();
+    } else {
+      // 配对令牌只用于本地识别：文本检查与模型列表不受影响。
+      this.abortConnectionChecks('asr');
+    }
     if (which === 'asrToken') {
       delete this.capabilities.localAsr;
       this.lastConnectionReport = undefined;
@@ -430,6 +502,44 @@ export class Coordinator implements SessionHost {
     }
     if (generation === this.permissionCheckGeneration)
       this.hostPermission = { origin: normalized.origin, granted };
+  }
+
+  /** 设置中配置的服务 origin（sub2api 与本地识别服务）→ 主机权限匹配模式。 */
+  private configuredOrigins(settings: Settings): Map<string, string> {
+    const origins = new Map<string, string>();
+    for (const url of [settings.provider.baseUrl, settings.asr.localUrl]) {
+      if (!url.trim()) continue;
+      const normalized = this.deps.normalizeBaseUrl(url);
+      if (normalized.ok) origins.set(normalized.origin, normalized.originPattern);
+    }
+    return origins;
+  }
+
+  /**
+   * 更换服务地址后回收旧 origin 的主机权限，仍被当前任一配置使用的 origin 不回收。
+   * 只在设置写盘成功后回收：未保存的修改重启后会回到旧地址，届时旧地址仍需要权限。
+   * 回收失败只记录日志，不影响设置保存。返回是否实际移除了权限。
+   */
+  private async revokeReleasedOrigins(prev: Settings, persisted: boolean): Promise<boolean> {
+    const inUse = this.configuredOrigins(this.settingsValue);
+    for (const [origin, pattern] of this.configuredOrigins(prev))
+      if (!inUse.has(origin)) this.releasedOrigins.set(origin, pattern);
+    if (!persisted) return false;
+    let removed = false;
+    for (const [origin, pattern] of [...this.releasedOrigins]) {
+      this.releasedOrigins.delete(origin);
+      // 不带端口的模式覆盖该主机所有端口：仍覆盖在用 origin 时移除它会连带撤销当前地址的权限。
+      if (inUse.has(origin) || [...inUse.keys()].some((o) => patternCovers(pattern, o))) continue;
+      try {
+        removed = (await this.deps.permissions.remove(pattern)) || removed;
+      } catch (error) {
+        this.deps.logger.warn(
+          '[tongting] host permission removal failed',
+          error instanceof Error ? error.name : 'unknown',
+        );
+      }
+    }
+    return removed;
   }
 
   private mutate<T>(operation: () => Promise<T>): Promise<T> {
@@ -910,10 +1020,33 @@ export class Coordinator implements SessionHost {
     return slot.loop;
   }
 
+  /** 收敛目标：页面身份、用户意图与影响启动结果的配置。任一变化都说明循环面对的是新目标。 */
+  private convergeTarget(slot: TabSlot, page: PageState | undefined): string {
+    return JSON.stringify([
+      page?.documentId,
+      page?.navigationId,
+      page?.videoId,
+      slot.desired,
+      slot.intentSeq,
+      this.startFingerprint(),
+    ]);
+  }
+
   private async converge(slot: TabSlot): Promise<void> {
     let lastCreated: TranslationSession | undefined;
-    for (let guard = 0; guard < 16; guard++) {
+    // 轮次保护只针对「没有任何外部变化却反复循环」（例如启动被内部原因反复取消）。
+    // 被新导航、新命令或配置变化取代的启动不是失败：目标变化即重新计数，
+    // 快速连续换视频（刷 Shorts、播放列表连续下一个）不会被误判为「多次启动未能完成」。
+    let target: string | undefined;
+    let rounds = 0;
+    for (;;) {
       const page = this.pages.get(slot.tabId);
+      const currentTarget = this.convergeTarget(slot, page);
+      if (currentTarget !== target) {
+        target = currentTarget;
+        rounds = 0;
+      }
+      if (++rounds > CONVERGE_MAX_ROUNDS) break;
       const session = slot.session;
 
       if (session) {
@@ -1115,7 +1248,8 @@ export class Coordinator implements SessionHost {
       if (slot.startFingerprint === fingerprint) slot.startFingerprint = undefined;
       this.persistRecords();
     }
-    // 收敛轮次耗尽（反复启动失败/被取代）：停止并给出可见的错误，而不是静默保持「想要运行」。
+    // 同一目标下收敛轮次耗尽（页面、意图与配置都没变却反复启动/取消）：停止并给出可见的错误，
+    // 而不是无限循环或静默保持「想要运行」。
     this.deps.logger.warn('[tongting] converge guard exhausted');
     if (slot.desired !== 'stopped') {
       slot.desired = 'stopped';
@@ -1190,10 +1324,10 @@ export class Coordinator implements SessionHost {
         return;
       const previous = current.detectedProtocol;
       if (previous === protocol) return;
-      this.settingsValue = applySettingsPatch(this.settingsValue, {
-        provider: { detectedProtocol: protocol },
-      });
-      this.settingsPersisted = await saveSettings(this.deps.storage.local, this.settingsValue);
+      const patch: SettingsPatch = { provider: { detectedProtocol: protocol } };
+      this.settingsValue = applySettingsPatch(this.settingsValue, patch);
+      this.unreadableEdits?.push(patch);
+      this.settingsPersisted = await this.writeSettings(this.settingsValue);
       if (previous !== undefined) {
         await this.bumpConfigRevision();
         this.applyTranslationConfigToSessions();
@@ -1349,7 +1483,7 @@ export class Coordinator implements SessionHost {
       case 'settings/update':
         return this.mutate(() => this.updateSettings(command.patch));
       case 'settings/reset':
-        return this.mutate(() => this.replaceSettings(defaultSettings()));
+        return this.mutate(() => this.resetSettings());
       case 'credentials/set': {
         const intent = ++this.apiKeyIntent;
         return this.mutate(() => this.setApiKey(command.apiKey, command.remember, intent));
@@ -1488,6 +1622,7 @@ export class Coordinator implements SessionHost {
   }
 
   private async updateSettings(patch: SettingsPatch): Promise<{ persisted: boolean }> {
+    await this.retryUnreadableSettings();
     let next: Settings;
     try {
       next = applySettingsPatch(this.settingsValue, patch);
@@ -1499,7 +1634,60 @@ export class Coordinator implements SessionHost {
         message: '设置值无效，未应用。',
       });
     }
+    this.unreadableEdits?.push(patch);
     return this.replaceSettings(next);
+  }
+
+  /**
+   * 恢复默认设置：目标语言按浏览器界面语言重新选择。「记住在本机」是凭证的存储选择而不是普通偏好，
+   * 保持不变，不会因此把仅临时保存的凭证写入磁盘。
+   */
+  private async resetSettings(): Promise<{ persisted: boolean }> {
+    // 恢复默认是明确的覆盖操作（确认框已说明）：原设置即使暂时无法读取，也不再保留。
+    if (this.unreadableEdits) {
+      this.unreadableEdits = undefined;
+      this.settingsRecovery = undefined;
+    }
+    return this.replaceSettings({
+      ...initialSettings(this.deps.uiLanguage),
+      rememberCredentials: this.settingsValue.rememberCredentials,
+    });
+  }
+
+  /**
+   * 原设置读取失败期间，内存中是默认值加之后的修改。每次修改前重新读取：读到原设置就把这些修改
+   * 应用在原设置上并采用；仍读不到则保持只在内存中生效，不写盘。
+   */
+  private async retryUnreadableSettings(): Promise<void> {
+    const edits = this.unreadableEdits;
+    if (!edits) return;
+    const { deps } = this;
+    const loaded = await loadSettings(deps.storage.local, deps.logger, deps.uiLanguage);
+    if (loaded.status === 'unreadable') return;
+    let next = loaded.settings;
+    for (const edit of edits) {
+      try {
+        next = applySettingsPatch(next, edit);
+      } catch {
+        // 与原设置合并后无效的修改不应用。
+      }
+    }
+    // 「记住在本机」以凭证实际位置与本次运行中的明确选择为准，不采用磁盘上的旧值。
+    next = { ...next, rememberCredentials: this.settingsValue.rememberCredentials };
+    // 期间改过的服务地址相对原设置才是「旧地址」：原设置中不再使用的 origin 同样待回收。
+    for (const [origin, pattern] of this.configuredOrigins(loaded.settings))
+      this.releasedOrigins.set(origin, pattern);
+    this.unreadableEdits = undefined;
+    this.settingsRecovery = loaded.status === 'recovered' ? 'recovered' : undefined;
+    await this.replaceSettings(next);
+  }
+
+  /** 设置写盘的唯一入口：原设置无法读取时不写，避免用默认值覆盖；写入成功后恢复提示消失。 */
+  private async writeSettings(settings: Settings): Promise<boolean> {
+    if (this.unreadableEdits) return false;
+    const persisted = await saveSettings(this.deps.storage.local, settings);
+    if (persisted) this.settingsRecovery = undefined;
+    return persisted;
   }
 
   private async replaceSettings(next: Settings): Promise<{ persisted: boolean }> {
@@ -1517,11 +1705,15 @@ export class Coordinator implements SessionHost {
     if (providerChanged) {
       this.search.cancelAll();
       this.connectionCheckAbort?.abort();
-      this.modelDiscoveryAbort?.abort();
+      // 模型列表只取决于服务地址与 Key：只改模型等不作废进行中的获取。
+      if (prev.provider.baseUrl !== next.provider.baseUrl) this.modelDiscoveryAbort?.abort();
       this.resetProviderCapabilities();
     }
     if (asrChanged || ttsChanged || prev.targetLanguage !== next.targetLanguage) {
-      this.connectionCheckAbort?.abort();
+      // 只作废包含受影响检查项的检查；文本检查不依赖识别与语音设置。
+      if (asrChanged) this.abortConnectionChecks('asr');
+      if (ttsChanged || prev.targetLanguage !== next.targetLanguage)
+        this.abortConnectionChecks('tts');
       this.lastConnectionReport = undefined;
       if (asrChanged) {
         delete this.capabilities.asr;
@@ -1558,7 +1750,8 @@ export class Coordinator implements SessionHost {
     this.afterConfigChange();
     for (const slot of this.slots.values())
       slot.session?.onNonTranslationSettingsChanged(prev, next);
-    let persisted = await saveSettings(this.deps.storage.local, next);
+    const written = await this.writeSettings(next);
+    let persisted = written;
     if (providerChanged) await this.refreshHostPermission();
     if (prev.rememberCredentials !== next.rememberCredentials) {
       persisted = (await this.moveSecrets(next.rememberCredentials)) && persisted;
@@ -1591,6 +1784,8 @@ export class Coordinator implements SessionHost {
         });
       }
     }
+    // 会话已按新配置处理后再回收旧地址的权限；回收后重新核对当前地址，快照以回收后的状态为准。
+    if (await this.revokeReleasedOrigins(prev, written)) await this.refreshHostPermission();
     this.publish();
     return { persisted };
   }
@@ -1702,10 +1897,12 @@ export class Coordinator implements SessionHost {
       });
     const rememberChanged = remember !== this.settingsValue.rememberCredentials;
     if (rememberChanged) {
-      this.settingsValue = applySettingsPatch(this.settingsValue, {
-        rememberCredentials: remember,
-      });
-      this.settingsPersisted = await saveSettings(this.deps.storage.local, this.settingsValue);
+      // 原设置读取失败时先重试读取，读不到则只在内存中记下这次选择，不用默认值覆盖原设置。
+      await this.retryUnreadableSettings();
+      const patch: SettingsPatch = { rememberCredentials: remember };
+      this.settingsValue = applySettingsPatch(this.settingsValue, patch);
+      this.unreadableEdits?.push(patch);
+      this.settingsPersisted = await this.writeSettings(this.settingsValue);
     }
     if (intent !== this.apiKeyIntent) throw cancelledError('credential superseded');
     let persisted = await saveSecret(this.deps.storage, 'apiKey', trimmed, remember);
@@ -1836,7 +2033,7 @@ export class Coordinator implements SessionHost {
   }
 
   private setCapability(key: CapabilityKey, value: ProviderCapability): void {
-    this.capabilities[key] = value;
+    this.capabilities[key] = clampCapabilityFields(value);
     this.persistCapabilities();
     this.publish();
   }
@@ -1847,76 +2044,115 @@ export class Coordinator implements SessionHost {
       .catch(() => undefined);
   }
 
+  /**
+   * 连接检查结果依赖的配置。自动协议的探测结果由检查或会话启动写回，不算配置变化；
+   * 字幕外观、术语表等与检查无关的设置也不在其中。
+   */
+  private connectionCheckConfigKey(scope: ConnectionCheckScope): string {
+    const s = this.settingsValue;
+    return JSON.stringify([
+      { ...s.provider, detectedProtocol: undefined },
+      checkScopeCovers(scope, 'asr') ? s.asr : null,
+      checkScopeCovers(scope, 'tts') ? [s.tts, s.targetLanguage] : null,
+      // 文本与 sub2api 语音只用 API Key；识别还可能用本地配对令牌。
+      checkScopeCovers(scope, 'asr') ? this.credentialGeneration : this.apiKeyGeneration,
+    ]);
+  }
+
+  /** 配置真实变化：只作废包含该类检查项的在途检查（按「配置已变化」说明）。 */
+  private abortConnectionChecks(part: 'asr' | 'tts'): void {
+    for (const op of this.connectionChecks)
+      if (checkScopeCovers(op.scope, part)) op.controller.abort();
+  }
+
   private async runConnectionCheck(
-    scope: 'text' | 'asr' | 'tts' | 'all',
+    scope: ConnectionCheckScope,
     allowBilledAudioProbe = false,
   ): Promise<ConnectionReport> {
-    this.connectionCheckAbort?.abort();
-    const controller = new AbortController();
-    this.connectionCheckAbort = controller;
-    const revision = this.configRevisionValue;
+    // 只取代 scope 重叠（相同，或任一方为 all）的在途检查；不重叠的检查可以并行，
+    // 它们写入的检查项互不相交（文本 / 识别 / 语音），各自只覆盖自己的项。
+    for (const other of this.connectionChecks) {
+      if (other.scope === scope || other.scope === 'all' || scope === 'all') {
+        other.replaced = true;
+        other.controller.abort();
+      }
+    }
+    // 配置、凭证或权限变化时各处调用 connectionCheckAbort.abort()，作废当时所有在途检查。
+    if (!this.connectionCheckAbort || this.connectionCheckAbort.signal.aborted)
+      this.connectionCheckAbort = new AbortController();
+    const configSignal = this.connectionCheckAbort.signal;
+    const op: ConnectionCheckOp = { scope, controller: new AbortController(), replaced: false };
+    const signal = op.controller.signal;
+    const onConfigAbort = () => op.controller.abort();
+    configSignal.addEventListener('abort', onConfigAbort, { once: true });
+    this.connectionChecks.add(op);
     const generation = this.credentialGeneration;
-    const settingsAtCheck = JSON.stringify([
-      this.settingsValue.provider,
-      this.settingsValue.asr,
-      this.settingsValue.tts,
-      this.settingsValue.targetLanguage,
-    ]);
+    const configAtCheck = this.connectionCheckConfigKey(scope);
+    // 本次检查是否已作废：被新检查取代（界面静默）与配置真实变化分别说明。
+    const staleError = (): AppError | undefined => {
+      if (op.replaced) return checkReplacedError();
+      if (signal.aborted || configAtCheck !== this.connectionCheckConfigKey(scope))
+        return checkSupersededError();
+      return undefined;
+    };
+    const assertCurrent = () => {
+      const error = staleError();
+      if (error) throw error;
+    };
     const checkedAt = this.deps.now();
     const items: ConnectionCheckItem[] = [];
     let detectedProtocol: 'responses' | 'chat' | undefined;
     let models: string[] | undefined;
 
-    if (scope === 'text' || scope === 'all') {
-      await this.refreshHostPermission();
-      const result = await this.deps.runTextConnectionCheck({
-        provider: this.settingsValue.provider,
-        apiKey: this.apiKeyState.value,
-        hasHostPermission: this.hostPermission.granted,
-        signal: controller.signal,
-        includeStreaming: this.settingsValue.provider.streaming,
-      });
-      items.push(...result.items);
-      detectedProtocol = result.detectedProtocol;
-      models = result.models;
-    }
-    if (scope === 'asr' || scope === 'all') {
-      items.push(await this.checkAsr(controller.signal, allowBilledAudioProbe));
-    }
-    if (scope === 'tts' || scope === 'all') {
-      const voices = await this.deps.systemTts.getVoices().catch(() => []);
-      const capability = this.systemTtsCapability(voices);
-      items.push({
-        key: 'systemTts',
-        status: capability.status,
-        message: capability.message ?? '',
-      });
-      if (this.settingsValue.tts.backend === 'sub2api') {
-        items.push(await this.checkSub2apiTts(controller.signal, allowBilledAudioProbe));
+    try {
+      if (scope === 'text' || scope === 'all') {
+        await this.refreshHostPermission();
+        assertCurrent();
+        const result = await this.deps.runTextConnectionCheck({
+          provider: this.settingsValue.provider,
+          apiKey: this.apiKeyState.value,
+          hasHostPermission: this.hostPermission.granted,
+          signal,
+          includeStreaming: this.settingsValue.provider.streaming,
+        });
+        assertCurrent();
+        items.push(...result.items);
+        detectedProtocol = result.detectedProtocol;
+        models = result.models;
       }
+      if (scope === 'asr' || scope === 'all') {
+        const item = await this.checkAsr(signal, allowBilledAudioProbe);
+        assertCurrent();
+        items.push(item);
+      }
+      if (scope === 'tts' || scope === 'all') {
+        const voices = await this.deps.systemTts.getVoices().catch(() => []);
+        assertCurrent();
+        const capability = this.systemTtsCapability(voices);
+        items.push({
+          key: 'systemTts',
+          status: capability.status,
+          message: capability.message ?? '',
+        });
+        if (this.settingsValue.tts.backend === 'sub2api') {
+          const item = await this.checkSub2apiTts(signal, allowBilledAudioProbe);
+          assertCurrent();
+          items.push(item);
+        }
+      }
+    } catch (error) {
+      // 中止后底层调用可能以取消或网络错误结束：按作废原因说明，不当作检查失败。
+      throw staleError() ?? error;
+    } finally {
+      configSignal.removeEventListener('abort', onConfigAbort);
+      this.connectionChecks.delete(op);
     }
-
-    if (
-      controller.signal.aborted ||
-      revision !== this.configRevisionValue ||
-      generation !== this.credentialGeneration ||
-      settingsAtCheck !==
-        JSON.stringify([
-          this.settingsValue.provider,
-          this.settingsValue.asr,
-          this.settingsValue.tts,
-          this.settingsValue.targetLanguage,
-        ])
-    ) {
-      throw new AppError({
-        code: 'check-superseded',
-        category: 'cancelled',
-        retryable: true,
-        message: '配置已变化，本次检查结果作废，请重新检查。',
-      });
-    }
+    assertCurrent();
+    // 与检查相关的配置与凭证均未变化：结果对当前配置版本有效（无关设置可能已使版本递增）。
+    const revision = this.configRevisionValue;
+    const checked = items.map((item) => clampCapabilityFields(item));
     const iso = new Date(checkedAt).toISOString();
-    for (const item of items) {
+    for (const item of checked) {
       this.capabilities[item.key] = {
         status: item.status,
         checkedAt: iso,
@@ -1931,9 +2167,9 @@ export class Coordinator implements SessionHost {
       checkedAt,
       configRevision: revision,
       credentialGeneration: generation,
-      items,
+      items: checked,
       detectedProtocol,
-      models: models?.slice(0, 1_000),
+      models: models?.filter((model) => model.length <= 200).slice(0, 1_000),
     };
     this.lastConnectionReport = report;
     this.persistCapabilities();
@@ -2073,11 +2309,14 @@ export class Coordinator implements SessionHost {
     const health = await this.deps.checkLocalAsrHealth(normalized.baseUrl, signal);
     const latencyMs = this.deps.now() - started;
     if (health.status === 'ok' && health.ready) {
+      // 模型与设备名来自服务返回，分别截短，保证后面的说明完整（整条说明写入时还会统一截断）。
+      const model = truncateText(health.model ?? '未知', 80);
+      const device = truncateText(health.device ?? '未知设备', 60);
       return {
         key: 'localAsr',
         status: this.asrTokenState.value ? 'verified' : 'failed',
         message: this.asrTokenState.value
-          ? `本地识别服务可用（模型 ${health.model ?? '未知'}，${health.device ?? '未知设备'}）。配对令牌将在首次识别时验证。`
+          ? `本地识别服务可用（模型 ${model}，${device}）。配对令牌将在首次识别时验证。`
           : '本地识别服务在线，但尚未填写配对令牌。',
         latencyMs,
         reasonCode: this.asrTokenState.value ? undefined : 'token-missing',
@@ -2103,10 +2342,19 @@ export class Coordinator implements SessionHost {
     };
   }
 
+  /**
+   * 文本服务调用路由相关的 provider 配置。自动协议的探测结果由会话启动或检查写回，不算配置变化；
+   * 设置对象每次更新都会重建，不能按引用判断。
+   */
+  private providerRouteKey(): string {
+    return JSON.stringify({ ...this.settingsValue.provider, detectedProtocol: undefined });
+  }
+
   private async searchRoute(
     signal: AbortSignal,
   ): Promise<Omit<SearchGenerationParams, 'query' | 'signal'>> {
     const provider = this.settingsValue.provider;
+    const routeKey = this.providerRouteKey();
     const apiKey = this.apiKeyState.value;
     const generation = this.apiKeyGeneration;
     const intent = this.apiKeyIntent;
@@ -2126,7 +2374,7 @@ export class Coordinator implements SessionHost {
       signal.aborted ||
       generation !== this.apiKeyGeneration ||
       intent !== this.apiKeyIntent ||
-      provider !== this.settingsValue.provider
+      routeKey !== this.providerRouteKey()
     )
       throw cancelledError();
     if (!granted)
@@ -2136,20 +2384,21 @@ export class Coordinator implements SessionHost {
         retryable: false,
         message: '请先在设置中授予访问服务地址的权限。',
       });
+    // 等待期间协议可能刚被会话启动或连接检查探测出来：直接使用，省去一次重复探测。
+    const detected = this.settingsValue.provider.detectedProtocol;
     return {
       baseUrl: normalized.baseUrl,
       apiKey,
       model: provider.model,
-      protocol:
-        provider.protocol === 'auto' ? (provider.detectedProtocol ?? 'auto') : provider.protocol,
+      protocol: provider.protocol === 'auto' ? (detected ?? 'auto') : provider.protocol,
       reasoningEffort: provider.reasoningEffort,
       timeoutMs: provider.timeoutMs,
     };
   }
 
   private async discoverModels(): Promise<{ models: string[] }> {
-    const s = this.settingsValue.provider;
-    const normalized = s.baseUrl ? this.deps.normalizeBaseUrl(s.baseUrl) : undefined;
+    const baseUrl = this.settingsValue.provider.baseUrl;
+    const normalized = baseUrl ? this.deps.normalizeBaseUrl(baseUrl) : undefined;
     if (!normalized?.ok)
       throw new AppError({
         code: 'missing-base-url',
@@ -2165,10 +2414,13 @@ export class Coordinator implements SessionHost {
         retryable: false,
         message: '请先填写 API Key。',
       });
-    const generation = this.credentialGeneration;
+    // 模型列表只取决于服务地址与 API Key：字幕外观、模型选择等无关设置或协议探测写回不作废结果。
+    // 设置对象每次更新都会重建，不能按引用判断。
+    const generation = this.apiKeyGeneration;
+    const routeChanged = () =>
+      generation !== this.apiKeyGeneration || this.settingsValue.provider.baseUrl !== baseUrl;
     await this.refreshHostPermission();
-    if (generation !== this.credentialGeneration || this.settingsValue.provider !== s)
-      throw cancelledError('discovery superseded');
+    if (routeChanged()) throw discoverySupersededError();
     if (!this.hostPermission.granted) {
       throw new AppError({
         code: 'host-permission-missing',
@@ -2177,29 +2429,39 @@ export class Coordinator implements SessionHost {
         message: '请先授予访问服务地址的权限。',
       });
     }
-    this.modelDiscoveryAbort?.abort();
+    const previous = this.modelDiscoveryAbort;
+    if (previous) {
+      this.replacedDiscoveries.add(previous);
+      previous.abort();
+    }
     const controller = new AbortController();
     this.modelDiscoveryAbort = controller;
-    const timer = setTimeout(() => controller.abort(), 15_000);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 15_000);
+    // 被新一次获取取代与地址/Key/权限变化分别说明；超时由请求本身的错误说明。
+    const staleError = (): AppError | undefined => {
+      if (this.replacedDiscoveries.has(controller)) return discoveryReplacedError();
+      if (routeChanged() || (controller.signal.aborted && !timedOut))
+        return discoverySupersededError();
+      return undefined;
+    };
     try {
-      const models = await this.deps.discoverModels({
-        baseUrl: normalized.baseUrl,
-        apiKey,
-        signal: controller.signal,
-      });
-      if (
-        controller.signal.aborted ||
-        generation !== this.credentialGeneration ||
-        this.settingsValue.provider !== s
-      ) {
-        throw new AppError({
-          code: 'discovery-superseded',
-          category: 'cancelled',
-          retryable: true,
-          message: '服务地址或 Key 已变化，本次模型列表作废，请重新获取。',
+      let models: string[];
+      try {
+        models = await this.deps.discoverModels({
+          baseUrl: normalized.baseUrl,
+          apiKey,
+          signal: controller.signal,
         });
+      } catch (error) {
+        throw staleError() ?? error;
       }
-      return { models: models.slice(0, 1_000) };
+      const stale = staleError();
+      if (stale) throw stale;
+      return { models: models.filter((model) => model.length <= 200).slice(0, 1_000) };
     } finally {
       clearTimeout(timer);
       if (this.modelDiscoveryAbort === controller) this.modelDiscoveryAbort = undefined;
@@ -2398,16 +2660,23 @@ export class Coordinator implements SessionHost {
     const pages = [...this.pages.values()]
       .map(toPageInfo)
       .filter((p) => PageInfoSchema.safeParse(p).success);
+    // 能力项与检查报告逐项校验：不合法的只丢弃该项，不能让整份快照回退而连累会话与页面。
+    const capabilities = parseCapabilityMatrix(this.capabilities);
+    if (capabilities.dropped)
+      this.deps.logger.warn('[tongting] dropped invalid capabilities', capabilities.dropped);
     const report =
       this.lastConnectionReport &&
       ConnectionReportSchema.safeParse(this.lastConnectionReport).success
         ? this.lastConnectionReport
         : undefined;
+    if (this.lastConnectionReport && !report)
+      this.deps.logger.warn('[tongting] dropped invalid connection report');
     const snapshot: AppSnapshot = {
       snapshotVersion: version,
       workerInstanceId: this.workerInstanceId,
       settings: this.settingsValue,
       settingsPersisted: this.settingsPersisted,
+      settingsRecovery: this.settingsRecovery,
       configRevision: this.configRevisionValue,
       credential: {
         configured: !!this.apiKeyState.value,
@@ -2424,13 +2693,14 @@ export class Coordinator implements SessionHost {
         masked: maskSecret(this.asrTokenState.value),
       },
       hostPermission: { origin: this.hostPermission.origin, granted: this.hostPermission.granted },
-      capabilities: this.capabilities as AppSnapshot['capabilities'],
+      capabilities: capabilities.matrix,
       lastConnectionReport: report,
       pages,
       sessions,
       audioOwner,
     };
     // 整份快照发送前校验：UI 会拒收非法快照，发送非法数据会让界面停在旧状态。
+    // 会话、页面、能力项与报告已逐项过滤；这里失败只剩设置或数量上限等整体问题，按原方式回退。
     const parsed = AppSnapshotSchema.safeParse(snapshot);
     if (parsed.success) return parsed.data;
     this.deps.logger.warn(
@@ -2456,6 +2726,21 @@ export class Coordinator implements SessionHost {
   }
 }
 
+/** 主机权限匹配模式是否覆盖某个 origin：不带端口的模式匹配该主机的所有端口。 */
+function patternCovers(pattern: string, origin: string): boolean {
+  const match = /^([a-z][a-z0-9+.-]*):\/\/([^/]+)\/\*$/i.exec(pattern);
+  // 无法解析的模式保守视为仍在使用，不回收。
+  if (!match) return true;
+  try {
+    const scope = new URL(`${match[1]}://${match[2]}`);
+    const target = new URL(origin);
+    if (scope.protocol !== target.protocol || scope.hostname !== target.hostname) return false;
+    return !/:\d+$/.test(match[2]!) || scope.port === target.port;
+  } catch {
+    return true;
+  }
+}
+
 function secretCleanupError(): AppError {
   return new AppError({
     code: 'secret-cleanup-incomplete',
@@ -2463,6 +2748,44 @@ function secretCleanupError(): AppError {
     retryable: true,
     message:
       '凭证已停止使用，但本机存储副本尚未全部清除。请点击「重试清理」；清理完成前不要把它视为已彻底删除。',
+  });
+}
+
+/** 连接检查被 scope 重叠的新检查取代：界面对该 code 静默处理，由新检查给出结果。 */
+function checkReplacedError(): AppError {
+  return new AppError({
+    code: 'check-replaced',
+    category: 'cancelled',
+    retryable: false,
+    message: '本次检查已被新的检查取代。',
+  });
+}
+
+/** 检查期间与之相关的配置、凭证或权限确实变化：结果不能归到新配置名下。 */
+function checkSupersededError(): AppError {
+  return new AppError({
+    code: 'check-superseded',
+    category: 'cancelled',
+    retryable: true,
+    message: '配置已变化，本次检查结果作废，请重新检查。',
+  });
+}
+
+function discoverySupersededError(): AppError {
+  return new AppError({
+    code: 'discovery-superseded',
+    category: 'cancelled',
+    retryable: true,
+    message: '服务地址、Key 或访问权限已变化，本次模型列表作废，请重新获取。',
+  });
+}
+
+function discoveryReplacedError(): AppError {
+  return new AppError({
+    code: 'discovery-replaced',
+    category: 'cancelled',
+    retryable: false,
+    message: '本次获取已被新的获取请求取代。',
   });
 }
 
