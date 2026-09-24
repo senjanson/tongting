@@ -68,7 +68,7 @@ async function popupCommand<T>(method: string, params: Record<string, unknown> =
 
 function measureLayout() {
   const brand = [...document.querySelectorAll<HTMLElement>('header span')]
-    .filter((element) => ['同听', 'TONGTING'].includes(element.textContent ?? ''))
+    .filter((element) => ['译听', 'VOCASUB'].includes(element.textContent ?? ''))
     .map((element) => {
       const box = element.getBoundingClientRect();
       return { width: box.width, height: box.height };

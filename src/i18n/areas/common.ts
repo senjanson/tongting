@@ -28,8 +28,8 @@ const zhCN = {
   'common.settingsFailed': '设置未生效：{detail}',
 
   // 品牌与通用布局
-  'common.brand.name': '同听',
-  'common.brand.note': 'TONGTING',
+  'common.brand.name': '译听',
+  'common.brand.note': 'VOCASUB',
   'common.demo.label': '演示模式 · 示例数据，不连接视频与服务',
   'common.demo.aria': '演示模式',
   'common.demo.exit': '退出演示',
@@ -108,7 +108,7 @@ const zhCN = {
 
   // 错误的下一步
   'common.nextStep.captureGesture':
-    '音频采集需要新的用户操作：请点击浏览器工具栏中的同听图标，或按 Alt+T 后再继续。',
+    '音频采集需要新的用户操作：请点击浏览器工具栏中的译听图标，或按 Alt+T 后再继续。',
   'common.nextStep.checkSettings': '检查设置',
   'common.nextStep.configureAsr': '配置语音识别',
   'common.nextStep.checkTts': '检查配音设置',
@@ -257,7 +257,7 @@ const en: Record<keyof typeof zhCN, string> = {
     'Applied for now, but not saved. This setting will be lost when the browser restarts.',
   'common.settingsFailed': 'Setting not applied: {detail}',
 
-  'common.brand.name': 'Tongting',
+  'common.brand.name': 'Vocasub',
   'common.brand.note': 'LIVE TRANSLATION',
   'common.demo.label': 'Demo mode · Sample data, no video or service connected',
   'common.demo.aria': 'Demo mode',
@@ -335,7 +335,7 @@ const en: Record<keyof typeof zhCN, string> = {
   'common.primary.pause': 'Pause translation',
 
   'common.nextStep.captureGesture':
-    'Audio capture needs a new user action: click the Tongting icon in the browser toolbar or press Alt+T, then continue.',
+    'Audio capture needs a new user action: click the Vocasub icon in the browser toolbar or press Alt+T, then continue.',
   'common.nextStep.checkSettings': 'Check settings',
   'common.nextStep.configureAsr': 'Set up speech recognition',
   'common.nextStep.checkTts': 'Check voice settings',

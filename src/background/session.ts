@@ -2063,7 +2063,7 @@ export class TranslationSession {
     });
   }
 
-  /** 覆盖层状态文字；「同听 · 」前缀由覆盖层添加。 */
+  /** 覆盖层状态文字；「译听 · 」前缀由覆盖层添加。 */
   private statusText(): string | undefined {
     if (this.error) return clip(this.error.message, 40);
     const buffer = this.bufferState()?.snapshot;

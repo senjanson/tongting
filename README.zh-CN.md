@@ -1,6 +1,8 @@
-# 同听 · Tongting
+# 译听 · Vocasub
 
 [English](README.md) · **简体中文**
+
+> 原名**同听（Tongting）**。只改了名称，功能和本地数据格式都不变。
 
 一个 Chrome MV3 扩展：在 YouTube 网页上边看边生成目标语言的翻译字幕，并可选择播放翻译配音。文本翻译走**你自己**部署的 [sub2api](https://github.com/Wei-Shaw/sub2api) 服务——扩展不内置任何 Key，也没有托管后端。没有可读字幕的视频需要另行配置语音识别服务，本仓库附带了一个本地服务。
 

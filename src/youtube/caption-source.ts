@@ -46,7 +46,7 @@ export type CaptionsAvailability = 'unknown' | 'available' | 'unavailable';
 export interface CaptionSourceDeps {
   bridge: Pick<BridgeClient, 'loadTrack' | 'restoreCaptions' | 'requestPlayerResponse'> &
     Partial<Pick<BridgeClient, 'requestReplay'>>;
-  /** 当前是否仍需要保留同听打开的原生字幕（会话活跃）；迟到的「已打开」结果据此立即恢复。 */
+  /** 当前是否仍需要保留译听打开的原生字幕（会话活跃）；迟到的「已打开」结果据此立即恢复。 */
   shouldKeepNativeCaptions?(): boolean;
   now?(): number;
   origin: string;
@@ -56,7 +56,7 @@ export interface CaptionSourceDeps {
   /** 元数据或可用性变化时通知（用于上报 captions/tracks 与 page/video）。 */
   onMetadata?(metadata: PlayerMetadata | null, availability: CaptionsAvailability): void;
   /**
-   * 页面自己请求（非同听兜底请求）的正文解析成功后通知，用于识别用户在播放器里切换字幕语言。
+   * 页面自己请求（非译听兜底请求）的正文解析成功后通知，用于识别用户在播放器里切换字幕语言。
    * trackKey 为元数据中对应轨道；元数据未就绪或无对应轨道时为 undefined。
    */
   onPassiveBody?(info: { trackKey: string | undefined; languageCode: string; asr: boolean }): void;
@@ -83,7 +83,7 @@ export interface CaptionSource {
     req: { trackKey?: string; preferredLanguage?: string },
     signal?: AbortSignal,
   ): Promise<LoadedTrack>;
-  /** 同听是否为了加载轨道打开过原生字幕（需要在会话结束时恢复）。 */
+  /** 译听是否为了加载轨道打开过原生字幕（需要在会话结束时恢复）。 */
   readonly changedNativeCaptions: boolean;
   restoreNativeCaptions(): void;
   /** 被丢弃的 timedtext 正文数（视频不符、非同源、自动翻译等），不含内容。 */

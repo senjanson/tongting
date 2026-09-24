@@ -344,7 +344,7 @@ export function buildExportFilename(input: {
     .replace(/[.\s]+$/g, '');
   if (!base) {
     const safeId = (input.videoId ?? '').replace(/[^A-Za-z0-9_-]/g, '');
-    base = safeId ? `tongting-${safeId}` : 'tongting-subtitles';
+    base = safeId ? `vocasub-${safeId}` : 'vocasub-subtitles';
   }
   if (WINDOWS_RESERVED.test(base)) base = `_${base}`;
   const language = (input.language ?? '').replace(/[^A-Za-z0-9-]/g, '') || 'und';

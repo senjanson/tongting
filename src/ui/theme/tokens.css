@@ -1,5 +1,5 @@
 /*
- * 同听 design tokens（取自 A 轻巧侧栏原型：松绿强调色，跟随系统明暗）。
+ * 译听 design tokens（取自 A 轻巧侧栏原型：松绿强调色，跟随系统明暗）。
  * 最低 Chrome 116 不支持 light-dark()，因此使用 prefers-color-scheme 媒体查询。
  */
 :root {

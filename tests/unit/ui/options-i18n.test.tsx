@@ -54,7 +54,7 @@ describe('options page locale', () => {
     expect(screen.getByRole('button', { name: 'Save key' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Check connection' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Clear translation cache' })).toBeTruthy();
-    expect(document.title).toBe('Tongting Settings');
+    expect(document.title).toBe('Vocasub Settings');
     expect(document.documentElement.lang).toBe('en');
     expect(document.body.textContent).not.toMatch(/模型连接|保存 Key|检查连接/);
   });
@@ -79,7 +79,7 @@ describe('options page locale', () => {
     render(<OptionsApp />);
     expect(await screen.findByRole('heading', { level: 1, name: '设置' })).toBeTruthy();
     expect(screen.getByRole('combobox', { name: '界面语言' })).toBeTruthy();
-    expect(document.title).toBe('同听设置');
+    expect(document.title).toBe('译听设置');
   });
 
   it('switching the interface language sends settings/update and switches immediately', async () => {
@@ -100,7 +100,7 @@ describe('options page locale', () => {
         patch: { uiLocale: 'zh-CN' },
       }),
     );
-    await waitFor(() => expect(document.title).toBe('同听设置'));
+    await waitFor(() => expect(document.title).toBe('译听设置'));
 
     // worker 回推新快照后以快照为准；其他页面再改回英文时也随之切换。
     act(() => worker.emit({ type: 'snapshot', snapshot: withLocale('zh-CN', 1) }));
@@ -176,7 +176,7 @@ describe('workspace locale', () => {
     expect(await screen.findByText('No subtitle records yet')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Refresh records' })).toBeTruthy();
     expect(screen.getByText('No subtitle record selected')).toBeTruthy();
-    expect(document.title).toBe('Tongting · Subtitle Workspace');
+    expect(document.title).toBe('Vocasub · Subtitle Workspace');
     expect(document.body.textContent).not.toMatch(/字幕工作台|字幕记录/);
   });
 
@@ -184,7 +184,7 @@ describe('workspace locale', () => {
     useWorker(createFakeWorker(withLocale('auto')), 'zh-CN');
     render(<WorkspaceApp />);
     expect(await screen.findByRole('heading', { level: 1, name: '字幕工作台' })).toBeTruthy();
-    expect(document.title).toBe('同听 · 字幕工作台');
+    expect(document.title).toBe('译听 · 字幕工作台');
   });
 });
 
@@ -245,7 +245,7 @@ describe('transcript and export dialog locale', () => {
     const preview = within(dialog).getByRole('textbox', {
       name: 'Export preview',
     }) as HTMLTextAreaElement;
-    expect(preview.value).toContain('NOTE Exported by Tongting');
+    expect(preview.value).toContain('NOTE Exported by Vocasub');
     expect(preview.value).toContain('Title: Video title');
     expect(preview.value).toContain(
       'Content: Bilingual: translation (Simplified Chinese) + original (English)',

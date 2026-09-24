@@ -317,7 +317,7 @@ test('T35 工作台真实下载 SRT/VTT/TXT：原文、译文、双语、仅收�
       record.ffprobePackets = packets.length;
     } else if (combo.format === 'vtt') {
       const { note, entries } = parseVtt(text);
-      expect(note[0]).toBe('NOTE 同听 Tongting 导出');
+      expect(note[0]).toBe('NOTE 译听 Vocasub 导出');
       expect(entries.map((e) => [e.startMs, e.endMs])).toEqual(
         selected.map((c) => [c.startMs, c.endMs]),
       );
@@ -330,7 +330,7 @@ test('T35 工作台真实下载 SRT/VTT/TXT：原文、译文、双语、仅收�
       record.note = note;
     } else {
       const { header, entries } = parseTxt(text);
-      expect(header[0]).toBe('同听 Tongting 字幕导出');
+      expect(header[0]).toBe('译听 Vocasub 字幕导出');
       expect(header).toContain(`视频 ID：${VIDEO_A}`);
       expect(entries.map((e) => Math.floor(e.startMs / 1000))).toEqual(
         selected.map((c) => Math.floor(c.startMs / 1000)),

@@ -10,14 +10,14 @@ const zhCN = {
   'options.action.delete': '删除',
 
   // ── 设置页框架 ──
-  'options.page.documentTitle': '同听设置',
+  'options.page.documentTitle': '译听设置',
   'options.page.title': '设置',
   'options.page.connecting': '正在连接后台服务…',
-  'options.page.connectingHint': '如果长时间停留在这里，请在 chrome://extensions 中重新加载同听。',
+  'options.page.connectingHint': '如果长时间停留在这里，请在 chrome://extensions 中重新加载译听。',
   'options.page.navLabel': '设置分区',
   'options.page.recoveredTitle': '设置已恢复为默认值',
   'options.page.recoveredBody':
-    '已保存的设置无法识别（可能来自更新版本的同听，或数据已损坏），当前使用默认设置。原设置已在本机备份，不会被删除。保存任一设置后此提示消失。',
+    '已保存的设置无法识别（可能来自更新版本的译听，或数据已损坏），当前使用默认设置。原设置已在本机备份，不会被删除。保存任一设置后此提示消失。',
   'options.page.unreadableTitle': '暂时无法读取已保存的设置',
   'options.page.unreadableBody':
     '当前显示的是默认设置。为避免覆盖原设置，修改只在本次生效、不会保存；每次修改时会重新读取，读取成功后会在原设置上应用这些修改。',
@@ -266,7 +266,7 @@ const zhCN = {
   'options.demo.openFailed': '无法打开演示页面。',
 
   // ── 字幕工作台 ──
-  'options.workspace.documentTitle': '同听 · 字幕工作台',
+  'options.workspace.documentTitle': '译听 · 字幕工作台',
   'options.workspace.title': '字幕工作台',
   'options.workspace.deleteInUse': '翻译进行中，停止后才能删除这条记录。',
   'options.workspace.deleted': '已删除字幕记录。该视频的笔记与收藏已保留。',
@@ -306,7 +306,7 @@ const zhCN = {
   'options.workspace.focusTab': '切换到源标签页',
   'options.workspace.focusFailed': '无法切换到源标签页。',
   'options.workspace.readOnly':
-    '这条记录由更新版本的同听创建，当前只读显示，部分内容可能无法识别。',
+    '这条记录由更新版本的译听创建，当前只读显示，部分内容可能无法识别。',
   'options.workspace.invalidCues': '有 {count} 条字幕数据损坏或格式无法识别，已跳过显示与导出。',
   'options.workspace.seekUnavailable': '源标签页已关闭，播放控制不可用。',
   'options.workspace.noteStatus.idle': '笔记会自动保存在本机',
@@ -425,8 +425,8 @@ const zhCN = {
   'options.export.nothing': '当前选择没有可导出的字幕。',
 
   // ── 导出文件头说明与统计（导出正文不翻译） ──
-  'options.export.file.vttNote': '同听 Tongting 导出',
-  'options.export.file.txtHeader': '同听 Tongting 字幕导出',
+  'options.export.file.vttNote': '译听 Vocasub 导出',
+  'options.export.file.txtHeader': '译听 Vocasub 字幕导出',
   'options.export.file.title': '标题：{title}',
   'options.export.file.videoId': '视频 ID：{id}',
   'options.export.file.content': '内容：{content}',
@@ -501,15 +501,15 @@ const en: Record<keyof typeof zhCN, string> = {
   'options.action.copy': 'Copy',
   'options.action.delete': 'Delete',
 
-  'options.page.documentTitle': 'Tongting Settings',
+  'options.page.documentTitle': 'Vocasub Settings',
   'options.page.title': 'Settings',
   'options.page.connecting': 'Connecting to the background service…',
   'options.page.connectingHint':
-    'If this takes a long time, reload Tongting in chrome://extensions.',
+    'If this takes a long time, reload Vocasub in chrome://extensions.',
   'options.page.navLabel': 'Settings sections',
   'options.page.recoveredTitle': 'Settings were reset to defaults',
   'options.page.recoveredBody':
-    'Your saved settings could not be read (they may come from a newer version of Tongting, or the data is damaged), so defaults are in use. The original settings are backed up on this device and will not be deleted. This notice goes away once you save any setting.',
+    'Your saved settings could not be read (they may come from a newer version of Vocasub, or the data is damaged), so defaults are in use. The original settings are backed up on this device and will not be deleted. This notice goes away once you save any setting.',
   'options.page.unreadableTitle': 'Saved settings are temporarily unreadable',
   'options.page.unreadableBody':
     'Default settings are shown. To avoid overwriting your saved settings, changes apply to this session only and are not saved. Each change retries reading them; once that succeeds, your changes are applied on top of the saved settings.',
@@ -774,7 +774,7 @@ const en: Record<keyof typeof zhCN, string> = {
   'options.demo.open': 'Open demo mode',
   'options.demo.openFailed': 'Could not open the demo page.',
 
-  'options.workspace.documentTitle': 'Tongting · Subtitle Workspace',
+  'options.workspace.documentTitle': 'Vocasub · Subtitle Workspace',
   'options.workspace.title': 'Subtitle workspace',
   'options.workspace.deleteInUse':
     'Translation is in progress. Stop it before deleting this record.',
@@ -818,7 +818,7 @@ const en: Record<keyof typeof zhCN, string> = {
   'options.workspace.focusTab': 'Go to source tab',
   'options.workspace.focusFailed': 'Could not switch to the source tab.',
   'options.workspace.readOnly':
-    'This record was created by a newer version of Tongting. It is shown read-only and some content may not be recognized.',
+    'This record was created by a newer version of Vocasub. It is shown read-only and some content may not be recognized.',
   'options.workspace.invalidCues':
     'Subtitles skipped in display and export because their data is damaged or unrecognized: {count}.',
   'options.workspace.seekUnavailable':
@@ -945,8 +945,8 @@ const en: Record<keyof typeof zhCN, string> = {
   'options.export.encodingBom': 'UTF-8 with BOM',
   'options.export.nothing': 'Nothing to export with the current selection.',
 
-  'options.export.file.vttNote': 'Exported by Tongting',
-  'options.export.file.txtHeader': 'Tongting subtitle export',
+  'options.export.file.vttNote': 'Exported by Vocasub',
+  'options.export.file.txtHeader': 'Vocasub subtitle export',
   'options.export.file.title': 'Title: {title}',
   'options.export.file.videoId': 'Video ID: {id}',
   'options.export.file.content': 'Content: {content}',

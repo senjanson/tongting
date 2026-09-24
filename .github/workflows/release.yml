@@ -63,7 +63,7 @@ jobs:
         id: artifact
         run: |
           VERSION="$(node -p "require('./package.json').version")"
-          ZIP_NAME="tongting-${VERSION}-chrome.zip"
+          ZIP_NAME="vocasub-${VERSION}-chrome.zip"
           ZIP=".output/${ZIP_NAME}"
           test -f "$ZIP" || { echo "找不到产物 $ZIP" >&2; ls -la .output >&2; exit 1; }
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
@@ -74,7 +74,7 @@ jobs:
       - name: 上传构建产物（无 tag 的手动运行也能取到）
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: tongting-chrome-${{ steps.artifact.outputs.version }}
+          name: vocasub-chrome-${{ steps.artifact.outputs.version }}
           path: ${{ steps.artifact.outputs.zip }}
           if-no-files-found: error
 
@@ -89,7 +89,7 @@ jobs:
       - name: 下载构建产物
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: tongting-chrome-${{ needs.build.outputs.version }}
+          name: vocasub-chrome-${{ needs.build.outputs.version }}
           path: dist
 
       - name: 核对产物校验和
@@ -115,7 +115,7 @@ jobs:
           cat > notes.md <<EOF
           ## 安装
 
-          1. 下载下面的 \`tongting-${VERSION}-chrome.zip\` 并解压。
+          1. 下载下面的 \`vocasub-${VERSION}-chrome.zip\` 并解压。
           2. 打开 \`chrome://extensions\`，开启右上角的**开发者模式**。
           3. 点击**加载已解压的扩展程序**，选择解压出来的文件夹。
 

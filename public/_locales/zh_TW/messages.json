@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "同听 Tongting",
+    "message": "译听 Vocasub",
     "description": "扩展名称。"
   },
   "extDescription": {
@@ -8,7 +8,7 @@
     "description": "扩展说明。"
   },
   "actionTitle": {
-    "message": "同听",
+    "message": "译听",
     "description": "工具栏按钮的提示文字。"
   },
   "commandToggleTranslation": {

@@ -62,7 +62,7 @@ def _add_model_options(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tongting-asr",
-        description="同听 Tongting 本地语音识别补充服务（只监听 127.0.0.1）。",
+        description="译听 Vocasub 本地语音识别补充服务（只监听 127.0.0.1）。",
     )
     parser.add_argument("--version", action="version", version=f"tongting-asr {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -134,7 +134,7 @@ def _announce_token(store: TokenStore, token: str, created: bool) -> None:
     if created and _stdout_is_terminal():
         print(
             f"\n首次启动，已生成配对令牌（保存在 {store.path}，权限 0600）：\n\n    {token}\n\n"
-            "请把它填入同听扩展设置页的「本地识别服务 → 配对令牌」。之后可随时运行 "
+            "请把它填入译听扩展设置页的「本地识别服务 → 配对令牌」。之后可随时运行 "
             "`tongting-asr print-token` 再次查看。\n",
             flush=True,
         )

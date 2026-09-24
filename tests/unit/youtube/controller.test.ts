@@ -621,7 +621,7 @@ describe('review fixes: navigation, requests and metadata retry', () => {
         .querySelector(`[${TT_ATTRS.overlayHost}]`)
         ?.shadowRoot?.querySelector<HTMLElement>('.badge')?.textContent;
     // worker 下发的是中文（用户在设置中选择了中文），优先于浏览器界面语言。
-    await vi.waitFor(() => expect(badge()).toBe('同听 · 运行中'));
+    await vi.waitFor(() => expect(badge()).toBe('译听 · 运行中'));
     t.port().receive({
       type: 'display/settings',
       captions: {
@@ -635,7 +635,7 @@ describe('review fixes: navigation, requests and metadata retry', () => {
       targetLanguage: 'zh-CN',
       locale: 'en',
     });
-    await vi.waitFor(() => expect(badge()).toBe('Tongting · Running'));
+    await vi.waitFor(() => expect(badge()).toBe('Vocasub · Running'));
     expect(getLocale()).toBe('en');
   });
 });

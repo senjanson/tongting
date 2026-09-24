@@ -1,6 +1,8 @@
-# 同听 · Tongting
+# Vocasub · 译听
 
 **English** · [简体中文](README.zh-CN.md)
+
+> Formerly named **Tongting (同听)**. Only the name changed; features and the stored data format stay the same.
 
 A Chrome MV3 extension that gives YouTube videos translated subtitles in your target language while you watch, and can optionally read the translation aloud. Text translation runs through **your own** [sub2api](https://github.com/Wei-Shaw/sub2api) deployment — the extension ships no keys and no hosted backend. Videos without readable captions need a separate speech-recognition service; a local one is included in this repository.
 

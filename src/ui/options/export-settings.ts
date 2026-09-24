@@ -20,7 +20,7 @@ export function sanitizeUrlForExport(value: string): string {
 }
 
 export interface ExportedSettingsFile {
-  app: '同听 Tongting';
+  app: '译听 Vocasub';
   kind: 'settings';
   exportedAt: string;
   note: string;
@@ -36,7 +36,7 @@ export function buildSettingsExport(
   copy.provider.baseUrl = sanitizeUrlForExport(copy.provider.baseUrl);
   copy.asr.localUrl = sanitizeUrlForExport(copy.asr.localUrl);
   return {
-    app: '同听 Tongting',
+    app: '译听 Vocasub',
     kind: 'settings',
     exportedAt: now.toISOString(),
     note: translate(locale, 'options.data.exportNote'),

@@ -506,7 +506,7 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
 
   /**
    * 用户在播放器中切换字幕语言（T34）：页面自己请求到另一条轨道的正文时，若本页会话正使用字幕来源，
-   * 主动发送该轨道数据，由 worker 决定是否切换。同听自己发起的加载进行中时不触发。
+   * 主动发送该轨道数据，由 worker 决定是否切换。译听自己发起的加载进行中时不触发。
    */
   function onPassiveBody(trackKey: string | undefined) {
     if (disposed || !trackKey || !nav.videoId || !sessionActive()) return;

@@ -74,7 +74,7 @@ describe('side panel locale', () => {
   it('shows English when the setting is English, even in a Chinese browser', () => {
     const snapshot = withLocale('en', makeSnapshot({ pages: [makePage()] }));
     renderPanel(new StaticClient(connected(snapshot)));
-    const tabs = within(screen.getByRole('tablist', { name: 'Tongting sections' }));
+    const tabs = within(screen.getByRole('tablist', { name: 'Vocasub sections' }));
     expect(tabs.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       'Translate',
       'Subtitles',
@@ -160,7 +160,7 @@ describe('side panel locale', () => {
     const snapshot = withLocale('en', makeSnapshot({ pages: [makePage()] }));
     renderPanel(new StaticClient(connected(snapshot)));
     fireEvent.click(screen.getByRole('tab', { name: 'Search' }));
-    expect(screen.getByRole('heading', { level: 1, name: 'Tongting · AI Search' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Vocasub · AI Search' })).toBeTruthy();
     const heading = screen.getByRole('heading', { level: 2 });
     expect(heading.textContent).toMatch(/^Describe in .+, search in .+$/);
     expect(heading.textContent).not.toMatch(/[一-龥]/);

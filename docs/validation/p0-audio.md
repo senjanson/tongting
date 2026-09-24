@@ -107,7 +107,7 @@ TONGTING_P0_AUDIO=1 pnpm exec playwright test tests/e2e/audio-p0.spec.ts
   - zh-CN：Eddy、Flo、Grandma、Grandpa、Li-Mu、Reed、Rocko、Sandy、Shelley、Tingting、Yu-shu（Eddy 等为 `xxx (Chinese (China mainland))` 名称）
   - zh-TW：Eddy/Flo/Grandma/Grandpa/Reed/Rocko/Sandy/Shelley（Taiwan）、Meijia
   - zh-HK：Sinji（粤语，控制器不会为 zh-CN 选择它）
-- 在 worker 中用 Tingting（zh-CN）朗读「同听配音测试，一二三。」（volume 0.2）：`start` 约 +14～26 ms，`end` 约 +2847 ms。
+- 在 worker 中用 Tingting（zh-CN）朗读「译听配音测试，一二三。」（volume 0.2）：`start` 约 +14～26 ms，`end` 约 +2847 ms。
 - speak 后同步调用 `stop()`：3 秒内旧 listener 未收到任何事件（令牌屏蔽生效，T15 实机证据）。
 - 限制：这是 Playwright Chromium 在 macOS 上的系统语音；品牌 Chrome 可能额外提供 Google 远端声音（remote=true），其可用性、网络依赖与事件行为 **未验证**。耳听质量 **待人工验收**。
 

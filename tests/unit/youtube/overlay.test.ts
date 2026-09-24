@@ -117,9 +117,9 @@ describe('caption overlay', () => {
     o.setSettings(settings);
     o.render();
     expect(root.querySelectorAll(`[${TT_ATTRS.overlayHost}]`)).toHaveLength(1);
-    expect(shadowOf(o.host).badge.textContent).toBe('同听 · 运行中');
+    expect(shadowOf(o.host).badge.textContent).toBe('译听 · 运行中');
     o.setSession({ ...session, statusText: '识别服务未配置' });
-    expect(shadowOf(o.host).badge.textContent).toBe('同听 · 识别服务未配置');
+    expect(shadowOf(o.host).badge.textContent).toBe('译听 · 识别服务未配置');
     o.setSession(null);
     expect(root.querySelectorAll(`[${TT_ATTRS.overlayHost}]`)).toHaveLength(0);
     expect(o.mounted).toBe(false);

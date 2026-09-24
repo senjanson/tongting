@@ -23,7 +23,7 @@ export const GlossaryEntrySchema = z.object({
 export type GlossaryEntry = z.infer<typeof GlossaryEntrySchema>;
 
 export const CaptionSettingsSchema = z.object({
-  /** 是否在播放器上显示同听字幕层。 */
+  /** 是否在播放器上显示译听字幕层。 */
   enabled: z.boolean().default(true),
   bilingual: z.boolean().default(true),
   position: z.enum(['bottom', 'middle', 'top']).default('bottom'),

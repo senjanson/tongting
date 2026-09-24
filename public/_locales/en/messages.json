@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Tongting — YouTube Translate",
+    "message": "Vocasub — YouTube Translate",
     "description": "Extension name shown in the Chrome Web Store and the extensions page."
   },
   "extDescription": {
@@ -8,7 +8,7 @@
     "description": "Extension description."
   },
   "actionTitle": {
-    "message": "Tongting",
+    "message": "Vocasub",
     "description": "Tooltip of the toolbar button."
   },
   "commandToggleTranslation": {

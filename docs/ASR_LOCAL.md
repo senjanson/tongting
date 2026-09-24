@@ -44,7 +44,7 @@ uv sync --extra youtube
 uv run --extra youtube tongting-asr serve --offline --youtube-preload --allow-extension-id YOUR_EXTENSION_ID
 ```
 
-`YOUR_EXTENSION_ID` 替换成 Chrome 扩展管理页显示的同听 ID。`ffmpeg` 和 Node.js 需在服务进程的 PATH 中；多版本 Node 可用 `TONGTING_ASR_NODE_PATH` 指定绝对路径。保留原来的 `--data-dir` 可沿用配对令牌。首次下载模型时去掉 `--offline`。
+`YOUR_EXTENSION_ID` 替换成 Chrome 扩展管理页显示的译听 ID。`ffmpeg` 和 Node.js 需在服务进程的 PATH 中；多版本 Node 可用 `TONGTING_ASR_NODE_PATH` 指定绝对路径。保留原来的 `--data-dir` 可沿用配对令牌。首次下载模型时去掉 `--offline`。
 
 `GET /health` 的 `youtubePreload: true` 表示预读依赖和开关就绪；真实网络是否可达仍以预读结果为准。`--offline` 仅禁止模型下载，视频预读仍需网络。接口、安全边界与依赖详情见 [服务说明](../services/asr-local/README.md)。
 

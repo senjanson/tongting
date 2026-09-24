@@ -35,7 +35,7 @@ export const YT_EVENTS = {
   pageDataUpdated: 'yt-page-data-updated',
 } as const;
 
-/** 同听写入页面 DOM 的属性，仅用于限定作用域的样式与去重。 */
+/** 译听写入页面 DOM 的属性，仅用于限定作用域的样式与去重。 */
 export const TT_ATTRS = {
   hideNative: 'data-tongting-hide-native',
   overlayHost: 'data-tongting-overlay',

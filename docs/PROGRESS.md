@@ -143,7 +143,7 @@
 - 结果：4 个 spec 共 10 个用例，连续两轮全部通过，覆盖 T01、暂停/恢复/停止、T16（字幕部分）、T11、T20、T23、T12、T13、T05、T07、T30、T08、T29，以及仅字幕模式的 T21。记录见 docs/validation/e2e-full-chain.md。
 - **未做**：T03（无字幕视频走真实本地识别）、P5 配音自动化（含 T31）、识别捕获进行中重启 worker 的 T21、youtube-content.spec.ts 与真实协调器共存的调整。
 - 其报告的产品问题已由主会话修复：
-  - 覆盖层状态文字重复加了「同听 · 」前缀。
+  - 覆盖层状态文字重复加了「译听 · 」前缀。
   - 阻断、限流、连续失败时没有会话级提示：现在提升为 notice（translation-blocked / translation-rate-limited / translation-failing），并同步到覆盖层状态文字。有集成测试。
 
 ### UI 审查修复（ui-agent 已完成，2026-09-17）

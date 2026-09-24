@@ -276,7 +276,7 @@ test('P0-a/b/e: offscreen 创建去重与关闭、无手势 tabCapture 报错、
       const t0 = Date.now();
       await p0(
         sw,
-        (api, v) => api.speak('同听配音测试，一二三。', 'zh-CN', v as string),
+        (api, v) => api.speak('译听配音测试，一二三。', 'zh-CN', v as string),
         zhCn.voiceName,
       );
       await expect

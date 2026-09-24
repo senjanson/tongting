@@ -221,7 +221,7 @@ describe('formatVtt', () => {
     const result = formatVtt(
       baseInput({ content: 'bilingual', coverage: partialCoverage, sourceMode: 'asr' }),
     );
-    expect(result.text.startsWith('WEBVTT\n\nNOTE 同听 Tongting 导出\n')).toBe(true);
+    expect(result.text.startsWith('WEBVTT\n\nNOTE 译听 Vocasub 导出\n')).toBe(true);
     const tree = new WebVTTParser().parse(result.text, 'metadata');
     expect(tree.errors).toEqual([]);
     // c1,c2,c3 双语 + c4/c5 未翻译标记；c6 临时排除；c7 空白跳过
@@ -285,7 +285,7 @@ describe('formatTxt', () => {
     );
     const [header] = result.text.split('\n\n');
     expect(header!.split('\n')).toEqual([
-      '同听 Tongting 字幕导出',
+      '译听 Vocasub 字幕导出',
       '标题：My: "Video" / Test?',
       '视频 ID：abcdefghijk',
       '内容：仅原文（x [00:01:00] → fake）',
@@ -322,11 +322,11 @@ describe('buildExportFilename', () => {
         format: 'vtt',
         language: 'zh-CN',
       }),
-    ).toBe('tongting-abc_DEF-123.zh-CN.vtt');
+    ).toBe('vocasub-abc_DEF-123.zh-CN.vtt');
     expect(buildExportFilename({ title: 'CON', format: 'srt', language: 'en' })).toBe(
       '_CON.en.srt',
     );
-    expect(buildExportFilename({ format: 'txt' })).toBe('tongting-subtitles.und.txt');
+    expect(buildExportFilename({ format: 'txt' })).toBe('vocasub-subtitles.und.txt');
     const long = buildExportFilename({ title: '长'.repeat(200), format: 'srt', language: 'zh-CN' });
     expect(Array.from(long.split('.')[0]!)).toHaveLength(80);
   });
@@ -363,7 +363,7 @@ describe('interface language of the export header', () => {
     const input = baseInput({ content: 'bilingual', includeInterim: true });
     const zhVtt = formatVtt(input);
     const enVtt = formatVtt({ ...input, locale: 'en' });
-    expect(enVtt.text.startsWith('WEBVTT\n\nNOTE Exported by Tongting\n')).toBe(true);
+    expect(enVtt.text.startsWith('WEBVTT\n\nNOTE Exported by Vocasub\n')).toBe(true);
     expect(enVtt.text).toContain('Title: My: "Video" / Test?');
     expect(enVtt.text).toContain(
       'Content: Bilingual: translation (Simplified Chinese) + original (English)',
@@ -371,7 +371,7 @@ describe('interface language of the export header', () => {
     expect(enVtt.text).toContain(
       'Coverage: Full caption track (video length 10 min). Exported: 6, untranslated, output as original and marked [untranslated]: 2',
     );
-    expect(enVtt.text).not.toMatch(/同听|标题：|内容：|覆盖：|本次导出/);
+    expect(enVtt.text).not.toMatch(/译听|标题：|内容：|覆盖：|本次导出/);
     expect(vttBody(enVtt.text)).toBe(enMarks(vttBody(zhVtt.text)));
     expect(vttBody(enVtt.text)).toContain('[untranslated] Not yet');
     expect(vttBody(enVtt.text)).toContain('[provisional] 临时词');
@@ -380,7 +380,7 @@ describe('interface language of the export header', () => {
     const zhTxt = formatTxt(input);
     const enTxt = formatTxt({ ...input, locale: 'en' });
     expect(enTxt.text.split('\n').slice(0, 4)).toEqual([
-      'Tongting subtitle export',
+      'Vocasub subtitle export',
       'Title: My: "Video" / Test?',
       'Video ID: abcdefghijk',
       'Content: Bilingual: translation (Simplified Chinese) + original (English)',

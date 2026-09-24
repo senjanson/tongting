@@ -305,7 +305,7 @@ test('覆盖层：只挂载一次、HTML 文本按纯文本显示、全屏仍在
   );
   expect(ov).toMatchObject({ hosts: 1, secondary: XSS_TEXT, shadowElements: 0 });
   expect(ov.badge).toContain('翻译中');
-  expect(ov.badge).not.toContain('同听 · 同听');
+  expect(ov.badge).not.toContain('译听 · 译听');
   expect(await page.locator('#movie_player > [data-tongting-overlay]').count()).toBe(1);
   expect(
     await page.evaluate(() => (window as unknown as { __ttXss?: number }).__ttXss),

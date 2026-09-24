@@ -48,7 +48,7 @@ pnpm exec playwright test tests/e2e/full-chain-captions.spec.ts tests/e2e/full-c
 
 ## 4. 第一轮观察到的产品问题（均已由主会话修复）
 
-1. **覆盖层徽标重复前缀（低）**：`session.ts statusText()` 返回「同听 · 翻译中」，`overlay.ts render()` 又加「同听 · 」，实测徽标为「同听 · 同听 · 翻译中」/「同听 · 同听 · API Key 无效…」。
+1. **覆盖层徽标重复前缀（低）**：`session.ts statusText()` 返回「译听 · 翻译中」，`overlay.ts render()` 又加「译听 · 」，实测徽标为「译听 · 译听 · 翻译中」/「译听 · 译听 · API Key 无效…」。
 2. **非认证类阻塞错误无会话级提示（低–中）**：重定向（redirect-blocked，category network）、持续 429、持续半截流时，会话 `error`/`notice` 为空，覆盖层徽标仍为「翻译中」；原因只在失败计数与逐条 cue 的 translationError 中可见（`session.ts applyTranslationUpdates` 只对 auth/permission/quota/config 设置会话 error）。
 
 ## 5. 第二轮环境、复现与总结果

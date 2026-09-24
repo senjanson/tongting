@@ -5,11 +5,11 @@
 const zhCN = {
   // 外壳
   'sidepanel.title.translate': '实时翻译',
-  'sidepanel.title.search': '同听 · AI 搜索',
+  'sidepanel.title.search': '译听 · AI 搜索',
   'sidepanel.pill.demo': '演示中',
   'sidepanel.pill.searchReady': '可搜索',
-  'sidepanel.connecting.body': '如果长时间停留在这里，请在 chrome://extensions 中重新加载同听。',
-  'sidepanel.tabs.label': '同听功能',
+  'sidepanel.connecting.body': '如果长时间停留在这里，请在 chrome://extensions 中重新加载译听。',
+  'sidepanel.tabs.label': '译听功能',
   'sidepanel.tabs.translate': '翻译',
   'sidepanel.tabs.transcript': '字幕',
   'sidepanel.tabs.search': '搜索',
@@ -233,8 +233,8 @@ const zhCN = {
   // 工具栏弹窗
   'sidepanel.popup.noTab': '无法确定当前标签页。',
   'sidepanel.popup.sidePanelUnsupported':
-    '当前浏览器无法从弹窗打开侧栏，请点击浏览器侧边栏按钮后选择「同听」。',
-  'sidepanel.popup.sidePanelFailed': '打开侧栏失败，请点击浏览器侧边栏按钮后选择「同听」。',
+    '当前浏览器无法从弹窗打开侧栏，请点击浏览器侧边栏按钮后选择「译听」。',
+  'sidepanel.popup.sidePanelFailed': '打开侧栏失败，请点击浏览器侧边栏按钮后选择「译听」。',
   'sidepanel.popup.currentTab': '当前标签页',
   'sidepanel.popup.reading': '正在读取…',
   'sidepanel.popup.waitingService': '等待后台服务…',
@@ -261,12 +261,12 @@ const zhCN = {
 
 const en: Record<keyof typeof zhCN, string> = {
   'sidepanel.title.translate': 'Live translation',
-  'sidepanel.title.search': 'Tongting · AI Search',
+  'sidepanel.title.search': 'Vocasub · AI Search',
   'sidepanel.pill.demo': 'Demo',
   'sidepanel.pill.searchReady': 'Ready',
   'sidepanel.connecting.body':
-    'If this takes too long, reload Tongting on the chrome://extensions page.',
-  'sidepanel.tabs.label': 'Tongting sections',
+    'If this takes too long, reload Vocasub on the chrome://extensions page.',
+  'sidepanel.tabs.label': 'Vocasub sections',
   'sidepanel.tabs.translate': 'Translate',
   'sidepanel.tabs.transcript': 'Subtitles',
   'sidepanel.tabs.search': 'Search',
@@ -496,9 +496,9 @@ const en: Record<keyof typeof zhCN, string> = {
 
   'sidepanel.popup.noTab': "Couldn't determine the current tab.",
   'sidepanel.popup.sidePanelUnsupported':
-    "This browser can't open the side panel from here. Click the browser's side panel button and choose Tongting.",
+    "This browser can't open the side panel from here. Click the browser's side panel button and choose Vocasub.",
   'sidepanel.popup.sidePanelFailed':
-    "Couldn't open the side panel. Click the browser's side panel button and choose Tongting.",
+    "Couldn't open the side panel. Click the browser's side panel button and choose Vocasub.",
   'sidepanel.popup.currentTab': 'Current tab',
   'sidepanel.popup.reading': 'Reading…',
   'sidepanel.popup.waitingService': 'Waiting for the background service…',

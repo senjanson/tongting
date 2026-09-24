@@ -173,7 +173,7 @@ const zhCN = {
   'background.session.bufferCannotPreload': '此来源无法提前读取，请配置音频预读或切换连续播放。',
   'background.session.bufferReady': '翻译已缓冲，播放期间继续准备后续内容。',
   'background.session.captureFailed':
-    '无法捕获此标签页的声音。请在该 YouTube 标签页点击浏览器工具栏中的「同听」图标（或按快捷键 Alt+T）后重试。',
+    '无法捕获此标签页的声音。请在该 YouTube 标签页点击浏览器工具栏中的「译听」图标（或按快捷键 Alt+T）后重试。',
   'background.session.asrNotConfigured':
     '此视频没有可读取的字幕，且尚未配置语音识别服务。请在设置页「识别与播放」中配置后重试。视频可继续正常播放。',
   'background.session.asrLocalUrlInvalid': '本地识别服务地址无效，只允许 http://127.0.0.1:<端口>。',
@@ -425,7 +425,7 @@ const zhCN = {
   'background.overlay.phase.paused': '已暂停',
   'background.overlay.phase.stopping': '正在停止',
   'background.overlay.phase.error': '出错',
-  'background.overlay.badge': '同听 · {label}',
+  'background.overlay.badge': '译听 · {label}',
 } as const;
 
 const en: Record<keyof typeof zhCN, string> = {
@@ -632,7 +632,7 @@ const en: Record<keyof typeof zhCN, string> = {
   'background.session.bufferReady':
     'Translation is buffered; later parts keep being prepared during playback.',
   'background.session.captureFailed':
-    "Cannot capture this tab's audio. On that YouTube tab, click the Tongting icon in the browser toolbar (or press Alt+T), then try again.",
+    "Cannot capture this tab's audio. On that YouTube tab, click the Vocasub icon in the browser toolbar (or press Alt+T), then try again.",
   'background.session.asrNotConfigured':
     'This video has no readable subtitles and no speech recognition service is set up. Set one up under "Recognition & playback" in Settings, then try again. The video keeps playing normally.',
   'background.session.asrLocalUrlInvalid':
@@ -955,7 +955,7 @@ const en: Record<keyof typeof zhCN, string> = {
   'background.overlay.phase.paused': 'Paused',
   'background.overlay.phase.stopping': 'Stopping',
   'background.overlay.phase.error': 'Error',
-  'background.overlay.badge': 'Tongting · {label}',
+  'background.overlay.badge': 'Vocasub · {label}',
 };
 
 export const background = { 'zh-CN': zhCN, en };

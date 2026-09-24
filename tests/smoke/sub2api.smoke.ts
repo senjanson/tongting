@@ -295,7 +295,7 @@ describe.skipIf(!configured)('sub2api 真实冒烟测试', () => {
         apiKey,
         model: ttsModel,
         voice: ttsVoice,
-        text: '你好，这是同听的语音合成测试。',
+        text: '你好，这是译听的语音合成测试。',
         speed: 1,
         signal: AbortSignal.timeout(60_000),
       });

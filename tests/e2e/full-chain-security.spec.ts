@@ -122,7 +122,7 @@ async function evaluateInContentWorld(
   const ctx = contexts.find(
     (c) =>
       c.origin === `chrome-extension://${fcx.ext.extensionId}` ||
-      (c.auxData?.type === 'isolated' && c.name.includes('同听')),
+      (c.auxData?.type === 'isolated' && c.name.includes('译听')),
   );
   let value: unknown = 'no-isolated-context';
   if (ctx) {

@@ -359,7 +359,7 @@ describe('review fixes', () => {
     const alert = screen.getByRole('alert');
     expect(within(alert).getByText(message)).toBeTruthy();
     expect(
-      within(alert).getByText(/点击浏览器工具栏中的同听图标，或按 Alt\+T 后再继续/),
+      within(alert).getByText(/点击浏览器工具栏中的译听图标，或按 Alt\+T 后再继续/),
     ).toBeTruthy();
     expect(screen.getByRole('button', { name: '继续翻译' })).toBeTruthy();
   });

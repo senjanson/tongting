@@ -37,7 +37,7 @@ export async function buildAudioHarness(workDir: string): Promise<string> {
     imports: false,
     alias: { '@src': join(PROJECT_ROOT, 'src') },
     manifest: {
-      name: 'Tongting audio P0 harness',
+      name: 'Vocasub audio P0 harness',
       minimum_chrome_version: '116',
       permissions: ['tabCapture', 'offscreen', 'tts'],
       // 模拟用户已授予产品 manifest 中的可选主机权限（本地识别服务不返回 CORS 头，只能依靠主机权限访问）。

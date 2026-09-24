@@ -2533,8 +2533,8 @@ export class Coordinator implements SessionHost {
     const sample =
       text?.trim() ||
       (s.targetLanguage.startsWith('zh')
-        ? '你好，这是同听的配音试听。'
-        : 'Hello, this is a Tongting voice preview.');
+        ? '你好，这是译听的配音试听。'
+        : 'Hello, this is a Vocasub voice preview.');
     this.cancelVoicePreview();
     const utteranceId = this.deps.randomId('preview');
     await new Promise<void>((resolve, reject) => {

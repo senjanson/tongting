@@ -92,13 +92,13 @@ class SecurityMiddleware:
             origin = origins[0].strip()
             if not self._origin_allowed(origin):
                 self._log_reject("origin_not_allowed", method, path, origin)
-                return (403, "origin_not_allowed", "请求来源不被允许：只接受同听扩展发起的请求。", {})
+                return (403, "origin_not_allowed", "请求来源不被允许：只接受译听扩展发起的请求。", {})
         else:
             mode = headers.get("sec-fetch-mode", "").lower()
             site = headers.get("sec-fetch-site", "").lower()
             if mode in _NO_ORIGIN_BROWSER_MODES and site in _CROSS_SITES:
                 self._log_reject("origin_not_allowed", method, path, f"sec-fetch {site}/{mode}")
-                return (403, "origin_not_allowed", "请求来源不被允许：只接受同听扩展发起的请求。", {})
+                return (403, "origin_not_allowed", "请求来源不被允许：只接受译听扩展发起的请求。", {})
 
         if path not in PUBLIC_PATHS:
             authorizations = headers.getlist("authorization")
