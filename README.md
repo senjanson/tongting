@@ -6,7 +6,7 @@ A Chrome MV3 extension that gives YouTube videos translated subtitles in your ta
 
 The default target language comes from your browser's UI language: Chinese browsers get Simplified or Traditional Chinese, other browsers get their own language when it is one of the target languages on offer, and English otherwise. The default is picked and saved on first install, so changing the browser language later does not move it; **恢复默认设置** (restore defaults) picks it again the same way. You can change it at any time.
 
-![Bilingual subtitle overlay on the player](docs/screenshots/youtube-overlay.png)
+![Bilingual subtitle overlay on the player](docs/screenshots/en/youtube-overlay.png)
 
 > Captured against the bundled local player fixture with a mock translation service — see [Screenshots](#screenshots) for how every image in this README was produced.
 
@@ -75,28 +75,28 @@ TONGTING_SHOTS=1 pnpm exec playwright test tests/e2e/screenshots.spec.ts
 
 Two sources, labelled per image:
 
-- **Demo mode** — the production build with `?demo=1`. Sample data, permanent "演示模式" banner, no service connection.
+- **Demo mode** — the production build with `?demo=1`. Sample data, permanent "Demo mode" banner, no service connection.
 - **Local fixture** — the real extension (real service-worker coordinator, real content script, real overlay), but YouTube is routed to a bundled fixture page with an ffmpeg-generated silent video, and sub2api is routed to a local mock server. The Chinese text in these shots comes from a fixed lookup table in the mock, not from any model.
 
-The interface is currently Simplified Chinese only.
+The interface is available in English and Simplified Chinese (following the browser language by default; change it under **Settings → General**). These screenshots show the English interface; the video content and translations (English → Simplified Chinese) are the same sample data in both languages' screenshots.
 
-|                                                                                          |                                                                                                    |
-| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| **Side panel — Translate** (demo mode)<br>![](docs/screenshots/sidepanel-translate.png)  | **Side panel — Translate, dark** (demo mode)<br>![](docs/screenshots/sidepanel-translate-dark.png) |
-| **Side panel — Subtitles** (demo mode)<br>![](docs/screenshots/sidepanel-transcript.png) | **Side panel — Search** (demo mode)<br>![](docs/screenshots/sidepanel-search.png)                  |
-| **Side panel — Settings** (demo mode)<br>![](docs/screenshots/sidepanel-settings.png)    | **Side panel — running session** (local fixture)<br>![](docs/screenshots/sidepanel-running.png)    |
+|                                                                                             |                                                                                                       |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| **Side panel — Translate** (demo mode)<br>![](docs/screenshots/en/sidepanel-translate.png)  | **Side panel — Translate, dark** (demo mode)<br>![](docs/screenshots/en/sidepanel-translate-dark.png) |
+| **Side panel — Subtitles** (demo mode)<br>![](docs/screenshots/en/sidepanel-transcript.png) | **Side panel — Search** (demo mode)<br>![](docs/screenshots/en/sidepanel-search.png)                  |
+| **Side panel — Settings** (demo mode)<br>![](docs/screenshots/en/sidepanel-settings.png)    | **Side panel — running session** (local fixture)<br>![](docs/screenshots/en/sidepanel-running.png)    |
 
 **Toolbar popup** (local fixture, session running)
 
-![Toolbar popup](docs/screenshots/popup.png)
+![Toolbar popup](docs/screenshots/en/popup.png)
 
 **Transcript workbench** (local fixture) — bilingual/translation/source views, per-cue bookmarks and quotes, per-video notes, export
 
-![Transcript workbench](docs/screenshots/workspace.png)
+![Transcript workbench](docs/screenshots/en/workspace.png)
 
 **Full settings page** (production build, nothing configured yet — this is what a new install looks like)
 
-![Settings page](docs/screenshots/options.png)
+![Settings page](docs/screenshots/en/options.png)
 
 ---
 

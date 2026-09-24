@@ -6,7 +6,7 @@
 
 默认目标语言取自浏览器界面语言：中文界面得到简体或繁体中文，其他界面在可选的目标语言里匹配自己的语言，匹配不到则用英文。这个默认值在首次安装时确定并保存，之后更改浏览器语言不会改变它；**恢复默认设置**时按同样规则重新确定。你随时可以自己改。
 
-![播放器上的双语字幕覆盖层](docs/screenshots/youtube-overlay.png)
+![播放器上的双语字幕覆盖层](docs/screenshots/zh-CN/youtube-overlay.png)
 
 > 该图由仓库内置的本地播放器夹具配合模拟翻译服务生成。本 README 中每张截图的来源都写在[截图](#截图)一节。
 
@@ -78,25 +78,25 @@ TONGTING_SHOTS=1 pnpm exec playwright test tests/e2e/screenshots.spec.ts
 - **演示模式**——产品构建加 `?demo=1`。示例数据，界面持续显示「演示模式」标识，不连接服务。
 - **本地夹具**——真实扩展（真实 service worker 协调器、真实内容脚本、真实覆盖层），但 YouTube 指向仓库内置的夹具页和 ffmpeg 合成的静音视频，sub2api 指向本地模拟服务。图中的中文来自模拟服务里的固定对照表，不是任何模型的输出。
 
-界面目前只有简体中文。
+界面支持简体中文和英文，默认跟随浏览器语言，可在**设置 → 常规**中切换。这里展示的是中文界面；英文 README 使用同一组示例内容的英文界面截图。
 
-|                                                                               |                                                                                          |
-| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| **侧栏 · 翻译**（演示模式）<br>![](docs/screenshots/sidepanel-translate.png)  | **侧栏 · 翻译 · 深色**（演示模式）<br>![](docs/screenshots/sidepanel-translate-dark.png) |
-| **侧栏 · 字幕**（演示模式）<br>![](docs/screenshots/sidepanel-transcript.png) | **侧栏 · 搜索**（演示模式）<br>![](docs/screenshots/sidepanel-search.png)                |
-| **侧栏 · 设置**（演示模式）<br>![](docs/screenshots/sidepanel-settings.png)   | **侧栏 · 运行中的会话**（本地夹具）<br>![](docs/screenshots/sidepanel-running.png)       |
+|                                                                                     |                                                                                                |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **侧栏 · 翻译**（演示模式）<br>![](docs/screenshots/zh-CN/sidepanel-translate.png)  | **侧栏 · 翻译 · 深色**（演示模式）<br>![](docs/screenshots/zh-CN/sidepanel-translate-dark.png) |
+| **侧栏 · 字幕**（演示模式）<br>![](docs/screenshots/zh-CN/sidepanel-transcript.png) | **侧栏 · 搜索**（演示模式）<br>![](docs/screenshots/zh-CN/sidepanel-search.png)                |
+| **侧栏 · 设置**（演示模式）<br>![](docs/screenshots/zh-CN/sidepanel-settings.png)   | **侧栏 · 运行中的会话**（本地夹具）<br>![](docs/screenshots/zh-CN/sidepanel-running.png)       |
 
 **工具栏弹窗**（本地夹具，会话运行中）
 
-![工具栏弹窗](docs/screenshots/popup.png)
+![工具栏弹窗](docs/screenshots/zh-CN/popup.png)
 
 **字幕工作台**（本地夹具）——双语 / 译文 / 原文视图，逐条收藏与引用，按视频记笔记，导出
 
-![字幕工作台](docs/screenshots/workspace.png)
+![字幕工作台](docs/screenshots/zh-CN/workspace.png)
 
 **完整设置页**（产品构建，尚未配置——新安装时就是这个样子）
 
-![设置页](docs/screenshots/options.png)
+![设置页](docs/screenshots/zh-CN/options.png)
 
 ---
 
