@@ -1,12 +1,13 @@
 /**
  * 侧栏「字幕」标签：有会话时显示实时字幕（useCues），否则读取本地保存的该视频字幕记录。
  */
+import { Captions } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { PageInfo, SessionSnapshot } from '../../domain/session';
 import type { TranscriptRecord } from '../../storage/db';
 import { useLocale, useT } from '../../i18n/react';
-import { SelectField } from '../components/controls';
-import { Callout, EmptyState } from '../components/layout';
+import { SelectField, Spinner } from '../components/controls';
+import { Callout, Card, EmptyState } from '../components/layout';
 import { formatDateTime, languageLabel } from '../format';
 import { useCommandRunner, usePlayerClock } from '../shared/hooks';
 import { isSessionEnded, sessionRecordId, sourceModeShortLabel } from '../state/derive';
@@ -190,31 +191,40 @@ function SavedTranscript({
     [selected, page.title],
   );
 
-  if (!current) return <EmptyState title={t('sidepanel.transcript.loading')} />;
+  if (!current) {
+    return (
+      <Card>
+        <EmptyState icon={<Spinner />} title={t('sidepanel.transcript.loading')} />
+      </Card>
+    );
+  }
   if (current.failed) {
     return <Callout tone="danger">{t('sidepanel.transcript.loadFailed')}</Callout>;
   }
   if (!selected || !source) {
     return (
-      <EmptyState title={t('sidepanel.transcript.emptyTitle')}>
-        {t('sidepanel.transcript.emptyBody')}
-      </EmptyState>
+      <Card>
+        <EmptyState
+          icon={<Captions size={22} aria-hidden="true" />}
+          title={t('sidepanel.transcript.emptyTitle')}
+        >
+          {t('sidepanel.transcript.emptyBody')}
+        </EmptyState>
+      </Card>
     );
   }
   return (
     <>
       {records.length > 1 && (
-        <div style={{ marginBottom: 8 }}>
-          <SelectField
-            label={t('sidepanel.transcript.records')}
-            value={selected.recordId}
-            onChange={setSelectedId}
-            options={records.map((r) => ({
-              value: r.recordId,
-              label: `${languageLabel(r.targetLanguage, locale)} · ${sourceModeShortLabel(r.sourceMode, locale)} · ${formatDateTime(r.updatedAt, locale)}`,
-            }))}
-          />
-        </div>
+        <SelectField
+          label={t('sidepanel.transcript.records')}
+          value={selected.recordId}
+          onChange={setSelectedId}
+          options={records.map((r) => ({
+            value: r.recordId,
+            label: `${languageLabel(r.targetLanguage, locale)} · ${sourceModeShortLabel(r.sourceMode, locale)} · ${formatDateTime(r.updatedAt, locale)}`,
+          }))}
+        />
       )}
       <TranscriptView
         compact

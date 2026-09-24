@@ -108,7 +108,7 @@ function AddressFields({
   else hint = t('options.connection.addressHintNotGranted', { pattern: check.pattern });
 
   return (
-    <div className={styles.row}>
+    <div className={styles.fieldRow}>
       <TextField
         className={styles.grow}
         label={t('options.connection.addressLabel')}
@@ -195,8 +195,8 @@ function KeyFields({
   };
 
   return (
-    <div className={styles.row} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-      <div className={styles.row}>
+    <div className={styles.stack}>
+      <div className={styles.fieldRow}>
         <TextField
           className={styles.grow}
           label={t('options.connection.keyLabel')}

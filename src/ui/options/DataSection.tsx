@@ -184,12 +184,14 @@ export function ShortcutsSection() {
       title={t('options.section.shortcuts')}
       description={t('options.shortcuts.description')}
     >
-      {(shortcuts ?? FALLBACK_SHORTCUTS).map((s) => (
-        <div key={s.name} className={styles.row} style={{ justifyContent: 'space-between' }}>
-          <span>{t(s.description)}</span>
-          <Kbd>{s.shortcut ?? t('options.shortcuts.unset')}</Kbd>
-        </div>
-      ))}
+      <div>
+        {(shortcuts ?? FALLBACK_SHORTCUTS).map((s) => (
+          <div key={s.name} className={styles.shortcut}>
+            <span>{t(s.description)}</span>
+            <Kbd>{s.shortcut ?? t('options.shortcuts.unset')}</Kbd>
+          </div>
+        ))}
+      </div>
       <div className={styles.row}>
         <Button
           icon={<Keyboard size={15} aria-hidden="true" />}

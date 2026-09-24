@@ -489,6 +489,9 @@ test('incomplete captions explain continuous mode and the selected fallback prod
     path: test.info().outputPath('incomplete-captions-320.png'),
     fullPage: true,
   });
+  // 播放方式收在「播放方式」一行里；出错状态下不会自动展开。
+  const playbackRow = f.ui.page.getByRole('button', { name: /^播放方式/ });
+  if ((await playbackRow.getAttribute('aria-expanded')) !== 'true') await playbackRow.click();
   await f.ui.page
     .getByRole('group', { name: '播放方式', exact: true })
     .getByRole('button', { name: '连续播放', exact: true })

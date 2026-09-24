@@ -430,7 +430,11 @@ const CueRow = memo(function CueRow({
         <span className={cx(styles.time, styles.timeStatic)}>{time}</span>
       )}
       <div className={styles.body}>
-        {primary !== undefined && <div className={styles.primaryText}>{primary}</div>}
+        {primary !== undefined && (
+          <div className={cx(styles.primaryText, view !== 'original' && styles.translatedText)}>
+            {primary}
+          </div>
+        )}
         {placeholder && <div className={styles.placeholder}>{placeholder}</div>}
         {secondary !== undefined && <div className={styles.secondaryText}>{secondary}</div>}
         <CueChips cue={cue} />

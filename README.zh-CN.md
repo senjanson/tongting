@@ -82,6 +82,13 @@ TONGTING_SHOTS=1 pnpm exec playwright test tests/e2e/screenshots.spec.ts
 
 界面支持简体中文和英文，默认跟随浏览器语言，可在**设置 → 常规**中切换。这里展示的是中文界面；英文 README 使用同一组示例内容的英文界面截图。
 
+外观有四种主题：**纸墨**（浅色、沉静）、**夜墨**（深色、静谧）、**影院**（深色、字幕优先）、**声波**（浅色、明快），所有扩展页面和播放器上的字幕层共用。默认跟随系统：浅色用纸墨，深色用夜墨。可在**设置 → 常规 → 外观主题**或侧栏「翻译」页底部切换。
+
+| 纸墨                                                  | 夜墨                                                | 影院                                                   | 声波                                                 |
+| ----------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
+| ![](docs/screenshots/zh-CN/sidepanel-theme-paper.png) | ![](docs/screenshots/zh-CN/sidepanel-theme-ink.png) | ![](docs/screenshots/zh-CN/sidepanel-theme-cinema.png) | ![](docs/screenshots/zh-CN/sidepanel-theme-wave.png) |
+| ![](docs/screenshots/zh-CN/youtube-overlay-paper.png) | ![](docs/screenshots/zh-CN/youtube-overlay-ink.png) | ![](docs/screenshots/zh-CN/youtube-overlay-cinema.png) | ![](docs/screenshots/zh-CN/youtube-overlay-wave.png) |
+
 |                                                                                     |                                                                                                |
 | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | **侧栏 · 翻译**（演示模式）<br>![](docs/screenshots/zh-CN/sidepanel-translate.png)  | **侧栏 · 翻译 · 深色**（演示模式）<br>![](docs/screenshots/zh-CN/sidepanel-translate-dark.png) |

@@ -2,12 +2,18 @@
  * 演示模式客户端：实现与真实客户端相同的接口，但全部在页面内存中完成。
  * 不连接 service worker、不发送 UiCommand、不访问网络。
  * 示例标签按界面语言生成；在演示中切换界面语言时同步更新。
+ * 界面语言与外观主题可采用用户真实设置中的值（只读取，见 adoptUiPreferences）。
  */
 import { AppError } from '../../domain/errors';
 import { t, type Locale, type LocalePreference } from '../../i18n';
 import type { SearchRecord } from '../../domain/search';
 import { demoSearchSuggestions } from './search-data';
-import { applySettingsPatch, defaultSettings } from '../../domain/settings';
+import {
+  applySettingsPatch,
+  defaultSettings,
+  type Settings,
+  type UiThemePreference,
+} from '../../domain/settings';
 import type { UiCommand } from '../../messaging/ui-protocol';
 import type { FavoriteRecord } from '../../storage/db';
 import { favoriteKey, type FavoriteInput } from '../../storage/favorites';
@@ -46,13 +52,24 @@ export class DemoClient implements UiClient {
   private readonly cueRefs = new Map<string, number>();
 
   private locale: Locale;
+  /** 最近一次采用的真实设置值：只有真实值变化时才覆盖演示中的切换。 */
+  private readonly adopted: { uiLocale?: LocalePreference; uiTheme?: UiThemePreference } = {};
 
-  /** browserLocale：界面语言设为「跟随浏览器」时使用的语言。 */
-  constructor(private readonly browserLocale: Locale = 'zh-CN') {
+  /**
+   * browserLocale：界面语言设为「跟随浏览器」时使用的语言。
+   * initial.uiTheme：演示开始时的外观主题（真实快照尚未到达时沿用页面当前主题）。
+   */
+  constructor(
+    private readonly browserLocale: Locale = 'zh-CN',
+    initial: { uiTheme?: UiThemePreference | undefined } = {},
+  ) {
     this.locale = browserLocale;
+    const snapshot = demoSnapshot(this.version, this.locale);
     this.state = {
       connection: 'connected',
-      snapshot: demoSnapshot(this.version, this.locale),
+      snapshot: initial.uiTheme
+        ? { ...snapshot, settings: { ...snapshot.settings, uiTheme: initial.uiTheme } }
+        : snapshot,
       reconnectAttempts: 0,
     };
   }
@@ -86,13 +103,25 @@ export class DemoClient implements UiClient {
   }
 
   /**
-   * 采用用户在真实设置中保存的界面语言（只读取，不写回、不访问服务）。演示期间在演示设置里的切换
-   * 只作用于演示本身；真实设置的值变化时以它为准。
+   * 采用用户在真实设置中保存的界面语言与外观主题（只读取，不写回、不访问服务）。
+   * 演示期间在演示设置里的切换只作用于演示本身；只有真实设置的值发生变化时才以它为准——
+   * 真实快照的其他更新（例如播放进度）不会把演示中的选择改回去。
    */
-  adoptUiLocale(preference: LocalePreference | undefined): void {
-    if (!preference || preference === this.state.snapshot!.settings.uiLocale) return;
-    this.update({ settings: { ...this.state.snapshot!.settings, uiLocale: preference } });
-    this.relocalize(preference);
+  adoptUiPreferences(real: Partial<Pick<Settings, 'uiLocale' | 'uiTheme'>> | undefined): void {
+    if (!real) return;
+    const settings = this.state.snapshot!.settings;
+    const patch: Partial<Pick<Settings, 'uiLocale' | 'uiTheme'>> = {};
+    if (real.uiLocale && real.uiLocale !== this.adopted.uiLocale) {
+      this.adopted.uiLocale = real.uiLocale;
+      if (real.uiLocale !== settings.uiLocale) patch.uiLocale = real.uiLocale;
+    }
+    if (real.uiTheme && real.uiTheme !== this.adopted.uiTheme) {
+      this.adopted.uiTheme = real.uiTheme;
+      if (real.uiTheme !== settings.uiTheme) patch.uiTheme = real.uiTheme;
+    }
+    if (!patch.uiLocale && !patch.uiTheme) return;
+    this.update({ settings: { ...settings, ...patch } });
+    if (patch.uiLocale) this.relocalize(patch.uiLocale);
   }
 
   /** 模拟播放进度，便于展示字幕高亮。 */

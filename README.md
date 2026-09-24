@@ -82,6 +82,13 @@ Two sources, labelled per image:
 
 The interface is available in English and Simplified Chinese (following the browser language by default; change it under **Settings → General**). These screenshots show the English interface; the video content and translations (English → Simplified Chinese) are the same sample data in both languages' screenshots.
 
+There are four appearance themes — **Paper** (light, calm), **Ink** (dark, quiet), **Cinema** (dark, subtitles first) and **Wave** (light, vivid) — shared by every extension page and the subtitle overlay on the player. The default follows the system: Paper in light mode, Ink in dark mode. Pick one under **Settings → General → Appearance** or at the bottom of the side panel's Translate tab.
+
+| Paper                                              | Ink                                              | Cinema                                              | Wave                                              |
+| -------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------- | ------------------------------------------------- |
+| ![](docs/screenshots/en/sidepanel-theme-paper.png) | ![](docs/screenshots/en/sidepanel-theme-ink.png) | ![](docs/screenshots/en/sidepanel-theme-cinema.png) | ![](docs/screenshots/en/sidepanel-theme-wave.png) |
+| ![](docs/screenshots/en/youtube-overlay-paper.png) | ![](docs/screenshots/en/youtube-overlay-ink.png) | ![](docs/screenshots/en/youtube-overlay-cinema.png) | ![](docs/screenshots/en/youtube-overlay-wave.png) |
+
 |                                                                                             |                                                                                                       |
 | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | **Side panel — Translate** (demo mode)<br>![](docs/screenshots/en/sidepanel-translate.png)  | **Side panel — Translate, dark** (demo mode)<br>![](docs/screenshots/en/sidepanel-translate-dark.png) |

@@ -345,7 +345,7 @@ export function TextField({
       <label htmlFor={id} className={styles.fieldLabel}>
         {label}
       </label>
-      <div style={{ display: 'flex', gap: 6, minWidth: 0 }}>
+      <div className={styles.inputRow}>
         <input
           id={id}
           className={cx(styles.input, error ? styles.inputInvalid : undefined)}

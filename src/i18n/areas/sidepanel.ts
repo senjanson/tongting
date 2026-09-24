@@ -4,8 +4,6 @@
  */
 const zhCN = {
   // 外壳
-  'sidepanel.title.translate': '实时翻译',
-  'sidepanel.title.search': '译听 · AI 搜索',
   'sidepanel.pill.demo': '演示中',
   'sidepanel.pill.searchReady': '可搜索',
   'sidepanel.connecting.body': '如果长时间停留在这里，请在 chrome://extensions 中重新加载译听。',
@@ -56,14 +54,36 @@ const zhCN = {
   'sidepanel.translate.retryCount': '重试失败的 {count} 条',
   'sidepanel.translate.stoppingHint':
     '正在停止：会中止请求、停止配音并释放音频采集，完成后状态才会更新。',
-  'sidepanel.group.playback': 'PLAYBACK / 播放',
-  'sidepanel.group.language': 'LANGUAGE / 语言',
-  'sidepanel.group.output': '翻译方式',
-  'sidepanel.group.captions': 'CAPTIONS / 字幕',
-  'sidepanel.group.audio': 'AUDIO / 声音',
-  'sidepanel.group.processing': 'PROCESSING / 识别与播放',
-  'sidepanel.group.connection': 'CONNECTION / 模型连接',
-  'sidepanel.group.interface': 'INTERFACE / 界面',
+  'sidepanel.translate.settingsAria': '翻译设置',
+
+  // 当前字幕卡片
+  'sidepanel.now.aria': '当前字幕',
+  'sidepanel.now.translating': '正在翻译',
+  'sidepanel.now.line': '{status} · {title}',
+  'sidepanel.now.idleHint': '开始翻译后，这里会显示正在播放的这句译文和原文。',
+  'sidepanel.now.syncing': '正在同步字幕…',
+  'sidepanel.now.noCues': '还没有获得字幕，获得后会显示在这里。',
+  'sidepanel.now.gap': '此刻没有字幕',
+  'sidepanel.now.noTime': '暂时读不到播放时间',
+  'sidepanel.now.progress': '已翻译 {done} / {total} 句 · {source}',
+  'sidepanel.now.progressNone': '尚无字幕 · {source}',
+
+  // 设置行摘要
+  'sidepanel.row.captions': '字幕样式',
+  'sidepanel.row.audio': '声音',
+  'sidepanel.summary.buffer': '缓冲 {count} 秒',
+  'sidepanel.summary.bilingual': '双语',
+  'sidepanel.summary.translationOnly': '仅译文',
+  'sidepanel.summary.captionsHidden': '字幕已隐藏',
+  'sidepanel.summary.bottom': '底部',
+  'sidepanel.summary.middle': '居中',
+  'sidepanel.summary.top': '顶部',
+  'sidepanel.summary.original': '原声 {value}',
+  'sidepanel.summary.originalMuted': '原声静音',
+  'sidepanel.summary.dub': '配音 {value}',
+  'sidepanel.group.processing': '识别与播放',
+  'sidepanel.group.connection': '模型连接',
+  'sidepanel.group.interface': '界面',
   'sidepanel.group.more': '更多设置',
 
   // 翻译状态
@@ -94,6 +114,8 @@ const zhCN = {
   'sidepanel.language.waiting': '等待识别视频语言',
   'sidepanel.language.targetChanged':
     '目标语言已修改，当前会话仍在使用旧语言，worker 切换完成后会更新。',
+  'sidepanel.language.pairTo': '译为',
+  'sidepanel.language.change': '更改',
 
   // 输出与字幕
   'sidepanel.output.mode': '输出方式',
@@ -110,8 +132,6 @@ const zhCN = {
   'sidepanel.captions.offset': '字幕时间微调',
 
   // 声音
-  'sidepanel.audio.tagDub': '配音播放',
-  'sidepanel.audio.tagOriginal': '原声播放',
   'sidepanel.audio.originalMode': '原声处理',
   'sidepanel.audio.mute': '全程静音',
   'sidepanel.audio.mix': '保留原声',
@@ -260,8 +280,6 @@ const zhCN = {
 } as const;
 
 const en: Record<keyof typeof zhCN, string> = {
-  'sidepanel.title.translate': 'Live translation',
-  'sidepanel.title.search': 'Vocasub · AI Search',
   'sidepanel.pill.demo': 'Demo',
   'sidepanel.pill.searchReady': 'Ready',
   'sidepanel.connecting.body':
@@ -312,14 +330,35 @@ const en: Record<keyof typeof zhCN, string> = {
   'sidepanel.translate.retryCount': 'Retry {count} failed',
   'sidepanel.translate.stoppingHint':
     'Stopping: cancelling requests, stopping voice-over and releasing audio capture. The status updates when this finishes.',
-  'sidepanel.group.playback': 'PLAYBACK',
-  'sidepanel.group.language': 'LANGUAGE',
-  'sidepanel.group.output': 'OUTPUT',
-  'sidepanel.group.captions': 'CAPTIONS',
-  'sidepanel.group.audio': 'AUDIO',
-  'sidepanel.group.processing': 'PROCESSING',
-  'sidepanel.group.connection': 'CONNECTION',
-  'sidepanel.group.interface': 'INTERFACE',
+  'sidepanel.translate.settingsAria': 'Translation settings',
+
+  'sidepanel.now.aria': 'Current subtitle',
+  'sidepanel.now.translating': 'Translating',
+  'sidepanel.now.line': '{status} · {title}',
+  'sidepanel.now.idleHint':
+    'Once translation starts, the line being played appears here with its original.',
+  'sidepanel.now.syncing': 'Syncing subtitles…',
+  'sidepanel.now.noCues': 'No subtitles yet. They appear here as they arrive.',
+  'sidepanel.now.gap': 'No subtitle at this moment',
+  'sidepanel.now.noTime': "Can't read the playback time yet",
+  'sidepanel.now.progress': 'Translated {done} / {total} lines · {source}',
+  'sidepanel.now.progressNone': 'No subtitles yet · {source}',
+
+  'sidepanel.row.captions': 'Subtitle style',
+  'sidepanel.row.audio': 'Sound',
+  'sidepanel.summary.buffer': '{count} s buffer',
+  'sidepanel.summary.bilingual': 'Bilingual',
+  'sidepanel.summary.translationOnly': 'Translation only',
+  'sidepanel.summary.captionsHidden': 'Subtitles hidden',
+  'sidepanel.summary.bottom': 'Bottom',
+  'sidepanel.summary.middle': 'Middle',
+  'sidepanel.summary.top': 'Top',
+  'sidepanel.summary.original': 'Original {value}',
+  'sidepanel.summary.originalMuted': 'Original muted',
+  'sidepanel.summary.dub': 'Voice {value}',
+  'sidepanel.group.processing': 'Recognition & playback',
+  'sidepanel.group.connection': 'Model connection',
+  'sidepanel.group.interface': 'Interface',
   'sidepanel.group.more': 'More settings',
 
   'sidepanel.status.title': 'Translation status',
@@ -349,6 +388,8 @@ const en: Record<keyof typeof zhCN, string> = {
   'sidepanel.language.waiting': 'Waiting to detect the video language',
   'sidepanel.language.targetChanged':
     'Target language changed. The current session keeps the previous language until the switch completes.',
+  'sidepanel.language.pairTo': 'to',
+  'sidepanel.language.change': 'Change',
 
   'sidepanel.output.mode': 'Output',
   'sidepanel.output.subtitle': 'Subtitles',
@@ -363,8 +404,6 @@ const en: Record<keyof typeof zhCN, string> = {
   'sidepanel.captions.size': 'Subtitle size',
   'sidepanel.captions.offset': 'Timing offset',
 
-  'sidepanel.audio.tagDub': 'Voice-over',
-  'sidepanel.audio.tagOriginal': 'Original audio',
   'sidepanel.audio.originalMode': 'Original audio',
   'sidepanel.audio.mute': 'Mute',
   'sidepanel.audio.mix': 'Keep',

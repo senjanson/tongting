@@ -2,14 +2,15 @@
  * 工具栏弹窗：当前视频、目标语言、开始/暂停翻译、真实连接状态、打开侧栏与工作台。
  * 关闭弹窗不会停止翻译（会话由 worker 管理）。界面语言按快照中的 settings.uiLocale 决定。
  */
-import { PanelRightOpen, PanelsTopLeft, Pause, Play, Settings } from 'lucide-react';
+import { Languages, PanelRightOpen, PanelsTopLeft, Pause, Play, Settings } from 'lucide-react';
 import { useMemo } from 'react';
 import { browser } from 'wxt/browser';
 import { TARGET_LANGUAGES } from '../../domain/languages';
 import { useLocale, useT } from '../../i18n/react';
 import type { AppSnapshot } from '../../messaging/ui-protocol';
 import { Button, Hint, SelectField } from '../components/controls';
-import { Brand, ReconnectBanner, StatusPill } from '../components/layout';
+import { cx } from '../components/cx';
+import { Brand, Card, List, ListRow, ReconnectBanner, StatusPill } from '../components/layout';
 import { ToastProvider, useToast } from '../components/toast';
 import { capabilityStatusLabel, formatDateTime, formatMediaTime, languageLabel } from '../format';
 import { SnapshotI18nProvider } from '../shared/LocaleRoot';
@@ -133,8 +134,14 @@ function PopupView() {
       </header>
       {connection !== 'connected' && <ReconnectBanner hasSnapshot={!!snapshot} />}
       <div className={styles.body}>
-        <section className={styles.videoCard} aria-label={t('sidepanel.popup.currentTab')}>
-          <span className={styles.videoLabel}>{t('sidepanel.popup.currentTab')}</span>
+        <section
+          className={cx(styles.card, styles.videoCard)}
+          aria-label={t('sidepanel.popup.currentTab')}
+        >
+          <span className={styles.eyebrow}>
+            <span className={cx(styles.dot, video && styles.dotOn)} aria-hidden="true" />
+            {t('sidepanel.popup.currentTab')}
+          </span>
           {video ? (
             <>
               <span className={styles.videoTitle}>
@@ -161,13 +168,21 @@ function PopupView() {
         </section>
 
         {snapshot && (
-          <SelectField
-            label={t('sidepanel.language.target')}
-            value={snapshot.settings.targetLanguage}
-            options={targetOptions}
-            disabled={connection !== 'connected'}
-            onChange={(targetLanguage) => void update({ targetLanguage })}
-          />
+          <div className={cx(styles.card, styles.languageRow)}>
+            <SelectField
+              inline
+              label={
+                <span className={styles.languageLabel}>
+                  <Languages size={16} aria-hidden="true" />
+                  {t('sidepanel.language.target')}
+                </span>
+              }
+              value={snapshot.settings.targetLanguage}
+              options={targetOptions}
+              disabled={connection !== 'connected'}
+              onChange={(targetLanguage) => void update({ targetLanguage })}
+            />
+          </div>
         )}
 
         {video && (
@@ -175,6 +190,7 @@ function PopupView() {
             <Button
               variant="primary"
               block
+              className={styles.cta}
               icon={
                 action.kind === 'pause' ? (
                   <Pause size={16} aria-hidden="true" />
@@ -197,33 +213,31 @@ function PopupView() {
 
         {snapshot && <ConnectionSummary snapshot={snapshot} config={config} />}
 
-        <Button
-          block
-          icon={<PanelRightOpen size={15} aria-hidden="true" />}
-          onClick={openSidePanel}
-        >
-          {t('sidepanel.popup.openSidePanel')}
-        </Button>
-        <div className={styles.links}>
-          <Button
-            icon={<PanelsTopLeft size={15} aria-hidden="true" />}
-            onClick={() =>
-              openWorkspace(video?.page.videoId ?? undefined).catch(() =>
-                notify(t('common.openWorkspaceFailed'), 'danger'),
-              )
-            }
-          >
-            {t('sidepanel.popup.workspace')}
-          </Button>
-          <Button
-            icon={<Settings size={15} aria-hidden="true" />}
-            onClick={() =>
-              openOptionsPage().catch(() => notify(t('common.openSettingsFailed'), 'danger'))
-            }
-          >
-            {t('common.settings')}
-          </Button>
-        </div>
+        <Card flush>
+          <List className={styles.links}>
+            <ListRow
+              icon={<PanelRightOpen size={16} aria-hidden="true" />}
+              label={t('sidepanel.popup.openSidePanel')}
+              onClick={openSidePanel}
+            />
+            <ListRow
+              icon={<PanelsTopLeft size={16} aria-hidden="true" />}
+              label={t('sidepanel.popup.workspace')}
+              onClick={() =>
+                openWorkspace(video?.page.videoId ?? undefined).catch(() =>
+                  notify(t('common.openWorkspaceFailed'), 'danger'),
+                )
+              }
+            />
+            <ListRow
+              icon={<Settings size={16} aria-hidden="true" />}
+              label={t('common.settings')}
+              onClick={() =>
+                openOptionsPage().catch(() => notify(t('common.openSettingsFailed'), 'danger'))
+              }
+            />
+          </List>
+        </Card>
       </div>
     </div>
   );
@@ -255,16 +269,26 @@ function ConnectionSummary({
   } else {
     text = t('sidepanel.popup.notChecked');
   }
+  const tone = !config.ready
+    ? 'warning'
+    : cap?.status === 'verified'
+      ? 'ok'
+      : cap?.status === 'failed' || cap?.status === 'unsupported'
+        ? 'danger'
+        : 'idle';
   return (
-    <div className={styles.connection} role="status">
-      <strong>
-        {t('sidepanel.popup.serviceTitle', {
-          status: config.ready
-            ? capabilityStatusLabel(cap?.status, locale)
-            : t('sidepanel.popup.notConfigured'),
-        })}
-      </strong>
-      <span>{text}</span>
+    <div className={cx(styles.card, styles.service)} role="status" data-tone={tone}>
+      <span className={styles.serviceDot} aria-hidden="true" />
+      <span className={styles.serviceText}>
+        <strong>
+          {t('sidepanel.popup.serviceTitle', {
+            status: config.ready
+              ? capabilityStatusLabel(cap?.status, locale)
+              : t('sidepanel.popup.notConfigured'),
+          })}
+        </strong>
+        <span>{text}</span>
+      </span>
     </div>
   );
 }

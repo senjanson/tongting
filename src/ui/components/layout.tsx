@@ -1,7 +1,9 @@
 /**
- * 布局与反馈组件：品牌、状态胶囊、标签页、提示、空状态、分组、横幅、对话框。
+ * 布局与反馈组件：品牌、状态胶囊、标签页、提示、空状态、分组、卡片与列表行、横幅、对话框。
+ * 外观全部来自 tokens.css 的主题变量（纸墨 / 夜墨 / 影院 / 声波）。
  */
 import {
+  ChevronRight,
   CircleAlert,
   CircleCheck,
   FlaskConical,
@@ -10,7 +12,14 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
-import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  type ButtonHTMLAttributes,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import { translate } from '../../i18n';
 import { useLocale, useT } from '../../i18n/react';
 import type { StatusTone } from '../state/derive';
@@ -19,25 +28,40 @@ import { ToastRegion, useModalToasts } from './toast';
 import { cx } from './cx';
 import styles from './layout.module.css';
 
+/** 品牌标志：强调色圆角方块中四条声波竖线（圆角随主题变化）。 */
 export function BrandMark({ className }: { className?: string }) {
   return (
     <span className={cx(styles.mark, className)} aria-hidden="true">
-      <span />
-      <span />
-      <span />
-      <span />
+      <svg width="30" height="30" viewBox="0 0 30 30" focusable="false">
+        <path
+          d="M9 12v6M13 9v12M17 11v8M21 13.5v3"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          fill="none"
+        />
+      </svg>
     </span>
   );
 }
 
-export function Brand({ note }: { note?: string }) {
+export function Brand({
+  note,
+  nameAs: Name = 'span',
+}: {
+  note?: string;
+  /** 品牌名的元素：侧栏把它作为页面的一级标题（h1）。 */
+  nameAs?: 'span' | 'h1';
+}) {
   const t = useT();
   return (
     <div className={styles.brand}>
       <BrandMark />
       <div className={styles.brandText}>
-        <span className={styles.brandName}>{t('common.brand.name')}</span>
-        <span className={styles.brandNote}>{note ?? t('common.brand.note')}</span>
+        <Name className={styles.brandName}>{t('common.brand.name')}</Name>
+        <span className={styles.brandNote} data-brand-note="">
+          {note ?? t('common.brand.note')}
+        </span>
       </div>
     </div>
   );
@@ -51,7 +75,7 @@ export function StatusPill({ label, tone }: { label: string; tone: StatusTone })
       aria-live="polite"
     >
       <span className={cx(styles.dot, tone === 'busy' && styles.busyDot)} aria-hidden="true" />
-      {label}
+      <span className={styles.pillText}>{label}</span>
     </span>
   );
 }
@@ -253,8 +277,60 @@ export function Group({
   );
 }
 
-export function Card({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cx(styles.card, className)}>{children}</div>;
+/** 卡片：面板底色、主题边框与阴影。flush 时不留内边距（内容自行排版，例如整行列表）。 */
+export function Card({
+  children,
+  className,
+  flush,
+}: {
+  children: ReactNode;
+  className?: string;
+  flush?: boolean;
+}) {
+  return <div className={cx(styles.card, flush && styles.cardFlush, className)}>{children}</div>;
+}
+
+/**
+ * 列表：子项为 52px 高的行，行间以细线分隔。可直接放 SwitchRow、行内 SelectField 或 ListRow。
+ */
+export function List({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cx(styles.list, className)}>{children}</div>;
+}
+
+export interface ListRowProps extends Omit<
+  ButtonHTMLAttributes<HTMLButtonElement>,
+  'children' | 'value'
+> {
+  label: ReactNode;
+  /** 右侧的次要取值（弱化显示）。 */
+  value?: ReactNode;
+  icon?: ReactNode;
+  /** 右侧的指示图标，默认是向右箭头。 */
+  trailing?: ReactNode;
+}
+
+/** 可点击的列表行：左侧标签，右侧弱化的取值与箭头。 */
+export function ListRow({
+  label,
+  value,
+  icon,
+  trailing,
+  className,
+  type = 'button',
+  ...rest
+}: ListRowProps) {
+  return (
+    <button type={type} className={cx(styles.listRow, className)} {...rest}>
+      <span className={styles.listLabel}>
+        {icon}
+        <span>{label}</span>
+      </span>
+      <span className={styles.listValue}>
+        {value !== undefined && <span className={styles.listValueText}>{value}</span>}
+        {trailing ?? <ChevronRight size={14} aria-hidden="true" />}
+      </span>
+    </button>
+  );
 }
 
 /** 中文版本的演示标识（兼容旧引用）；界面请使用 common.demo.label。 */

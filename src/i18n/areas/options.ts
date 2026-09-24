@@ -33,10 +33,11 @@ const zhCN = {
   'options.section.demo': '演示模式',
 
   // ── 常规 ──
-  'options.general.description': '界面显示语言等通用设置。',
+  'options.general.description': '界面语言与外观主题等通用设置。',
   'options.general.uiLocale': '界面语言',
   'options.general.uiLocaleHint':
     '跟随浏览器时，中文（含繁体）浏览器显示中文，其他语言一律显示英文。',
+  'options.general.themeHint': '扩展的各个页面共用同一外观。只改变显示效果，不影响翻译结果。',
 
   // ── 模型连接 ──
   'options.connection.description':
@@ -525,10 +526,12 @@ const en: Record<keyof typeof zhCN, string> = {
   'options.section.shortcuts': 'Shortcuts',
   'options.section.demo': 'Demo mode',
 
-  'options.general.description': 'Interface language and other general preferences.',
+  'options.general.description': 'Interface language, appearance and other general preferences.',
   'options.general.uiLocale': 'Interface language',
   'options.general.uiLocaleHint':
     'When following the browser, Chinese browsers (including Traditional Chinese) show Chinese; every other language shows English.',
+  'options.general.themeHint':
+    'Every extension page shares this appearance. It only changes how things look, not the translations.',
 
   'options.connection.description':
     'Enter your own sub2api service. What works is determined by the real requests made in "Check connection".',

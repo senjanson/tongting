@@ -136,7 +136,10 @@ test('interpretation keeps original silent across speech/gaps/seeks and restores
   await fc.ui.ok({ kind: 'settings/update', patch: { audio: { originalMode: 'mute' } } });
   await volume().toBe(0);
   await fc.ui.page.setViewportSize({ width: 320, height: 900 });
-  await fc.ui.page.getByText('AUDIO / 声音', { exact: true }).scrollIntoViewIfNeeded();
+  // 声音设置收在「声音」一行里，先展开。
+  const audioRow = fc.ui.page.getByRole('button', { name: /^声音/ });
+  if ((await audioRow.getAttribute('aria-expanded')) !== 'true') await audioRow.click();
+  await fc.ui.page.getByRole('button', { name: '全程静音', exact: true }).scrollIntoViewIfNeeded();
   await expect(fc.ui.page.getByRole('button', { name: '全程静音', exact: true })).toHaveAttribute(
     'aria-pressed',
     'true',

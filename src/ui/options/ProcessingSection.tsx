@@ -213,7 +213,7 @@ function ModelField({
       setDraft((current) => (current === draft ? { value: trimmed, dirty: false } : current));
   };
   return (
-    <div className={styles.row}>
+    <div className={styles.fieldRow}>
       <TextField
         className={styles.grow}
         label={label}
@@ -275,7 +275,7 @@ function LocalAsrFields({ snapshot }: { snapshot: AppSnapshot }) {
   return (
     <>
       <Hint>{t('options.processing.localHint')}</Hint>
-      <div className={styles.row}>
+      <div className={styles.fieldRow}>
         <TextField
           className={styles.grow}
           label={t('options.processing.localUrl')}
@@ -302,7 +302,7 @@ function LocalAsrFields({ snapshot }: { snapshot: AppSnapshot }) {
           />
         )}
       </div>
-      <div className={styles.row}>
+      <div className={styles.fieldRow}>
         <TextField
           className={styles.grow}
           label={t('options.processing.token')}

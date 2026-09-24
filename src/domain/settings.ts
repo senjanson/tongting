@@ -15,6 +15,9 @@ export type TextProtocol = z.infer<typeof TextProtocolSchema>;
 export const LocaleSchema = z.enum(['zh-CN', 'en']);
 /** 界面语言偏好：auto 跟随浏览器界面语言（中文含繁体显示中文，其余英文）。 */
 export const UiLocaleSchema = z.enum(['auto', 'zh-CN', 'en']);
+/** 外观主题：auto 跟随系统明暗（浅色纸墨、深色夜墨）。 */
+export const UiThemeSchema = z.enum(['auto', 'paper', 'ink', 'cinema', 'wave']);
+export type UiThemePreference = z.infer<typeof UiThemeSchema>;
 
 export const GlossaryEntrySchema = z.object({
   source: z.string().min(1).max(100),
@@ -115,6 +118,8 @@ export const SettingsSchema = z.object({
   layout: z.enum(['sidebar']).default('sidebar'),
   /** 界面语言：auto 跟随浏览器界面语言。只影响界面文案，不进入翻译指纹。 */
   uiLocale: UiLocaleSchema.default('auto'),
+  /** 外观主题：扩展页面与播放器字幕层共用。只影响外观，不进入翻译指纹。 */
+  uiTheme: UiThemeSchema.default('auto'),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 

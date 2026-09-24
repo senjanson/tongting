@@ -80,7 +80,7 @@ test('voice browsing, audition, selection, extension reload and browser restart 
       (s) =>
         s.settingsPersisted && s.settings.audio.voiceName === 'Eddy (Chinese (China mainland))',
     );
-    const audio = ui.page.getByRole('region', { name: 'VOICE / 配音声音' });
+    const audio = ui.page.getByRole('region', { name: '配音', exact: true });
     for (const colorScheme of ['light', 'dark'] as const) {
       await ui.page.emulateMedia({ colorScheme });
       await audio.scrollIntoViewIfNeeded();
@@ -186,7 +186,7 @@ test('real Chrome system voices: two different local Mandarin voices start succe
     }
     await ui.page.setViewportSize({ width: 320, height: 1000 });
     await ui.page.getByText(/浏览并试听全部 \d+ 个声音/).click();
-    const audio = ui.page.getByRole('region', { name: 'VOICE / 配音声音' });
+    const audio = ui.page.getByRole('region', { name: '配音', exact: true });
     for (const colorScheme of ['light', 'dark'] as const) {
       await ui.page.emulateMedia({ colorScheme });
       await audio.scrollIntoViewIfNeeded();

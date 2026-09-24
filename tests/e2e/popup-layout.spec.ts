@@ -131,7 +131,7 @@ for (const theme of ['light', 'dark'] as const) {
         });
         await expect
           .poll(async () => (await readLayout()).background)
-          .toBe(theme === 'dark' ? 'rgb(23, 27, 25)' : 'rgb(243, 244, 240)');
+          .toBe(theme === 'dark' ? 'rgb(17, 20, 18)' : 'rgb(244, 241, 234)');
         await expect.poll(async () => (await readLayout()).runningAnimations).toBe(0);
         // Chrome computes the viewport from intrinsic document size. A normal tab
         // with a predefined 340px viewport hides the width/100vw feedback loop.

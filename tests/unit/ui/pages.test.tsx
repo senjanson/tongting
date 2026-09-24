@@ -51,6 +51,28 @@ describe('popup', () => {
       sidePanel.open = original;
     }
   });
+
+  it('changes the target language from its row and keeps the navigation rows as named buttons', async () => {
+    useWorker(createFakeWorker(makeSnapshot()));
+    const tab = await fakeBrowser.tabs.create({ url: 'https://example.com/', active: true });
+    vi.spyOn(fakeBrowser.tabs, 'query').mockResolvedValue([tab] as never);
+    render(<PopupApp />);
+    const target = (await screen.findByRole('combobox', { name: '翻译为' })) as HTMLSelectElement;
+    expect(target.value).toBe(makeSnapshot().settings.targetLanguage);
+    fireEvent.change(target, { target: { value: 'ja' } });
+    await waitFor(() =>
+      expect(worker.commands()).toContainEqual({
+        kind: 'settings/update',
+        patch: { targetLanguage: 'ja' },
+      }),
+    );
+    for (const name of ['打开侧栏', '字幕工作台', '设置']) {
+      expect(screen.getByRole('button', { name })).toBeTruthy();
+    }
+    // 服务状态是一个实时区域，标题与说明都在其中。
+    const status = screen.getByText('翻译服务：未检测').closest('[role="status"]');
+    expect(status?.textContent).toContain('尚未检查连接');
+  });
 });
 
 describe('options page', () => {

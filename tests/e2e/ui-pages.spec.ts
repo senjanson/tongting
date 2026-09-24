@@ -53,7 +53,7 @@ async function expectNoHorizontalOverflow(page: Page) {
 test('side panel renders a real empty state at 320px without demo data or overflow', async () => {
   const testInfo = test.info();
   const { page, errors } = await openPage('sidepanel.html', 320);
-  await expect(page.getByRole('heading', { name: '实时翻译', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: '译听', exact: true })).toBeVisible();
   // worker 未提供快照时显示连接中；提供快照后当前标签（扩展页本身）不是 YouTube 视频页
   await expect(
     page.getByText(/当前标签不是 YouTube 视频页|正在连接后台服务/).first(),

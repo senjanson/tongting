@@ -348,7 +348,12 @@ function WorkspaceView() {
           aria-label={t('options.workspace.records')}
         >
           <div className={styles.panelHead}>
-            <span className={styles.panelTitle}>{t('options.workspace.records')}</span>
+            <span className={styles.panelTitle}>
+              {t('options.workspace.records')}
+              {records.status === 'ready' && entries.length > 0 && (
+                <span className={styles.panelCount}>{entries.length}</span>
+              )}
+            </span>
             <IconButton
               bare
               label={t('options.workspace.refresh')}
@@ -601,7 +606,7 @@ function RecordDetail({
   return (
     <div className={styles.main}>
       <div className={styles.mainHead}>
-        <div>
+        <div className={styles.mainHeadText}>
           <div className={styles.mainTitle}>{source.title || entry.videoId}</div>
           <div className={styles.mainMeta}>
             {sourceLanguageLabel(source.sourceLanguage, locale)} →{' '}
@@ -618,7 +623,7 @@ function RecordDetail({
             {describeCoverage(source.coverage, source.sourceMode, locale)}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <div className={styles.mainActions}>
           {page && (
             <Button
               size="sm"
@@ -891,7 +896,7 @@ function NotesPanel({
 
   return (
     <div className={styles.notes}>
-      <div className={styles.panelHead} style={{ padding: 0, border: 0 }}>
+      <div className={styles.notesHead}>
         <span className={styles.panelTitle}>{t('options.workspace.notes')}</span>
         <Button
           size="sm"

@@ -638,4 +638,51 @@ describe('review fixes: navigation, requests and metadata retry', () => {
     await vi.waitFor(() => expect(badge()).toBe('Vocasub · Running'));
     expect(getLocale()).toBe('en');
   });
+
+  it('applies the overlay theme from display/settings and tolerates a missing or unknown theme', async () => {
+    const t = start();
+    t.workerHandshake(sessionA);
+    const shadow = () => t.root.querySelector(`[${TT_ATTRS.overlayHost}]`)?.shadowRoot;
+    const theme = () => shadow()?.querySelector<HTMLElement>('.stage')?.dataset.theme;
+    const fontSize = () =>
+      t.root
+        .querySelector<HTMLElement>(`[${TT_ATTRS.overlayHost}]`)
+        ?.style.getPropertyValue('--tt-font-size');
+    // 握手中的 display/settings 不带主题（旧 worker）：按 auto 显示纸墨外观。
+    await vi.waitFor(() => expect(theme()).toBe('paper'));
+    const captions = {
+      enabled: true,
+      bilingual: true,
+      position: 'bottom',
+      fontSizePx: 22,
+      backgroundOpacity: 0.75,
+      offsetMs: 0,
+    };
+    const send = (extra: Record<string, unknown>, fontSizePx = 22) =>
+      t.port().receive({
+        type: 'display/settings',
+        captions: { ...captions, fontSizePx },
+        targetLanguage: 'zh-CN',
+        locale: 'zh-CN',
+        ...extra,
+      });
+    send({ uiTheme: 'ink' });
+    expect(theme()).toBe('ink');
+    const stage = shadow()!.querySelector('.stage');
+    send({ uiTheme: 'wave' }, 30);
+    expect(theme()).toBe('wave');
+    expect(fontSize()).toBe('30px');
+    expect(shadow()!.querySelector('.stage')).toBe(stage);
+    send({ uiTheme: 'auto' });
+    expect(theme()).toBe('paper');
+    send({ uiTheme: 'cinema' });
+    // 无法识别的主题不丢弃整条设置：字幕设置照常生效，外观回到 auto。
+    send({ uiTheme: 'neon' }, 26);
+    expect(theme()).toBe('paper');
+    expect(fontSize()).toBe('26px');
+    send({ uiTheme: 'cinema' }, 24);
+    send({}, 28);
+    expect(theme()).toBe('paper');
+    expect(fontSize()).toBe('28px');
+  });
 });

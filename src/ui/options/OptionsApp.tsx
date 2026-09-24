@@ -4,6 +4,16 @@
  * 界面语言取自快照中的 settings.uiLocale（快照到达前按浏览器界面语言显示）。
  * 在本页切换界面语言时先乐观切换显示，快照中的设置随后到达即以快照为准；保存失败则恢复。
  */
+import {
+  AudioLines,
+  BookText,
+  FlaskConical,
+  Keyboard,
+  PlugZap,
+  ShieldCheck,
+  SlidersHorizontal,
+  type LucideIcon,
+} from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { resolveLocale, type LocalePreference, type MessageKey } from '../../i18n';
 import { browserUiLanguage, useLocale, useT } from '../../i18n/react';
@@ -19,14 +29,14 @@ import styles from './options.module.css';
 import { ProcessingSection } from './ProcessingSection';
 import { SnapshotI18nProvider } from '../shared/LocaleRoot';
 
-const NAV: ReadonlyArray<{ id: string; label: MessageKey }> = [
-  { id: 'general', label: 'options.section.general' },
-  { id: 'connection', label: 'options.section.connection' },
-  { id: 'processing', label: 'options.section.processing' },
-  { id: 'glossary', label: 'options.section.glossary' },
-  { id: 'data', label: 'options.section.data' },
-  { id: 'shortcuts', label: 'options.section.shortcuts' },
-  { id: 'demo', label: 'options.section.demo' },
+const NAV: ReadonlyArray<{ id: string; label: MessageKey; icon: LucideIcon }> = [
+  { id: 'general', label: 'options.section.general', icon: SlidersHorizontal },
+  { id: 'connection', label: 'options.section.connection', icon: PlugZap },
+  { id: 'processing', label: 'options.section.processing', icon: AudioLines },
+  { id: 'glossary', label: 'options.section.glossary', icon: BookText },
+  { id: 'data', label: 'options.section.data', icon: ShieldCheck },
+  { id: 'shortcuts', label: 'options.section.shortcuts', icon: Keyboard },
+  { id: 'demo', label: 'options.section.demo', icon: FlaskConical },
 ];
 
 export function OptionsApp() {
@@ -112,9 +122,10 @@ function OptionsView({
       ) : (
         <div className={styles.layout}>
           <nav className={styles.nav} aria-label={t('options.page.navLabel')}>
-            {NAV.map((item) => (
-              <a key={item.id} href={`#${item.id}`}>
-                {t(item.label)}
+            {NAV.map(({ id, label, icon: Icon }) => (
+              <a key={id} href={`#${id}`}>
+                <Icon size={16} aria-hidden="true" />
+                <span>{t(label)}</span>
               </a>
             ))}
           </nav>
@@ -135,7 +146,11 @@ function OptionsView({
                 </Callout>
               )
             )}
-            <GeneralSection uiLocale={uiLocale} onPreviewLocale={onPreviewLocale} />
+            <GeneralSection
+              uiLocale={uiLocale}
+              uiTheme={snapshot.settings.uiTheme}
+              onPreviewLocale={onPreviewLocale}
+            />
             <ConnectionSection snapshot={snapshot} />
             <ProcessingSection snapshot={snapshot} />
             <GlossarySection glossary={snapshot.settings.glossary} />

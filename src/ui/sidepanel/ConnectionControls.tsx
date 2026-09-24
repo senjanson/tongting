@@ -100,29 +100,30 @@ export function ConnectionControls({ snapshot }: { snapshot: AppSnapshot }) {
         onChange={(value) => setDraft((current) => ({ ...current, url: value }))}
         error={url && !check.ok ? check.reason : undefined}
       />
-      <div className={styles.keyField}>
-        <TextField
-          label="API Key"
-          type={showKey ? 'text' : 'password'}
-          autoComplete="off"
-          spellCheck={false}
-          disabled={demo}
-          placeholder={
-            demo
-              ? t('sidepanel.connection.keyDemo')
-              : credential.configured
-                ? t('sidepanel.connection.keySaved')
-                : t('sidepanel.connection.keyEmpty')
-          }
-          value={apiKey}
-          onChange={(value) => setDraft((current) => ({ ...current, key: value }))}
-        />
-        <IconButton
-          label={showKey ? t('sidepanel.connection.hideKey') : t('sidepanel.connection.showKey')}
-          icon={showKey ? <EyeOff size={15} /> : <Eye size={15} />}
-          onClick={() => setShowKey((value) => !value)}
-        />
-      </div>
+      <TextField
+        label="API Key"
+        type={showKey ? 'text' : 'password'}
+        autoComplete="off"
+        spellCheck={false}
+        disabled={demo}
+        placeholder={
+          demo
+            ? t('sidepanel.connection.keyDemo')
+            : credential.configured
+              ? t('sidepanel.connection.keySaved')
+              : t('sidepanel.connection.keyEmpty')
+        }
+        value={apiKey}
+        onChange={(value) => setDraft((current) => ({ ...current, key: value }))}
+        trailing={
+          <IconButton
+            className={styles.keyToggle}
+            label={showKey ? t('sidepanel.connection.hideKey') : t('sidepanel.connection.showKey')}
+            icon={showKey ? <EyeOff size={15} /> : <Eye size={15} />}
+            onClick={() => setShowKey((value) => !value)}
+          />
+        }
+      />
       <Checkbox
         label={t('sidepanel.connection.remember')}
         checked={remember}
@@ -145,6 +146,7 @@ export function ConnectionControls({ snapshot }: { snapshot: AppSnapshot }) {
       {draft && (
         <Button
           block
+          variant="primary"
           icon={<Save size={14} />}
           busy={saving}
           disabled={saving || !check.ok || !model.trim()}

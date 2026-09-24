@@ -12,8 +12,12 @@ import type { ActiveTabState } from '@src/ui/state/active-tab';
 import { UiClientProvider } from '@src/ui/state/hooks';
 import { ReposProvider, type UiRepos } from '@src/ui/state/repos';
 import type { AppSnapshot } from '@src/messaging/ui-protocol';
-import { makePage, makeSession, makeSnapshot, TAB_ID } from './fixtures';
+import { makeCue, makePage, makePlayer, makeSession, makeSnapshot, TAB_ID } from './fixtures';
 import { StaticClient } from './static-client';
+import { createFakeWorker } from './fake-worker-port';
+import { createDemoRepos, DemoClient } from '@src/ui/demo/demo-client';
+import { DEMO_TAB_ID } from '@src/ui/demo/demo-data';
+import { progressSegments } from '@src/ui/sidepanel/NowCard';
 
 const memoryRepos: UiRepos = {
   favorites: { listByRecord: async () => [], set: async (_input, favorited) => favorited },
@@ -60,6 +64,8 @@ describe('side panel states', () => {
       'settings/update': () => ({ persisted: true }),
     });
     renderPanel(client);
+    expect(screen.queryByRole('button', { name: '全程静音' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^声音/ }));
     expect(screen.getByRole('button', { name: '全程静音' }).getAttribute('aria-pressed')).toBe(
       'true',
     );
@@ -201,6 +207,7 @@ describe('side panel states', () => {
     await waitFor(() =>
       expect(screen.getAllByText(/系统没有可用的「한국어」声音/).length).toBeGreaterThan(0),
     );
+    fireEvent.click(screen.getByRole('button', { name: /^声音/ }));
     expect((screen.getByRole('button', { name: '试听' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -209,6 +216,7 @@ describe('side panel states', () => {
       'settings/update': () => ({ persisted: false }),
     });
     renderPanel(client);
+    fireEvent.click(screen.getByRole('button', { name: /简体中文/ }));
     fireEvent.change(screen.getByLabelText('翻译为'), { target: { value: 'ja' } });
     await waitFor(() => expect(screen.getByText(/仅本次生效，保存失败/)).toBeTruthy());
     expect(client.sent).toEqual([{ kind: 'settings/update', patch: { targetLanguage: 'ja' } }]);
@@ -265,6 +273,247 @@ describe('side panel states', () => {
   });
 });
 
+describe('translate tab', () => {
+  const pausedAt = (currentTimeMs: number) =>
+    makePage({ player: makePlayer({ paused: true, currentTimeMs }) });
+
+  it('shows the cue at the current player time (with the caption offset) and never passes source text off as a translation', () => {
+    const session = makeSession();
+    const cues = [
+      makeCue('a', 4_000),
+      // 状态未完成时即使带有旧译文也不能显示为译文
+      makeCue('b', 6_000, { translationState: 'pending' }),
+      makeCue('c', 8_000, {
+        translationState: 'failed',
+        translatedText: undefined,
+        translationError: {
+          code: 'http-500',
+          category: 'server',
+          retryable: true,
+          message: '服务暂时不可用',
+        },
+      }),
+    ];
+    const client = new StaticClient(
+      connected(makeSnapshot({ pages: [pausedAt(5_000)], sessions: [session] })),
+    );
+    client.cuesBySession.set(session.identity.sessionId, cues);
+    renderPanel(client);
+    const now = screen.getByRole('region', { name: '当前字幕' });
+    expect(within(now).getByText('正在翻译 · 真实视频标题')).toBeTruthy();
+    expect(within(now).getByText('0:05')).toBeTruthy();
+    expect(within(now).getByText('译文 a')).toBeTruthy();
+    expect(within(now).getByText('source a')).toBeTruthy();
+    expect(client.cueSubscriptions).toEqual([session.identity.sessionId]);
+
+    act(() =>
+      client.setState(connected(makeSnapshot({ pages: [pausedAt(6_500)], sessions: [session] }))),
+    );
+    expect(within(now).getByText('等待翻译')).toBeTruthy();
+    expect(within(now).getByText('source b')).toBeTruthy();
+    expect(within(now).queryByText('译文 b')).toBeNull();
+
+    act(() =>
+      client.setState(connected(makeSnapshot({ pages: [pausedAt(8_500)], sessions: [session] }))),
+    );
+    expect(within(now).getByText('翻译失败：服务暂时不可用')).toBeTruthy();
+    expect(within(now).getByText('source c')).toBeTruthy();
+
+    // 字幕时间微调 +2 s：同一播放时间对应更早的一句
+    act(() =>
+      client.setState(
+        connected(
+          makeSnapshot(
+            { pages: [pausedAt(6_500)], sessions: [session] },
+            { provider: { baseUrl: 'https://api.example.com/v1' }, captions: { offsetMs: 2_000 } },
+          ),
+        ),
+      ),
+    );
+    expect(within(now).getByText('译文 a')).toBeTruthy();
+
+    act(() =>
+      client.setState(connected(makeSnapshot({ pages: [pausedAt(20_000)], sessions: [session] }))),
+    );
+    expect(within(now).getByText('此刻没有字幕')).toBeTruthy();
+  });
+
+  it('shows real progress segments and the source mode', () => {
+    const session = makeSession({
+      sourceMode: 'asr',
+      sourceTrack: undefined,
+      translation: { total: 10, done: 4, pending: 6, running: 0, failed: 0 },
+    });
+    renderPanel(
+      new StaticClient(connected(makeSnapshot({ pages: [makePage()], sessions: [session] }))),
+    );
+    const now = screen.getByRole('region', { name: '当前字幕' });
+    expect(within(now).getByText('已翻译 4 / 10 句 · 语音识别')).toBeTruthy();
+    expect(now.querySelectorAll('[data-filled]')).toHaveLength(4);
+    // 字幕同步完成前不假装没有字幕
+    expect(within(now).getByText('正在同步字幕…')).toBeTruthy();
+  });
+
+  it('splits progress into at most 12 segments and only fills all of them when done', () => {
+    expect(progressSegments(0, 0)).toEqual({ count: 12, filled: 0 });
+    expect(progressSegments(3, 7)).toEqual({ count: 7, filled: 3 });
+    expect(progressSegments(12, 12)).toEqual({ count: 12, filled: 12 });
+    expect(progressSegments(15, 30)).toEqual({ count: 12, filled: 6 });
+    expect(progressSegments(299, 300)).toEqual({ count: 12, filled: 11 });
+    expect(progressSegments(300, 300)).toEqual({ count: 12, filled: 12 });
+    expect(progressSegments(40, 30)).toEqual({ count: 12, filled: 12 });
+  });
+
+  it('without a session shows an honest hint, subscribes to nothing and disables stop', () => {
+    const client = new StaticClient(connected(makeSnapshot({ pages: [makePage()] })));
+    renderPanel(client);
+    const now = screen.getByRole('region', { name: '当前字幕' });
+    expect(within(now).getByText('未开始 · 真实视频标题')).toBeTruthy();
+    expect(within(now).getByText('开始翻译后，这里会显示正在播放的这句译文和原文。')).toBeTruthy();
+    expect(within(now).queryByText(/已翻译/)).toBeNull();
+    expect(client.cueSubscriptions).toEqual([]);
+    expect(
+      (screen.getByRole('button', { name: '停止并释放音频' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect((screen.getByRole('button', { name: '开始翻译' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it('expands setting rows independently and summarizes the saved values', async () => {
+    const client = new StaticClient(
+      connected(
+        makeSnapshot(
+          { pages: [makePage()] },
+          {
+            provider: { baseUrl: 'https://api.example.com/v1' },
+            captions: { bilingual: true, position: 'bottom', fontSizePx: 21 },
+            audio: { originalVolume: 0.7 },
+          },
+        ),
+      ),
+      { 'settings/update': () => ({ persisted: true }) },
+    );
+    renderPanel(client);
+    const list = screen.getByRole('region', { name: '翻译设置' });
+    const rows = within(list).getAllByRole('button');
+    expect(rows.map((row) => row.textContent)).toEqual([
+      '翻译风格自然流畅',
+      '播放方式同步优先 · 缓冲 10 秒',
+      '字幕样式双语 · 底部 · 21 px',
+      '声音原声 70%',
+    ]);
+    const captions = screen.getByRole('button', { name: /^字幕样式/ });
+    const panel = document.getElementById(captions.getAttribute('aria-controls')!)!;
+    expect(captions.getAttribute('aria-expanded')).toBe('false');
+    expect(panel.hidden).toBe(true);
+    expect(screen.queryByRole('switch', { name: '显示双语字幕' })).toBeNull();
+
+    fireEvent.click(captions);
+    expect(captions.getAttribute('aria-expanded')).toBe('true');
+    expect(panel.hidden).toBe(false);
+    fireEvent.click(within(panel).getByRole('switch', { name: '显示双语字幕' }));
+    await waitFor(() =>
+      expect(client.sent).toContainEqual({
+        kind: 'settings/update',
+        patch: { captions: { bilingual: false } },
+      }),
+    );
+    expect(screen.getByRole('button', { name: /^声音/ }).getAttribute('aria-expanded')).toBe(
+      'false',
+    );
+
+    // 可同时展开多行；再次点击收起
+    fireEvent.click(screen.getByRole('button', { name: /^播放方式/ }));
+    expect(screen.getByRole('group', { name: '播放方式' })).toBeTruthy();
+    expect(captions.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(captions);
+    expect(panel.hidden).toBe(true);
+
+    // 摘要只随快照（已生效的设置）变化
+    act(() =>
+      client.setState(
+        connected(
+          makeSnapshot(
+            { pages: [makePage()] },
+            {
+              provider: { baseUrl: 'https://api.example.com/v1' },
+              outputMode: 'subtitle-voice',
+              playbackMode: 'continuous',
+              captions: { enabled: false },
+              audio: { dubVolume: 0.9, originalMode: 'mute' },
+            },
+          ),
+        ),
+      ),
+    );
+    expect(rows.map((row) => row.textContent)).toEqual([
+      '翻译风格自然流畅',
+      '播放方式连续播放',
+      '字幕样式字幕已隐藏',
+      '声音配音 90% · 原声静音',
+    ]);
+  });
+
+  it('opens the playback row when the translation buffer is blocked', () => {
+    const session = makeSession({
+      playbackBuffer: { state: 'blocked', readyAheadMs: 0, targetMs: 10_000 },
+    });
+    renderPanel(
+      new StaticClient(connected(makeSnapshot({ pages: [makePage()], sessions: [session] }))),
+    );
+    const playback = screen.getByRole('button', { name: /^播放方式/ });
+    expect(playback.textContent).toContain('同步优先 · 缓冲受阻');
+    expect(playback.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: '切换连续播放' })).toBeTruthy();
+    // 用户可以收起
+    fireEvent.click(playback);
+    expect(playback.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('shows the language pair and reveals the language selects on demand', () => {
+    const session = makeSession({ detectedSourceLanguage: 'en' });
+    renderPanel(
+      new StaticClient(connected(makeSnapshot({ pages: [makePage()], sessions: [session] }))),
+    );
+    expect(screen.queryByRole('combobox', { name: '翻译为' })).toBeNull();
+    const pair = screen.getByRole('button', { name: /简体中文/ });
+    expect(pair.textContent).toContain('自动识别 · 更改');
+    expect(pair.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(pair);
+    expect(pair.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('combobox', { name: '视频语言' })).toBeTruthy();
+    expect((screen.getByRole('combobox', { name: '翻译为' }) as HTMLSelectElement).value).toBe(
+      'zh-CN',
+    );
+  });
+
+  it('shows the demo cue and progress from the demo client and returns to the idle hint after stopping', async () => {
+    const client = new DemoClient('zh-CN');
+    render(
+      <ToastProvider>
+        <UiClientProvider client={client}>
+          <ReposProvider repos={createDemoRepos()}>
+            <PanelView
+              activeTab={{ loading: false, tab: { tabId: DEMO_TAB_ID, windowId: -1 } }}
+              onExitDemo={() => undefined}
+            />
+          </ReposProvider>
+        </UiClientProvider>
+      </ToastProvider>,
+    );
+    const now = screen.getByRole('region', { name: '当前字幕' });
+    expect(await within(now).findByText('真正的学习，始于保持好奇。')).toBeTruthy();
+    expect(within(now).getByText('Real learning begins with staying curious.')).toBeTruthy();
+    expect(within(now).getByText('已翻译 7 / 8 句 · 完整字幕轨道')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '停止并释放音频' }));
+    expect(
+      await within(now).findByText('开始翻译后，这里会显示正在播放的这句译文和原文。'),
+    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: '开始翻译' })).toBeTruthy();
+  });
+});
+
 describe('demo mode', () => {
   it('shows a persistent demo label, sends no UiCommand, and exits back to the real state', async () => {
     const posted: unknown[] = [];
@@ -300,6 +549,122 @@ describe('demo mode', () => {
     } finally {
       window.history.replaceState({}, '', '/');
     }
+  });
+});
+
+describe('appearance theme', () => {
+  const html = document.documentElement;
+
+  afterEach(() => {
+    delete html.dataset.ttTheme;
+    localStorage.clear();
+    window.history.replaceState({}, '', '/');
+  });
+
+  it('shows the theme picker in settings and saves the choice through settings/update', async () => {
+    const client = new StaticClient(connected(makeSnapshot({ pages: [makePage()] })), {
+      'settings/update': () => ({ persisted: true }),
+    });
+    renderPanel(client);
+    fireEvent.click(screen.getByRole('tab', { name: '设置' }));
+    const picker = screen.getByRole('group', { name: '选择外观主题' });
+    const auto = within(picker).getByRole('button', { name: '主题：跟随系统' });
+    expect(auto.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(within(picker).getByRole('button', { name: '主题：夜墨' }));
+    await waitFor(() =>
+      expect(client.sent).toContainEqual({ kind: 'settings/update', patch: { uiTheme: 'ink' } }),
+    );
+  });
+
+  it('demo client adopts the saved language and theme, but only overrides demo switches when the saved value changes', async () => {
+    const client = new DemoClient('zh-CN', { uiTheme: 'wave' });
+    const settings = () => client.getState().snapshot!.settings;
+    expect(settings().uiTheme).toBe('wave');
+
+    client.adoptUiPreferences({ uiLocale: 'en', uiTheme: 'ink' });
+    expect(settings().uiTheme).toBe('ink');
+    expect(settings().uiLocale).toBe('en');
+    expect(client.getState().snapshot!.pages[0]!.title).toBe(
+      'Sample video: Notice the small things (demo)',
+    );
+
+    await client.sendCommand({ kind: 'settings/update', patch: { uiTheme: 'cinema' } });
+    expect(settings().uiTheme).toBe('cinema');
+    // 真实快照的其他更新（设置值未变）不会改回演示中的选择。
+    client.adoptUiPreferences({ uiLocale: 'en', uiTheme: 'ink' });
+    client.adoptUiPreferences(undefined);
+    expect(settings().uiTheme).toBe('cinema');
+    // 真实设置的值变化时以它为准。
+    client.adoptUiPreferences({ uiLocale: 'en', uiTheme: 'paper' });
+    expect(settings().uiTheme).toBe('paper');
+    expect(settings().uiLocale).toBe('en');
+  });
+
+  it('keeps the saved theme in demo mode, applies demo-only switches locally and restores the saved theme on exit', async () => {
+    const real = makeSnapshot({}, { uiTheme: 'ink' });
+    const worker = createFakeWorker(real);
+    vi.spyOn(fakeBrowser.runtime, 'connect').mockImplementation(() => worker.port as never);
+    html.dataset.ttTheme = 'paper';
+    window.history.replaceState({}, '', '/sidepanel.html?demo=1');
+    render(<SidePanelApp />);
+    await waitFor(() => expect(html.dataset.ttTheme).toBe('ink'));
+    expect(screen.getByText('演示模式 · 示例数据，不连接视频与服务')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: '设置' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '主题：影院' }));
+    });
+    await waitFor(() => expect(html.dataset.ttTheme).toBe('cinema'));
+
+    await act(async () => {
+      worker.emit({ type: 'snapshot', snapshot: { ...real, snapshotVersion: 2 } });
+    });
+    expect(html.dataset.ttTheme).toBe('cinema');
+
+    const changed = {
+      ...real,
+      snapshotVersion: 3,
+      settings: { ...real.settings, uiTheme: 'wave' as const },
+    };
+    await act(async () => {
+      worker.emit({ type: 'snapshot', snapshot: changed });
+    });
+    await waitFor(() => expect(html.dataset.ttTheme).toBe('wave'));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '主题：影院' }));
+    });
+    await waitFor(() => expect(html.dataset.ttTheme).toBe('cinema'));
+    fireEvent.click(screen.getByRole('button', { name: '退出演示' }));
+    expect(html.dataset.ttTheme).toBe('wave');
+    expect(localStorage.getItem('tt-ui-theme')).toBe('wave');
+    expect(worker.commands()).toEqual([]);
+  });
+
+  it('uses the page theme in demo mode before any saved settings arrive and restores it on exit', async () => {
+    vi.spyOn(fakeBrowser.runtime, 'connect').mockImplementation(
+      () =>
+        ({
+          postMessage: () => undefined,
+          disconnect: () => undefined,
+          onMessage: { addListener: () => undefined, removeListener: () => undefined },
+          onDisconnect: { addListener: () => undefined, removeListener: () => undefined },
+        }) as never,
+    );
+    html.dataset.ttTheme = 'wave';
+    window.history.replaceState({}, '', '/sidepanel.html?demo=1');
+    render(<SidePanelApp />);
+    fireEvent.click(screen.getByRole('tab', { name: '设置' }));
+    expect(screen.getByRole('button', { name: '主题：声波' }).getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    expect(html.dataset.ttTheme).toBe('wave');
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '主题：夜墨' }));
+    });
+    await waitFor(() => expect(html.dataset.ttTheme).toBe('ink'));
+    fireEvent.click(screen.getByRole('button', { name: '退出演示' }));
+    expect(html.dataset.ttTheme).toBe('wave');
   });
 });
 
@@ -375,7 +740,10 @@ describe('review fixes', () => {
       connected(makeSnapshot({ pages: [makePage()], sessions: [session] })),
     );
     renderPanel(client);
-    expect(screen.queryByRole('button', { name: '停止并释放音频' })).toBeNull();
+    // 停止按钮固定在底部操作栏：已结束的会话不再持有资源，按钮保留但不可用。
+    expect(
+      (screen.getByRole('button', { name: '停止并释放音频' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     expect(screen.queryByRole('button', { name: /重试失败的/ })).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: '字幕' }));
     expect(await screen.findByText('还没有这个视频的字幕')).toBeTruthy();

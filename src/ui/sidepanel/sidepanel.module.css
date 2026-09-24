@@ -1,25 +1,31 @@
+/*
+ * 侧栏外壳与「字幕」「设置」标签的布局。整页铺满主题底色，内容放在卡片中。
+ * 「翻译」标签的样式在 translate.module.css；这里的 .video 供 VideoCard 使用（渲染在翻译标签的详情中）。
+ */
 .app {
   display: flex;
   flex-direction: column;
   height: 100vh;
   min-width: 0;
-  background: var(--tt-panel);
-  border: 1px solid var(--tt-line);
-  border-radius: 14px;
-  overflow: hidden;
-  --tt-control-font: 12px;
-  --tt-label-font: 11px;
-  --tt-hint-font: 11px;
-  --tt-row-height: 18px;
+  background: var(--tt-bg);
+  color: var(--tt-text);
+  --tt-control-font: 14px;
+  --tt-label-font: 12px;
+  --tt-hint-font: 12px;
 }
 
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 16px 16px 13px;
-  background: var(--tt-panel);
+  gap: 12px;
+  padding: 18px 20px 12px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.header > :first-child {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -28,30 +34,54 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
+  max-width: 62%;
 }
 
 .surface {
-  background: var(--tt-panel);
   display: flex;
   flex-direction: column;
   min-height: 0;
   flex: 1;
 }
 
-.video {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--tt-line);
-  background: var(--tt-panel);
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+/* 标签内容：卡片纵向排列。 */
+.pane {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
+  padding: 16px;
+  min-width: 0;
+}
+
+.transcriptPane {
+  padding: 16px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 当前视频（VideoCard）：不带边框与内边距，由所在容器决定外框。 */
+.video {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
 }
 
 .videoTitle {
   font-size: 14px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.45;
+  color: var(--tt-text);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -62,7 +92,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 10px;
+  gap: 4px 12px;
   font-size: 12px;
   color: var(--tt-muted);
 }
@@ -79,102 +109,65 @@
   font-weight: 500;
 }
 
-.scroll {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  min-height: 0;
-}
-
-.pane {
-  padding: 16px;
-  min-width: 0;
-}
-
-.transcriptPane {
-  padding: 16px;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-
-.actionsRow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.actionsRow > button {
-  flex: 1 1 130px;
-}
-
-.languages {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
-  gap: 6px;
-  align-items: end;
-}
-
-.arrow {
-  height: 36px;
-  display: grid;
-  place-items: center;
-  color: var(--tt-muted);
-}
-
-.kv {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 4px 10px;
-  font-size: 13px;
-  margin: 0;
-}
-
-.kv dt {
-  color: var(--tt-muted);
-  white-space: nowrap;
-}
-
-.kv dd {
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
+/* 设置标签 */
 .shortcut {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: 12px;
+  min-height: var(--tt-row-height, 52px);
+  font-size: var(--tt-control-font, 14px);
 }
 
-.footerNote {
-  font-size: 12px;
+.external {
   color: var(--tt-muted);
-  text-align: center;
+}
+
+/* 演示模式标识：固定在底部，演示期间始终可见。 */
+.demoFooter {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--tt-demo);
+  background: var(--tt-demo-bg);
+  border-top: 1px solid var(--tt-demo-line);
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.demoText {
+  min-width: 0;
+}
+
+.demoFooter button {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border: 1px solid var(--tt-demo-line);
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  cursor: pointer;
+}
+
+.demoFooter button:hover {
+  background: var(--tt-panel);
 }
 
 @media (min-width: 560px) {
-  .pane {
-    padding: 16px 20px;
-    gap: 14px;
+  .header {
+    padding-left: 24px;
+    padding-right: 24px;
   }
+  .pane,
   .transcriptPane {
-    padding: 14px 20px;
-  }
-  .header,
-  .video {
-    padding-left: 20px;
-    padding-right: 20px;
+    padding: 20px 24px;
   }
 }
 
@@ -184,141 +177,21 @@
     margin: 0 auto;
     width: 100%;
   }
-  .wideGrid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0 28px;
-  }
-  .wideGrid > section + section {
-    border-top: 0 !important;
-    margin-top: 0 !important;
-    padding-top: 0 !important;
-  }
 }
 
-.panelTitle {
-  font-size: 14px;
-  font-weight: 500;
-}
-.app > [role='tablist'] {
-  padding: 0 16px;
-  gap: 21px;
-}
-.app > [role='tablist'] > button {
-  padding: 10px 0;
-  font-size: 12px;
-}
-/* 英文标签较长：缩小间距；窄屏（如 320px）只显示文字，避免最后一个标签被截断。 */
-.app:lang(en) > [role='tablist'] {
-  gap: 12px;
-}
-.app:lang(en) > [role='tablist'] > button {
-  gap: 4px;
-}
-@media (max-width: 360px) {
-  .app:lang(en) > [role='tablist'] > button > svg {
+/* 英文品牌注记较长：窄栏只保留品牌名，给状态胶囊留出空间。 */
+@media (max-width: 380px) {
+  .header {
+    padding: 16px 16px 10px;
+  }
+  .app:lang(en) .header [data-brand-note] {
     display: none;
   }
 }
-.pane > section + section {
-  margin-top: 18px;
-  padding-top: 16px;
-}
-.pane > .outputGroup {
-  margin-top: 19px;
-  padding-top: 0;
-  border-top: 0;
-}
-.pane > section > div:first-child > h3 {
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 1px;
-}
-.primaryAction {
-  margin-top: 18px;
-}
-.primaryAction > button {
-  padding: 10px;
-  font-size: 12px;
+
+/* API Key 输入框右侧的显示/隐藏按钮：与输入框同高。 */
+.keyToggle {
+  width: 40px;
+  height: auto;
   min-height: 40px;
-}
-.detectedLanguage {
-  font-size: 11px;
-  color: var(--tt-muted);
-  line-height: 1.65;
-}
-.audioTag {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--tt-muted);
-}
-.sessionDetails {
-  margin-top: 10px;
-  color: var(--tt-muted);
-  font-size: 11px;
-}
-.sessionDetails > summary {
-  cursor: pointer;
-  text-align: center;
-}
-.sessionDetails[open] > summary {
-  margin-bottom: 12px;
-}
-.sessionDetails > section {
-  margin-bottom: 12px;
-}
-.sessionDetails .video {
-  padding: 0 0 12px;
-  margin-bottom: 12px;
-}
-.captureStatus {
-  margin-top: 10px;
-  font-size: 11px;
-  color: var(--tt-accent);
-  text-align: center;
-}
-.demoFooter {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px 12px;
-  font-size: 10px;
-  color: var(--tt-muted);
-}
-.demoFooter button {
-  padding: 0;
-  border: 0;
-  background: none;
-  font-size: inherit;
-  color: var(--tt-accent);
-  cursor: pointer;
-}
-
-.keyField {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
-  align-items: end;
-  gap: 6px;
-}
-
-.app input[role='switch'] {
-  width: 30px;
-  height: 18px;
-}
-.app input[role='switch']::after {
-  width: 12px;
-  height: 12px;
-}
-.app input[role='switch']:checked::after {
-  left: 15px;
-}
-.pane input[type='range'] {
-  height: 4px;
-  margin: 8px 0 5px;
-}
-.pane label > div > select {
-  min-height: 31px;
-  font-size: 11px;
-  padding: 6px 7px;
 }

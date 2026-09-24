@@ -97,18 +97,19 @@ export async function launchExtension(options: LaunchOptions = {}): Promise<Laun
 
 /**
  * 以受信任扩展页面（options.html，不唤醒内容脚本）的 UI 端口发送 settings/update，
- * 并等到快照中的 settings.uiLocale 生效后关闭页面。设置会落盘，同一 profile 重启后仍然有效。
+ * 并等到快照中的对应设置生效后关闭页面。设置会落盘，同一 profile 重启后仍然有效。
  */
-export async function setUiLocale(
+async function applyTopLevelSetting(
   context: BrowserContext,
   extensionId: string,
-  uiLocale: 'auto' | 'zh-CN' | 'en',
+  key: 'uiLocale' | 'uiTheme',
+  value: string,
 ): Promise<void> {
   const page = await context.newPage();
   try {
     await page.goto(`chrome-extension://${extensionId}/options.html`);
     await page.evaluate(
-      (uiLocale) =>
+      ({ key, value }) =>
         new Promise<void>((resolve, reject) => {
           type Port = {
             postMessage(m: unknown): void;
@@ -121,12 +122,12 @@ export async function setUiLocale(
             }
           ).chrome;
           const port = chromeApi.runtime.connect({ name: 'tongting:ui' });
-          const requestId = `e2e-locale-${Date.now()}`;
+          const requestId = `e2e-${key}-${Date.now()}`;
           let accepted = false;
-          let latest: string | undefined;
+          let latest: unknown;
           const timer = setTimeout(() => {
             port.disconnect();
-            reject(new Error(`uiLocale=${uiLocale} 未在快照中生效`));
+            reject(new Error(`${key}=${value} 未在快照中生效`));
           }, 15_000);
           const done = () => {
             clearTimeout(timer);
@@ -142,24 +143,40 @@ export async function setUiLocale(
                 return;
               }
               accepted = true;
-              if (latest === uiLocale) done();
+              if (latest === value) done();
             } else if (m.type === 'snapshot') {
-              latest = (m.snapshot as { settings?: { uiLocale?: string } }).settings?.uiLocale;
-              if (accepted && latest === uiLocale) done();
+              latest = (m.snapshot as { settings?: Record<string, unknown> }).settings?.[key];
+              if (accepted && latest === value) done();
             }
           });
           port.postMessage({ type: 'subscribe', protocolVersion: 1, surface: 'options' });
           port.postMessage({
             type: 'command',
             requestId,
-            command: { kind: 'settings/update', patch: { uiLocale } },
+            command: { kind: 'settings/update', patch: { [key]: value } },
           });
         }),
-      uiLocale,
+      { key, value },
     );
   } finally {
     await page.close();
   }
+}
+
+export function setUiLocale(
+  context: BrowserContext,
+  extensionId: string,
+  uiLocale: 'auto' | 'zh-CN' | 'en',
+): Promise<void> {
+  return applyTopLevelSetting(context, extensionId, 'uiLocale', uiLocale);
+}
+
+export function setUiTheme(
+  context: BrowserContext,
+  extensionId: string,
+  uiTheme: 'auto' | 'paper' | 'ink' | 'cinema' | 'wave',
+): Promise<void> {
+  return applyTopLevelSetting(context, extensionId, 'uiTheme', uiTheme);
 }
 
 /**

@@ -1,7 +1,12 @@
+/*
+ * 设置页：页面底色上是左侧目录与一列卡片（每个设置分区一张卡片）。
+ * 颜色、圆角、字体全部来自主题变量（tokens.css），四种主题共用这一份样式。
+ */
 .app {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background: var(--tt-bg);
 }
 
 .header {
@@ -11,36 +16,41 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 12px 20px;
-  background: var(--tt-panel);
+  gap: 12px;
+  padding: 14px 28px;
+  background: var(--tt-bg);
   border-bottom: 1px solid var(--tt-line);
 }
 
 .headerTitle {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
 }
 
 .headerTitle h1 {
-  font-size: 16px;
-  font-weight: 600;
+  padding-left: 14px;
+  border-left: 1px solid var(--tt-line-strong);
+  font-family: var(--tt-font-display);
+  font-size: 17px;
+  font-weight: var(--tt-title-weight);
+  line-height: 1.4;
+  letter-spacing: 0.02em;
 }
 
 .layout {
   display: grid;
-  grid-template-columns: 200px minmax(0, 760px);
-  gap: 24px;
-  padding: 20px;
+  grid-template-columns: 196px minmax(0, 760px);
+  gap: 32px;
+  padding: 28px 28px 72px;
   justify-content: center;
   width: 100%;
 }
 
 .nav {
   position: sticky;
-  top: 76px;
+  top: 88px;
   align-self: start;
   display: flex;
   flex-direction: column;
@@ -48,11 +58,18 @@
 }
 
 .nav a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: var(--tt-radius-sm);
   color: var(--tt-muted);
   text-decoration: none;
-  padding: 7px 10px;
-  border-radius: var(--tt-radius-sm);
-  font-size: 13px;
+  font-size: 14px;
+  transition:
+    background-color 0.12s,
+    color 0.12s;
 }
 
 .nav a:hover {
@@ -60,56 +77,123 @@
   color: var(--tt-text);
 }
 
+.nav a:hover svg {
+  color: var(--tt-accent);
+}
+
+.nav a span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .main {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
   min-width: 0;
 }
 
 .section {
   background: var(--tt-panel);
-  border: 1px solid var(--tt-line);
+  border: 1px solid var(--tt-card-border);
   border-radius: var(--tt-radius);
-  padding: 18px;
+  box-shadow: var(--tt-card-shadow);
+  padding: 24px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   min-width: 0;
-  scroll-margin-top: 80px;
+  scroll-margin-top: 88px;
 }
 
 .sectionHead {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
+  padding-bottom: 2px;
 }
 
 .sectionHead h2 {
-  font-size: 15px;
-  font-weight: 600;
+  font-family: var(--tt-font-display);
+  font-size: 19px;
+  font-weight: var(--tt-title-weight);
+  line-height: 1.35;
+  letter-spacing: 0.01em;
 }
 
 .sectionHead p {
   font-size: 13px;
+  line-height: 1.6;
   color: var(--tt-muted);
 }
 
+/* 分区内的小标题：上方一条细线把卡片分成几段，不再嵌套卡片。 */
 .subhead {
-  font-size: 13px;
+  margin-top: 6px;
+  padding-top: 18px;
+  border-top: 1px solid var(--tt-line);
+  font-family: var(--tt-font-display);
+  font-size: 15px;
   font-weight: 600;
-  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.themeBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 18px;
+  border-top: 1px solid var(--tt-line);
+}
+
+.themePicker {
+  max-width: 440px;
+}
+
+/* 分区里直接放的单个按钮（例如「保存模型」「获取模型列表」）按内容宽度显示，不拉满整行。 */
+.section > button {
+  align-self: flex-start;
 }
 
 .row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  align-items: flex-end;
+  align-items: center;
 }
 
 .row > * {
   min-width: 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/*
+ * 输入框 + 按钮：按钮与输入框顶端对齐（输入框下方的提示文字不影响对齐）。
+ * 偏移量 = 字段标签的行高（12px × 1.5）+ 标签与输入框的间距（6px），与 controls.module.css 一致。
+ */
+.fieldRow {
+  --field-label-offset: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.fieldRow > * {
+  min-width: 0;
+}
+
+.fieldRow > button {
+  margin-top: var(--field-label-offset);
 }
 
 .grow {
@@ -119,48 +203,7 @@
 .grid2 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
-}
-
-.presets {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 8px;
-}
-
-.preset {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 9px 11px;
-  border: 1px solid var(--tt-line);
-  border-radius: var(--tt-radius-sm);
-  background: var(--tt-panel);
-  cursor: pointer;
-  text-align: left;
-  min-width: 0;
-}
-
-.preset[aria-pressed='true'] {
-  border-color: var(--tt-accent);
-  background: var(--tt-tint);
-}
-
-.presetName {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.presetModel {
-  font-family: var(--tt-mono);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.presetNote {
-  font-size: 11px;
-  color: var(--tt-muted);
+  gap: 16px;
 }
 
 .status {
@@ -176,18 +219,22 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  border: 1px solid var(--tt-line);
+  border-radius: var(--tt-radius-md);
+  overflow: hidden;
 }
 
 .check {
   display: grid;
-  grid-template-columns: 22px minmax(0, 110px) minmax(0, 1fr);
-  gap: 8px;
+  grid-template-columns: 22px minmax(0, 120px) minmax(0, 1fr);
+  gap: 10px;
   align-items: start;
-  padding: 8px 10px;
-  border-radius: var(--tt-radius-sm);
-  background: var(--tt-soft);
+  padding: 11px 14px;
   font-size: 13px;
+}
+
+.check + .check {
+  border-top: 1px solid var(--tt-line);
 }
 
 .checkIcon {
@@ -208,7 +255,7 @@
 }
 
 .checkName {
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .checkMessage {
@@ -219,14 +266,30 @@
 .glossary {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .glossaryRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr) 32px;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
+  color: var(--tt-muted);
+}
+
+.glossaryRow input {
+  color: var(--tt-text);
+}
+
+.shortcut {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 2px;
+  border-bottom: 1px solid var(--tt-line);
+  font-size: 14px;
 }
 
 .mono {
@@ -234,18 +297,50 @@
   font-size: 12px;
 }
 
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: 168px minmax(0, 1fr);
+    gap: 20px;
+    padding: 20px 20px 56px;
+  }
+}
+
 @media (max-width: 760px) {
+  .header {
+    padding: 10px 14px;
+  }
+  .headerTitle {
+    gap: 10px;
+  }
+  .headerTitle h1 {
+    padding-left: 10px;
+  }
   .layout {
     grid-template-columns: minmax(0, 1fr);
-    padding: 12px;
+    gap: 14px;
+    padding: 12px 12px 40px;
   }
   .nav {
     position: static;
     flex-direction: row;
     flex-wrap: wrap;
+    gap: 6px;
   }
-  .header {
-    padding: 10px 12px;
+  .nav a {
+    min-height: 32px;
+    padding: 0 10px;
+    gap: 6px;
+    font-size: 13px;
+    border: 1px solid var(--tt-line);
+    background: var(--tt-panel);
+  }
+  .nav a svg {
+    width: 14px;
+    height: 14px;
+  }
+  .section {
+    padding: 18px 16px;
+    scroll-margin-top: 72px;
   }
   .check {
     grid-template-columns: 22px minmax(0, 1fr);

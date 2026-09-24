@@ -1,22 +1,26 @@
 /**
  * A 轻巧侧栏。真实模式通过 worker 快照工作；演示模式只从明确入口开启，并持续显示演示标识。
- * 界面语言按快照中的 settings.uiLocale 决定（演示模式同样适用），快照到达前按浏览器界面语言显示。
+ * 界面语言与外观主题按快照中的 settings.uiLocale / settings.uiTheme 决定（演示模式同样适用），
+ * 快照到达前按浏览器界面语言与本机上次使用的主题显示。
+ *
+ * 页面结构：品牌（一级标题）+ 状态胶囊、文字标签页、各标签的卡片内容；演示模式底部常驻演示标识。
  */
-import {
-  AudioLines,
-  Clock,
-  Gauge,
-  MonitorPlay,
-  Search,
-  SlidersHorizontal,
-  Text,
-} from 'lucide-react';
+import { Clock, FlaskConical, Gauge, MonitorPlay } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { PageInfo } from '../../domain/session';
 import { resolveLocale } from '../../i18n';
 import { browserUiLanguage, useLocale, useT } from '../../i18n/react';
 import { Button, Spinner } from '../components/controls';
-import { EmptyState, ReconnectBanner, StatusPill, TabPanel, Tabs } from '../components/layout';
+import {
+  Brand,
+  Callout,
+  Card,
+  EmptyState,
+  ReconnectBanner,
+  StatusPill,
+  TabPanel,
+  Tabs,
+} from '../components/layout';
 import { ToastProvider, useToast } from '../components/toast';
 import { createDemoRepos, DemoClient } from '../demo/demo-client';
 import { DEMO_TAB_ID } from '../demo/demo-data';
@@ -24,6 +28,7 @@ import { formatMediaTime } from '../format';
 import { usePlayerClock } from '../shared/hooks';
 import { SnapshotI18nProvider } from '../shared/LocaleRoot';
 import { reloadTab } from '../shared/navigation';
+import { applyUiTheme, isUiThemePreference } from '../theme/themes';
 import { useActiveTab, type ActiveTabState } from '../state/active-tab';
 import {
   deriveServiceConfig,
@@ -73,19 +78,43 @@ export function SidePanelApp() {
   );
 }
 
+/** 页面当前的外观主题（启动时来自本机记录，之后跟随快照）。 */
+function documentUiTheme() {
+  const current = document.documentElement.dataset.ttTheme;
+  return isUiThemePreference(current) ? current : undefined;
+}
+
 function DemoRoot({ realClient, onExit }: { realClient: UiClient; onExit(): void }) {
-  const [client] = useState(() => new DemoClient(resolveLocale(undefined, browserUiLanguage())));
+  // 进入演示前页面的主题：真实快照尚未到达时，演示沿用它，退出时也恢复它。
+  const [themeBefore] = useState(documentUiTheme);
+  // 创建时就带上用户的界面语言与主题，避免进入演示的第一帧闪回默认外观。
+  const [client] = useState(() => {
+    const demo = new DemoClient(resolveLocale(undefined, browserUiLanguage()), {
+      uiTheme: themeBefore,
+    });
+    demo.adoptUiPreferences(realClient.getState().snapshot?.settings);
+    return demo;
+  });
   const [repos] = useState<UiRepos>(() => createDemoRepos());
   useEffect(() => {
     client.start();
     return () => client.stop();
   }, [client]);
-  // 演示不向 worker 发命令，但界面语言应与用户保存的设置一致：只读取真实快照中的 uiLocale。
+  // 演示不向 worker 发命令，但界面语言与外观主题应与用户保存的设置一致：只读取真实快照中的
+  // uiLocale / uiTheme。演示中的切换只作用于演示；真实设置的值变化时以它为准。
   useEffect(() => {
-    const adopt = () => client.adoptUiLocale(realClient.getState().snapshot?.settings.uiLocale);
+    const adopt = () => client.adoptUiPreferences(realClient.getState().snapshot?.settings);
     adopt();
     return realClient.subscribe(adopt);
   }, [client, realClient]);
+  // 离开演示时恢复真实主题：演示中的主题切换不应留在页面或本机记录里。
+  useEffect(
+    () => () => {
+      const restore = realClient.getState().snapshot?.settings.uiTheme ?? themeBefore;
+      if (restore) applyUiTheme(restore);
+    },
+    [realClient, themeBefore],
+  );
   return (
     <UiClientProvider client={client}>
       <ReposProvider repos={repos}>
@@ -149,14 +178,12 @@ export function PanelView({
   const status = deriveStatus({ connection, snapshot, tabContext, config, locale });
 
   return (
-    <div className={styles.app} lang={locale} aria-label={t('common.brand.name')}>
+    <div className={styles.app} lang={locale}>
       <header className={styles.header}>
-        <h1 className={styles.panelTitle}>
-          {tab === 'search' ? t('sidepanel.title.search') : t('sidepanel.title.translate')}
-        </h1>
+        <Brand nameAs="h1" />
         <div className={styles.headerRight}>
           {demo ? (
-            <StatusPill label={t('sidepanel.pill.demo')} tone="accent" />
+            <StatusPill label={t('sidepanel.pill.demo')} tone="demo" />
           ) : (
             <StatusPill
               label={
@@ -177,9 +204,13 @@ export function PanelView({
 
       {!snapshot ? (
         <div className={styles.surface}>
-          <EmptyState icon={<Spinner />} title={t('common.reconnect.connecting')}>
-            {t('sidepanel.connecting.body')}
-          </EmptyState>
+          <div className={styles.pane}>
+            <Card>
+              <EmptyState icon={<Spinner />} title={t('common.reconnect.connecting')}>
+                {t('sidepanel.connecting.body')}
+              </EmptyState>
+            </Card>
+          </div>
         </div>
       ) : (
         <>
@@ -189,26 +220,10 @@ export function PanelView({
             value={tab}
             onChange={setTab}
             items={[
-              {
-                id: 'translate',
-                label: t('sidepanel.tabs.translate'),
-                icon: <AudioLines size={15} aria-hidden="true" />,
-              },
-              {
-                id: 'transcript',
-                label: t('sidepanel.tabs.transcript'),
-                icon: <Text size={15} aria-hidden="true" />,
-              },
-              {
-                id: 'search',
-                label: t('sidepanel.tabs.search'),
-                icon: <Search size={15} aria-hidden="true" />,
-              },
-              {
-                id: 'settings',
-                label: t('sidepanel.tabs.settings'),
-                icon: <SlidersHorizontal size={15} aria-hidden="true" />,
-              },
+              { id: 'translate', label: t('sidepanel.tabs.translate') },
+              { id: 'transcript', label: t('sidepanel.tabs.transcript') },
+              { id: 'search', label: t('sidepanel.tabs.search') },
+              { id: 'settings', label: t('sidepanel.tabs.settings') },
             ]}
           />
           <div className={styles.surface}>
@@ -288,7 +303,8 @@ export function PanelView({
       )}
       {demo && (
         <div className={styles.demoFooter} role="note">
-          <span>{t('common.demo.label')}</span>
+          <FlaskConical size={14} aria-hidden="true" />
+          <span className={styles.demoText}>{t('common.demo.label')}</span>
           <button type="button" onClick={onExitDemo} aria-label={t('common.demo.exit')}>
             {t('sidepanel.demo.exitShort')}
           </button>
@@ -350,11 +366,19 @@ function NoVideoState({
 }) {
   const notify = useToast();
   const t = useT();
-  if (kind === 'loading') {
-    return <EmptyState icon={<Spinner />} title={t('sidepanel.noVideo.loadingTab')} />;
-  }
-  if (kind === 'waking') {
-    return <EmptyState icon={<Spinner />} title={t('sidepanel.noVideo.waking')} />;
+  if (kind === 'loading' || kind === 'waking') {
+    return (
+      <div className={styles.pane}>
+        <Card>
+          <EmptyState
+            icon={<Spinner />}
+            title={
+              kind === 'loading' ? t('sidepanel.noVideo.loadingTab') : t('sidepanel.noVideo.waking')
+            }
+          />
+        </Card>
+      </div>
+    );
   }
   const reload =
     maybeYoutube && tabId !== undefined ? (
@@ -366,38 +390,39 @@ function NoVideoState({
       </Button>
     ) : undefined;
   return (
-    <div>
-      {kind === 'youtube-no-video' ? (
-        <EmptyState
-          icon={<MonitorPlay size={20} aria-hidden="true" />}
-          title={t('sidepanel.noVideo.ytTitle')}
-        >
-          {t('sidepanel.noVideo.ytBody')}
-        </EmptyState>
-      ) : (
-        <EmptyState
-          icon={<MonitorPlay size={20} aria-hidden="true" />}
-          title={t('sidepanel.noVideo.notYtTitle')}
-          actions={reload}
-        >
-          {t('sidepanel.noVideo.notYtBody')}
-        </EmptyState>
-      )}
-      {configMessage && (
-        <div style={{ padding: '0 12px 12px' }}>
+    <div className={styles.pane}>
+      <Card>
+        {kind === 'youtube-no-video' ? (
           <EmptyState
-            title={t('sidepanel.noVideo.configTitle')}
-            actions={
-              onOpenSettings ? (
-                <Button size="sm" onClick={onOpenSettings}>
-                  {t('sidepanel.noVideo.viewSettings')}
-                </Button>
-              ) : undefined
-            }
+            icon={<MonitorPlay size={22} aria-hidden="true" />}
+            title={t('sidepanel.noVideo.ytTitle')}
           >
-            {configMessage}
+            {t('sidepanel.noVideo.ytBody')}
           </EmptyState>
-        </div>
+        ) : (
+          <EmptyState
+            icon={<MonitorPlay size={22} aria-hidden="true" />}
+            title={t('sidepanel.noVideo.notYtTitle')}
+            actions={reload}
+          >
+            {t('sidepanel.noVideo.notYtBody')}
+          </EmptyState>
+        )}
+      </Card>
+      {configMessage && (
+        <Callout
+          tone="warning"
+          title={t('sidepanel.noVideo.configTitle')}
+          actions={
+            onOpenSettings ? (
+              <Button size="sm" onClick={onOpenSettings}>
+                {t('sidepanel.noVideo.viewSettings')}
+              </Button>
+            ) : undefined
+          }
+        >
+          {configMessage}
+        </Callout>
       )}
     </div>
   );

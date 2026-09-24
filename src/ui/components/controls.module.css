@@ -1,22 +1,29 @@
+/*
+ * 基础控件样式：只使用 tokens.css 中的主题变量，四种主题通用。
+ * 页面可通过 --tt-control-font / --tt-label-font / --tt-hint-font / --tt-row-height 调整密度。
+ */
+
 .button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 7px 12px;
-  border: 1px solid var(--tt-line);
-  border-radius: var(--tt-radius-sm);
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid var(--tt-line-strong);
+  border-radius: var(--tt-radius-md);
   background: var(--tt-panel);
   color: var(--tt-text);
   font-size: var(--tt-control-font, 13px);
+  font-weight: 500;
   line-height: 1.3;
   cursor: pointer;
   text-align: center;
   min-width: 0;
   transition:
-    background-color 0.12s,
-    border-color 0.12s;
+    background-color 0.15s,
+    border-color 0.15s,
+    color 0.15s;
 }
 
 .button:hover:not(:disabled) {
@@ -26,7 +33,7 @@
 
 .button:disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+  opacity: 0.5;
 }
 
 .label {
@@ -34,10 +41,11 @@
 }
 
 .sm {
-  min-height: 28px;
-  padding: 4px 9px;
+  min-height: 32px;
+  padding: 5px 10px;
+  border-radius: var(--tt-radius-sm);
   font-size: 12px;
-  gap: 5px;
+  gap: 6px;
 }
 
 .block {
@@ -46,15 +54,15 @@
 }
 
 .primary {
-  background: var(--tt-accent);
-  border-color: var(--tt-accent);
-  color: var(--tt-onaccent);
-  font-weight: 500;
+  background: var(--tt-cta);
+  border-color: var(--tt-cta);
+  color: var(--tt-on-cta);
+  font-weight: 600;
 }
 
 .primary:hover:not(:disabled) {
-  background: var(--tt-accent-hover);
-  border-color: var(--tt-accent-hover);
+  background: var(--tt-cta-hover);
+  border-color: var(--tt-cta-hover);
 }
 
 .ghost {
@@ -70,6 +78,7 @@
 }
 
 .danger {
+  background: transparent;
   color: var(--tt-danger);
   border-color: var(--tt-danger-line);
 }
@@ -86,12 +95,16 @@
   width: 32px;
   height: 32px;
   padding: 0;
-  border: 1px solid var(--tt-line);
+  border: 1px solid var(--tt-line-strong);
   border-radius: var(--tt-radius-sm);
   background: var(--tt-panel);
   color: var(--tt-muted);
   cursor: pointer;
   flex-shrink: 0;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s,
+    color 0.15s;
 }
 
 .iconButton:hover:not(:disabled) {
@@ -100,9 +113,9 @@
 }
 
 .iconButton[aria-pressed='true'] {
-  color: var(--tt-accent);
+  color: var(--tt-accent-ink);
   background: var(--tt-tint);
-  border-color: var(--tt-accent);
+  border-color: transparent;
 }
 
 .iconButton:disabled {
@@ -135,13 +148,20 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 
 .fieldLabel {
   font-size: var(--tt-label-font, 12px);
-  color: var(--tt-muted);
+  font-weight: 500;
+  color: var(--tt-text-soft);
+}
+
+.inputRow {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
 }
 
 .hint {
@@ -151,7 +171,7 @@
 }
 
 .error {
-  font-size: 12px;
+  font-size: var(--tt-hint-font, 12px);
   color: var(--tt-danger);
   line-height: 1.55;
 }
@@ -161,18 +181,42 @@
 .textarea {
   width: 100%;
   min-width: 0;
-  min-height: 36px;
-  padding: 7px 10px;
-  border: 1px solid var(--tt-line);
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--tt-line-strong);
   border-radius: var(--tt-radius-sm);
-  background: var(--tt-panel);
+  background-color: var(--tt-panel);
   color: var(--tt-text);
   font-size: var(--tt-control-font, 13px);
+  transition:
+    border-color 0.15s,
+    background-color 0.15s;
 }
 
+.input:focus,
+.select:focus,
+.textarea:focus {
+  border-color: var(--tt-accent);
+}
+
+/* 自绘下拉箭头：两段渐变拼成的小三角，颜色随主题变量变化（不依赖图片资源）。 */
 .select {
-  padding-right: 6px;
+  appearance: none;
+  padding-right: 32px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--tt-muted) 50%),
+    linear-gradient(135deg, var(--tt-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 50%,
+    calc(100% - 13px) 50%;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+  white-space: nowrap;
+  overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
 }
 
 .textarea {
@@ -193,7 +237,8 @@
   cursor: not-allowed;
 }
 
-.inputInvalid {
+.inputInvalid,
+.inputInvalid:focus {
   border-color: var(--tt-danger);
 }
 
@@ -202,7 +247,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: var(--tt-row-height, 34px);
+  min-height: var(--tt-row-height, 40px);
   font-size: var(--tt-control-font, 13px);
   min-width: 0;
 }
@@ -211,47 +256,87 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 1px;
+  gap: 2px;
+}
+
+/* 行内选择的说明紧贴在行下方（列表中与下一行保持间距）。 */
+.field > .row + .hint {
+  margin-top: -6px;
+  padding-bottom: 10px;
 }
 
 .rowControl {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 60%;
+  max-width: 62%;
+}
+
+/* 行内选择：像列表行右侧的「取值 + 箭头」，悬停时才显示底色。 */
+.rowControl .select {
+  min-height: 34px;
+  padding: 6px 26px 6px 8px;
+  border-color: transparent;
+  background-color: transparent;
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 9px) 50%;
+  color: var(--tt-text-soft);
+  text-align: right;
+  text-align-last: right;
+}
+
+.rowControl .select:hover:not(:disabled) {
+  background-color: var(--tt-soft);
+}
+
+.rowControl .select:focus {
+  border-color: transparent;
+  background-color: var(--tt-soft);
 }
 
 .switch {
   position: relative;
-  width: 34px;
-  height: 20px;
+  width: 38px;
+  height: 22px;
   flex-shrink: 0;
   appearance: none;
   margin: 0;
   border: 0;
-  border-radius: 12px;
-  background: var(--tt-line-strong);
+  border-radius: 999px;
+  background: var(--tt-soft);
+  box-shadow: inset 0 0 0 1.5px var(--tt-muted);
   cursor: pointer;
-  transition: background-color 0.15s;
+  transition:
+    background-color 0.15s,
+    box-shadow 0.15s;
 }
 
 .switch::after {
   content: '';
   position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 14px;
-  height: 14px;
+  top: 6px;
+  left: 6px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: var(--tt-panel);
-  transition: left 0.15s;
+  background: var(--tt-muted);
+  transition:
+    left 0.15s,
+    top 0.15s,
+    width 0.15s,
+    height 0.15s;
 }
 
 .switch:checked {
   background: var(--tt-accent);
+  box-shadow: none;
 }
 
 .switch:checked::after {
-  left: 17px;
+  top: 3px;
+  left: 19px;
+  width: 16px;
+  height: 16px;
   background: var(--tt-onaccent);
 }
 
@@ -271,8 +356,8 @@
 .checkbox input {
   margin: 3px 0 0;
   accent-color: var(--tt-accent);
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
 }
 
@@ -300,7 +385,7 @@
 
 .rangeInput {
   width: 100%;
-  margin: 4px 0;
+  margin: 6px 0 2px;
   accent-color: var(--tt-accent);
   cursor: pointer;
 }
@@ -310,9 +395,13 @@
   cursor: not-allowed;
 }
 
+/* 分段按钮：浅色轨道，当前项为「抬起」的色块。 */
 .segments {
   display: flex;
-  gap: 6px;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--tt-radius);
+  background: var(--tt-soft);
   min-width: 0;
 }
 
@@ -321,23 +410,32 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 6px;
   min-height: 36px;
   min-width: 0;
-  padding: 6px 6px;
-  border: 1px solid var(--tt-line);
-  border-radius: var(--tt-radius-sm);
-  background: var(--tt-panel);
-  color: var(--tt-text);
-  font-size: 12px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--tt-radius-md);
+  background: transparent;
+  color: var(--tt-muted);
+  font-size: var(--tt-control-font, 13px);
+  font-weight: 500;
+  line-height: 1.3;
   cursor: pointer;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+
+.segment:hover:not(:disabled):not([aria-pressed='true']) {
+  color: var(--tt-text);
 }
 
 .segment[aria-pressed='true'] {
-  border-color: var(--tt-accent);
-  background: var(--tt-tint);
-  color: var(--tt-accent);
-  font-weight: 500;
+  background: var(--tt-seg-on);
+  color: var(--tt-seg-on-text);
+  box-shadow: var(--tt-seg-shadow);
+  font-weight: 600;
 }
 
 .segment:disabled {
@@ -346,13 +444,14 @@
 }
 
 .kbd {
-  font-family: var(--tt-font);
-  font-size: 12px;
-  border: 1px solid var(--tt-line);
+  font-family: var(--tt-mono);
+  font-size: 11px;
+  border: 1px solid var(--tt-line-strong);
   border-bottom-width: 2px;
-  border-radius: 5px;
+  border-radius: 6px;
   padding: 1px 6px;
-  background: var(--tt-soft);
+  background: var(--tt-panel);
+  color: var(--tt-text-soft);
   white-space: nowrap;
 }
 
@@ -361,6 +460,9 @@
   .segment,
   .input,
   .select {
+    min-height: 44px;
+  }
+  .rowControl .select {
     min-height: 44px;
   }
   .iconButton {

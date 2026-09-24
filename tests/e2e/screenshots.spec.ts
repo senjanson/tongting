@@ -21,7 +21,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { translate, type Locale, type MessageKey } from '../../src/i18n';
-import { launchExtension, type LaunchedExtension } from './helpers/extension';
+import { launchExtension, setUiTheme, type LaunchedExtension } from './helpers/extension';
 import {
   configureProvider,
   openWatch,
@@ -36,6 +36,9 @@ import type { CaptionLine, FixtureVideo } from './fixtures/full-chain/youtube';
 const OUT_ROOT = resolve(import.meta.dirname, '../../docs/screenshots');
 const LOCALES: Locale[] = ['zh-CN', 'en'];
 const SCALE = ['--force-device-scale-factor=2'];
+/** 四种外观主题：README 并列展示侧栏与播放器字幕层在各主题下的样子。 */
+const THEMES = ['paper', 'ink', 'cinema', 'wave'] as const;
+const themeOf = (page: Page) => page.evaluate(() => document.documentElement.dataset.ttTheme);
 
 /** 夹具字幕与对照译文：与演示模式同一组文案，保证 README 的截图语气一致。 */
 const SENTENCES: Array<[string, string]> = [
@@ -137,6 +140,17 @@ test.describe('README 截图', () => {
         ).toBeVisible();
         await shot(locale, options, 'options.png', { fullPage: true });
         await options.close();
+
+        // 四种主题下的演示侧栏（演示模式沿用用户保存的主题）
+        for (const theme of THEMES) {
+          await setUiTheme(ext.context, ext.extensionId, theme);
+          const themed = await open('sidepanel.html?demo=1', 400);
+          await expect(themed.getByText(m('common.demo.label'))).toBeVisible();
+          await expect.poll(() => themeOf(themed)).toBe(theme);
+          await shot(locale, themed, `sidepanel-theme-${theme}.png`);
+          await themed.close();
+        }
+        await setUiTheme(ext.context, ext.extensionId, 'auto');
       } finally {
         await ext?.close();
       }
@@ -192,6 +206,30 @@ test.describe('README 截图', () => {
           path: join(OUT_ROOT, locale, 'youtube-overlay.png'),
           animations: 'disabled',
         });
+
+        // 四种主题下的播放器字幕层：切换主题只改外观，字幕内容不变。
+        const stageTheme = () =>
+          page.evaluate(
+            () =>
+              document
+                .querySelector('[data-tongting-overlay]')
+                ?.shadowRoot?.querySelector<HTMLElement>('.stage')?.dataset.theme,
+          );
+        for (const theme of THEMES) {
+          await fc.ui.ok({ kind: 'settings/update', patch: { uiTheme: theme } });
+          await expect.poll(stageTheme).toBe(theme);
+          const themed = await waitOverlay(page, (s) => s.main === expected, 10_000, theme);
+          expect(themed.secondary).toBe(SENTENCES[2]![0]);
+          await page.locator('#movie_player').screenshot({
+            path: join(OUT_ROOT, locale, `youtube-overlay-${theme}.png`),
+            animations: 'disabled',
+          });
+        }
+        await fc.ui.ok({ kind: 'settings/update', patch: { uiTheme: 'auto' } });
+        await expect.poll(stageTheme).toBe('paper');
+        await expect
+          .poll(() => themeOf(fc!.ui.page), { message: '侧栏随设置恢复跟随系统' })
+          .toBe('auto');
 
         // 运行中的侧栏（真实会话状态，不是演示数据）
         await fc.ui.waitSession(tabId, (s) => s.translation.done > 0, { timeout: 30_000 });

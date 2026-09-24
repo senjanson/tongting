@@ -155,6 +155,84 @@ describe('options page locale', () => {
   });
 });
 
+describe('options appearance theme', () => {
+  function withTheme(uiTheme: AppSnapshot['settings']['uiTheme'], version = 0): AppSnapshot {
+    const base = withLocale('auto', version);
+    return { ...base, settings: { ...base.settings, uiTheme } };
+  }
+
+  beforeEach(() => {
+    delete document.documentElement.dataset.ttTheme;
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    delete document.documentElement.dataset.ttTheme;
+    localStorage.clear();
+  });
+
+  it('shows the theme picker in General next to the interface language and saves the choice', async () => {
+    useWorker(createFakeWorker(withTheme('auto')), 'zh-CN');
+    render(<OptionsApp />);
+    const general = await screen.findByRole('region', { name: '常规' });
+    expect(within(general).getByRole('combobox', { name: '界面语言' })).toBeTruthy();
+    expect(within(general).getByRole('heading', { level: 3, name: '外观主题' })).toBeTruthy();
+    const group = within(general).getByRole('group', { name: '选择外观主题' });
+    expect(
+      within(group)
+        .getAllByRole('button')
+        .map((b) => b.getAttribute('aria-label')),
+    ).toEqual(['主题：跟随系统', '主题：纸墨', '主题：夜墨', '主题：影院', '主题：声波']);
+    expect(
+      within(group).getByRole('button', { name: '主题：跟随系统' }).getAttribute('aria-pressed'),
+    ).toBe('true');
+
+    fireEvent.click(within(group).getByRole('button', { name: '主题：影院' }));
+    await waitFor(() =>
+      expect(worker.commands()).toContainEqual({
+        kind: 'settings/update',
+        patch: { uiTheme: 'cinema' },
+      }),
+    );
+    // 页面外观以快照为准：worker 回推新快照后切换。
+    act(() => worker.emit({ type: 'snapshot', snapshot: withTheme('cinema', 1) }));
+    expect(document.documentElement.dataset.ttTheme).toBe('cinema');
+    expect(
+      within(group).getByRole('button', { name: '主题：影院' }).getAttribute('aria-pressed'),
+    ).toBe('true');
+    expect(
+      within(group).getByRole('button', { name: '主题：跟随系统' }).getAttribute('aria-pressed'),
+    ).toBe('false');
+
+    // 再次点击当前主题不会重复发送。
+    const updates = () =>
+      worker.commands().filter((c) => c.kind === 'settings/update' && 'uiTheme' in c.patch);
+    const before = updates().length;
+    fireEvent.click(within(group).getByRole('button', { name: '主题：影院' }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(updates()).toHaveLength(before);
+  });
+
+  it('labels the theme picker in English', async () => {
+    useWorker(
+      createFakeWorker({
+        ...withTheme('wave'),
+        settings: { ...withTheme('wave').settings, uiLocale: 'en' },
+      }),
+      'zh-CN',
+    );
+    render(<OptionsApp />);
+    const general = await screen.findByRole('region', { name: 'General' });
+    expect(within(general).getByRole('heading', { level: 3, name: 'Appearance' })).toBeTruthy();
+    const group = within(general).getByRole('group', { name: 'Choose an appearance theme' });
+    expect(
+      within(group).getByRole('button', { name: 'Theme: Wave' }).getAttribute('aria-pressed'),
+    ).toBe('true');
+    expect(within(general).getByText(/only changes how things look/)).toBeTruthy();
+    await waitFor(() => expect(document.documentElement.dataset.ttTheme).toBe('wave'));
+  });
+});
+
 describe('workspace locale', () => {
   beforeEach(async () => {
     await resetDbForTests();

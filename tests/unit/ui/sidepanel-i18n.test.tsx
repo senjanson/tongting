@@ -81,9 +81,12 @@ describe('side panel locale', () => {
       'Search',
       'Settings',
     ]);
-    expect(screen.getByRole('heading', { level: 1, name: 'Live translation' })).toBeTruthy();
+    // 一级标题是品牌名；各功能由标签页区分。
+    expect(screen.getByRole('heading', { level: 1, name: 'Vocasub' })).toBeTruthy();
+    expect(screen.getByText('LIVE TRANSLATION')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Start translation' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'LANGUAGE' })).toBeTruthy();
+    // 语言选择在语言对按钮展开后显示。
+    fireEvent.click(screen.getByRole('button', { name: /Simplified Chinese/, expanded: false }));
     const target = screen.getByRole('combobox', { name: 'Translate to' }) as HTMLSelectElement;
     const labels = within(target)
       .getAllByRole('option')
@@ -92,6 +95,7 @@ describe('side panel locale', () => {
     expect(labels).toContain('Japanese');
     const source = screen.getByRole('combobox', { name: 'Video language' });
     expect(within(source).getByRole('option', { name: 'Auto-detect' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /^Playback/, expanded: false }));
     expect(screen.getByRole('button', { name: 'Stay in sync' })).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/开始翻译|翻译为|视频语言|字幕位置/);
   });
@@ -101,6 +105,8 @@ describe('side panel locale', () => {
     browserLanguage('zh-TW');
     renderPanel(new StaticClient(connected(withLocale('auto', base))));
     expect(screen.getByRole('tab', { name: '翻译' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: '译听' })).toBeTruthy();
+    expect(screen.getByText('VOCASUB')).toBeTruthy();
     cleanup();
     vi.restoreAllMocks();
     browserLanguage('fr-FR');
@@ -142,7 +148,7 @@ describe('side panel locale', () => {
     expect((screen.getByRole('combobox', { name: '界面语言' }) as HTMLSelectElement).value).toBe(
       'zh-CN',
     );
-    expect(screen.getByRole('heading', { name: 'INTERFACE / 界面' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '界面' })).toBeTruthy();
     // 非组件代码（客户端错误）同步使用页面语言。
     expect(errorMessageOf(notConnectedError())).toBe('正在连接后台服务，请稍后重试。');
 
@@ -160,7 +166,8 @@ describe('side panel locale', () => {
     const snapshot = withLocale('en', makeSnapshot({ pages: [makePage()] }));
     renderPanel(new StaticClient(connected(snapshot)));
     fireEvent.click(screen.getByRole('tab', { name: 'Search' }));
-    expect(screen.getByRole('heading', { level: 1, name: 'Vocasub · AI Search' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Vocasub' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Search' }).getAttribute('aria-selected')).toBe('true');
     const heading = screen.getByRole('heading', { level: 2 });
     expect(heading.textContent).toMatch(/^Describe in .+, search in .+$/);
     expect(heading.textContent).not.toMatch(/[一-龥]/);

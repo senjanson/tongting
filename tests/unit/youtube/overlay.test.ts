@@ -2,7 +2,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CaptionSettings } from '@src/domain/settings';
 import type { DisplayCue } from '@src/messaging/content-protocol';
-import { createCaptionOverlay } from '@src/youtube/overlay/overlay';
+import { createCaptionOverlay, resolveOverlayTheme } from '@src/youtube/overlay/overlay';
+import { OVERLAY_CSS } from '@src/youtube/overlay/styles';
 import type { OverlaySession } from '@src/youtube/overlay/cue-store';
 import { createNativeCaptionHider } from '@src/youtube/native-captions';
 import { TT_ATTRS } from '@src/youtube/selectors';
@@ -60,7 +61,11 @@ function shadowOf(host: Element | null) {
     main: shadow.querySelector<HTMLElement>('.main')!,
     secondary: shadow.querySelector<HTMLElement>('.secondary')!,
     badge: shadow.querySelector<HTMLElement>('.badge')!,
+    brand: shadow.querySelector<HTMLElement>('.badge .brand')!,
+    label: shadow.querySelector<HTMLElement>('.badge .label')!,
     caption: shadow.querySelector<HTMLElement>('.caption')!,
+    plate: shadow.querySelector<HTMLElement>('.plate')!,
+    stage: shadow.querySelector<HTMLElement>('.stage')!,
     shadow,
   };
 }
@@ -293,6 +298,139 @@ describe('caption overlay', () => {
     expect(document.querySelectorAll(`[${TT_ATTRS.overlayHost}]`)).toHaveLength(0);
     o.setSession(session);
     expect(document.querySelectorAll(`[${TT_ATTRS.overlayHost}]`)).toHaveLength(0);
+  });
+});
+
+describe('caption overlay themes', () => {
+  function mountWithCue(o: ReturnType<typeof make>) {
+    const { root, video } = buildPlayer();
+    o.bind(root, video);
+    o.setPageVideoId(A);
+    o.setSettings(settings);
+    o.setSession(session);
+    o.applyCues({
+      type: 'session/cues',
+      sessionId: session.sessionId,
+      epoch: 0,
+      cueVersion: 1,
+      full: true,
+      cues: [cue({ sourceText: 'Hello', translatedText: '你好' })],
+    });
+    video.currentTime = 1.5;
+    o.render();
+    return { root, video };
+  }
+
+  it('resolves auto to the paper look regardless of the page color scheme', () => {
+    expect(resolveOverlayTheme('auto')).toBe('paper');
+    for (const theme of ['paper', 'ink', 'cinema', 'wave'] as const)
+      expect(resolveOverlayTheme(theme)).toBe(theme);
+  });
+
+  it('defaults to paper, applies a theme chosen before mounting and keeps it across remounts', () => {
+    const o = make();
+    mountWithCue(o);
+    expect(shadowOf(o.host).stage.dataset.theme).toBe('paper');
+    o.destroy();
+
+    const themed = make();
+    themed.setTheme('cinema');
+    const { root } = mountWithCue(themed);
+    const s = shadowOf(themed.host);
+    expect(s.stage.dataset.theme).toBe('cinema');
+    // 会话结束后宿主被移除，新会话重新挂载时沿用同一主题。
+    themed.setSession(null);
+    expect(themed.mounted).toBe(false);
+    themed.setSession(session);
+    expect(root.querySelectorAll(`[${TT_ATTRS.overlayHost}]`)).toHaveLength(1);
+    expect(shadowOf(themed.host).stage.dataset.theme).toBe('cinema');
+  });
+
+  it('switches theme at runtime in place without touching caption text or settings', () => {
+    const o = make();
+    mountWithCue(o);
+    const host = o.host!;
+    const s = shadowOf(host);
+    expect(s.main.textContent).toBe('你好');
+    expect(s.secondary.textContent).toBe('Hello');
+    for (const theme of ['ink', 'wave', 'cinema', 'auto', 'paper'] as const) {
+      o.setTheme(theme);
+      expect(o.host).toBe(host);
+      expect(shadowOf(o.host).stage).toBe(s.stage);
+      expect(s.stage.dataset.theme).toBe(resolveOverlayTheme(theme));
+      expect(s.main.textContent).toBe('你好');
+      expect(s.secondary.textContent).toBe('Hello');
+      expect(s.main.hidden).toBe(false);
+      expect(host.style.getPropertyValue('--tt-font-size')).toBe('22px');
+      expect(host.style.getPropertyValue('--tt-bg-opacity')).toBe('0.75');
+    }
+    // 主题切换后字号、底板透明度、位置、双语设置照常生效。
+    o.setTheme('wave');
+    o.setSettings({
+      ...settings,
+      fontSizePx: 30,
+      backgroundOpacity: 0.2,
+      position: 'top',
+      bilingual: false,
+    });
+    expect(s.stage.dataset.theme).toBe('wave');
+    expect(host.style.getPropertyValue('--tt-font-size')).toBe('30px');
+    expect(host.style.getPropertyValue('--tt-bg-opacity')).toBe('0.2');
+    expect(s.caption.dataset.position).toBe('top');
+    expect(s.secondary.hidden).toBe(true);
+    o.destroy();
+    o.setTheme('ink'); // 销毁后忽略
+    expect(s.stage.dataset.theme).toBe('wave');
+  });
+
+  it('defines a look for every theme and keeps size/opacity driven by the settings variables', () => {
+    for (const theme of ['ink', 'cinema', 'wave'])
+      expect(OVERLAY_CSS).toContain(`.stage[data-theme="${theme}"]`);
+    // paper/ink 的底板与 wave 的卡片都随背景不透明度变化；字号驱动两行字号。
+    expect(OVERLAY_CSS).toMatch(/--plate-bg: rgba\(16, 17, 16, var\(--tt-bg-opacity\)\)/);
+    expect(OVERLAY_CSS).toMatch(/--plate-bg: rgba\(12, 15, 13, calc\(var\(--tt-bg-opacity\)/);
+    expect(OVERLAY_CSS).toMatch(
+      /--main-bg: rgba\(255, 255, 255, calc\(0\.8 \+ var\(--tt-bg-opacity\)/,
+    );
+    expect(OVERLAY_CSS).toContain('font-size: var(--tt-font-size)');
+    expect(OVERLAY_CSS).toContain('font-size: calc(var(--tt-font-size) * 0.64)');
+    // 只用系统字体：不引用网络字体或扩展资源。
+    expect(OVERLAY_CSS).not.toMatch(/@font-face|@import|url\(/);
+  });
+
+  it('hides the shared plate when no caption line is visible', () => {
+    const o = make();
+    const { video } = mountWithCue(o);
+    const s = shadowOf(o.host);
+    expect(s.plate.hidden).toBe(false);
+    o.setSettings({ ...settings, bilingual: false });
+    expect(s.plate.hidden).toBe(false);
+    expect(s.secondary.hidden).toBe(true);
+    video.currentTime = 5;
+    o.render();
+    expect(s.main.hidden).toBe(true);
+    expect(s.plate.hidden).toBe(true);
+    video.currentTime = 1.5;
+    o.render();
+    expect(s.plate.hidden).toBe(false);
+    o.setAd(true);
+    expect(s.plate.hidden).toBe(true);
+  });
+
+  it('renders the badge as a CSS brand mark plus brand and status text, without markup elements', () => {
+    const o = make();
+    mountWithCue(o);
+    const s = shadowOf(o.host);
+    expect(s.badge.textContent).toBe('译听 · 运行中');
+    expect(s.brand.textContent).toBe('译听 · ');
+    expect(s.label.textContent).toBe('运行中');
+    expect(s.badge.querySelectorAll('.mark .bar')).toHaveLength(4);
+    expect(s.badge.querySelector('.mark')!.getAttribute('aria-hidden')).toBe('true');
+    expect(s.shadow.querySelectorAll('img, script, iframe, a, svg')).toHaveLength(0);
+    o.setSession({ ...session, statusText: '<b>识别服务未配置</b>' });
+    expect(s.badge.textContent).toBe('译听 · <b>识别服务未配置</b>');
+    expect(s.label.textContent).toBe('<b>识别服务未配置</b>');
+    expect(s.shadow.querySelectorAll('b')).toHaveLength(0);
   });
 });
 

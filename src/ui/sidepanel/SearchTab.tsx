@@ -1,6 +1,7 @@
 import {
   ArrowRight,
   Check,
+  ChevronDown,
   ChevronRight,
   Copy,
   History,
@@ -30,6 +31,7 @@ import { translate, type Locale } from '../../i18n';
 import { useLocale, useT } from '../../i18n/react';
 import { randomId } from '../../messaging/ports';
 import { Button, IconButton, SelectField } from '../components/controls';
+import { Callout, Card } from '../components/layout';
 import { useToast } from '../components/toast';
 import { formatDate, languageLabel, searchLanguageName } from '../format';
 import { copyText } from '../shared/clipboard';
@@ -268,97 +270,107 @@ export function SearchTab({
 
   return (
     <div className={styles.pane}>
-      <h2 className={styles.title}>
-        {t('sidepanel.search.title', { user: names.user, keyword: names.keyword })}
-      </h2>
-      <p className={styles.intro}>{t('sidepanel.search.intro')}</p>
+      <div className={styles.head}>
+        <h2 className={styles.title}>
+          {t('sidepanel.search.title', { user: names.user, keyword: names.keyword })}
+        </h2>
+        <p className={styles.intro}>{t('sidepanel.search.intro')}</p>
+      </div>
       {!config.ready && (
-        <div className={styles.config} role="status">
-          <p>{config.message || t('sidepanel.search.configFallback')}</p>
-          <Button size="sm" onClick={onOpenSettings}>
-            {t('common.openSettings')}
-          </Button>
-        </div>
-      )}
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void generate();
-        }}
-      >
-        <div className={styles.languages}>
-          <SelectField
-            label={t('sidepanel.search.userLanguage')}
-            value={languages.userLanguage}
-            options={languageOptions}
-            disabled={languageDisabled}
-            onChange={(userLanguage) => void updateSettings({ search: { userLanguage } })}
-          />
-          <span className={styles.arrow} aria-hidden="true">
-            <ArrowRight size={15} />
-          </span>
-          <SelectField
-            label={t('sidepanel.search.keywordLanguage')}
-            value={languages.keywordLanguage}
-            options={languageOptions}
-            disabled={languageDisabled}
-            onChange={(keywordLanguage) => void updateSettings({ search: { keywordLanguage } })}
-          />
-        </div>
-        <label className={styles.label} htmlFor="search-topic">
-          {t('sidepanel.search.question')}
-        </label>
-        <textarea
-          id="search-topic"
-          className={styles.input}
-          rows={3}
-          maxLength={300}
-          placeholder={placeholderFor(languages.userLanguage, names.user, locale)}
-          value={query}
-          disabled={busy || clearing}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setError('');
-          }}
-          onKeyDown={(event) => {
-            if (
-              event.key === 'Enter' &&
-              (event.ctrlKey || event.metaKey) &&
-              !event.nativeEvent.isComposing
-            ) {
-              event.preventDefault();
-              void generate();
-            }
-          }}
-        />
-        <div className={styles.inputMeta}>
-          <span>
-            {sameLanguage ? t('sidepanel.search.metaSame') : t('sidepanel.search.metaDiff')}
-          </span>
-          <span>{query.length} / 300</span>
-        </div>
-        <Button
-          type="submit"
-          block
-          variant="primary"
-          busy={busy}
-          icon={<Sparkles size={16} aria-hidden="true" />}
-          disabled={
-            busy || clearing || !query.trim() || !config.ready || connection !== 'connected'
+        <Callout
+          tone="warning"
+          live
+          actions={
+            <Button size="sm" onClick={onOpenSettings}>
+              {t('common.openSettings')}
+            </Button>
           }
         >
-          {busy
-            ? t('sidepanel.search.generating')
-            : current
-              ? t('sidepanel.search.regenerate', { keyword: names.keyword })
-              : t('sidepanel.search.generate', { keyword: names.keyword })}
-        </Button>
-        {busy && (
-          <Button block variant="ghost" size="sm" onClick={cancel}>
-            {t('sidepanel.search.cancel')}
+          {config.message || t('sidepanel.search.configFallback')}
+        </Callout>
+      )}
+      <Card>
+        <form
+          className={styles.form}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void generate();
+          }}
+        >
+          <div className={styles.languages}>
+            <SelectField
+              label={t('sidepanel.search.userLanguage')}
+              value={languages.userLanguage}
+              options={languageOptions}
+              disabled={languageDisabled}
+              onChange={(userLanguage) => void updateSettings({ search: { userLanguage } })}
+            />
+            <span className={styles.arrow} aria-hidden="true">
+              <ArrowRight size={15} />
+            </span>
+            <SelectField
+              label={t('sidepanel.search.keywordLanguage')}
+              value={languages.keywordLanguage}
+              options={languageOptions}
+              disabled={languageDisabled}
+              onChange={(keywordLanguage) => void updateSettings({ search: { keywordLanguage } })}
+            />
+          </div>
+          <label className={styles.label} htmlFor="search-topic">
+            {t('sidepanel.search.question')}
+          </label>
+          <textarea
+            id="search-topic"
+            className={styles.input}
+            rows={3}
+            maxLength={300}
+            placeholder={placeholderFor(languages.userLanguage, names.user, locale)}
+            value={query}
+            disabled={busy || clearing}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setError('');
+            }}
+            onKeyDown={(event) => {
+              if (
+                event.key === 'Enter' &&
+                (event.ctrlKey || event.metaKey) &&
+                !event.nativeEvent.isComposing
+              ) {
+                event.preventDefault();
+                void generate();
+              }
+            }}
+          />
+          <div className={styles.inputMeta}>
+            <span>
+              {sameLanguage ? t('sidepanel.search.metaSame') : t('sidepanel.search.metaDiff')}
+            </span>
+            <span>{query.length} / 300</span>
+          </div>
+          <Button
+            type="submit"
+            block
+            variant="primary"
+            busy={busy}
+            icon={<Sparkles size={16} aria-hidden="true" />}
+            disabled={
+              busy || clearing || !query.trim() || !config.ready || connection !== 'connected'
+            }
+          >
+            {busy
+              ? t('sidepanel.search.generating')
+              : current
+                ? t('sidepanel.search.regenerate', { keyword: names.keyword })
+                : t('sidepanel.search.generate', { keyword: names.keyword })}
           </Button>
-        )}
-      </form>
+          {busy && (
+            <Button block variant="ghost" size="sm" onClick={cancel}>
+              {t('sidepanel.search.cancel')}
+            </Button>
+          )}
+        </form>
+      </Card>
       {error && (
         <p className={styles.error} role="alert">
           {error}
@@ -387,109 +399,111 @@ export function SearchTab({
                   ` · ${recordNames.user} → ${recordNames.keyword}`}
               </p>
             )}
-            {record.items.map((item, index) => (
-              <article className={styles.result} key={`${record.id}:${index}`}>
-                <div className={styles.category}>
-                  {String(index + 1).padStart(2, '0')} · {item.label}
-                </div>
-                {editing === index ? (
-                  <>
-                    <label className={styles.label} htmlFor={`keyword-${index}`}>
-                      {t('sidepanel.search.editLabel', { keyword: recordNames.keyword })}
-                    </label>
-                    <textarea
-                      id={`keyword-${index}`}
-                      className={styles.input}
-                      rows={2}
-                      maxLength={SEARCH_KEYWORD_MAX_LENGTH}
-                      autoFocus
-                      value={editDraft}
-                      onChange={(event) => {
-                        setEditDraft(event.target.value);
-                        setEditError('');
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.nativeEvent.isComposing) return;
-                        if (event.key === 'Enter' && !event.shiftKey) {
-                          event.preventDefault();
-                          saveEdit(index);
-                        }
-                        if (event.key === 'Escape') {
-                          event.preventDefault();
-                          setEditing(null);
-                        }
-                      }}
-                    />
-                    {editError && (
-                      <p className={styles.error} role="alert">
-                        {editError}
-                      </p>
-                    )}
-                    <div className={styles.actions}>
-                      <Button size="sm" onClick={() => setEditing(null)}>
-                        {t('common.cancel')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="primary"
-                        icon={<Check size={14} />}
-                        onClick={() => saveEdit(index)}
-                      >
-                        {t('common.save')}
-                      </Button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <p className={styles.english}>{keywords[index]}</p>
-                    <p className={styles.meaning}>{item.annotation}</p>
-                    {keywords[index] !== item.keyword && (
-                      <p className={styles.editNote}>
-                        {t('sidepanel.search.edited', { user: recordNames.user })}
-                      </p>
-                    )}
-                    <div className={styles.actions}>
-                      <IconButton
-                        label={t('sidepanel.search.editAria', { index: index + 1 })}
-                        icon={<Pencil size={14} />}
-                        onClick={() => {
-                          setEditing(index);
-                          setEditDraft(keywords[index]!);
+            <Card className={styles.resultList}>
+              {record.items.map((item, index) => (
+                <article className={styles.result} key={`${record.id}:${index}`}>
+                  <div className={styles.category}>
+                    {String(index + 1).padStart(2, '0')} · {item.label}
+                  </div>
+                  {editing === index ? (
+                    <>
+                      <label className={styles.label} htmlFor={`keyword-${index}`}>
+                        {t('sidepanel.search.editLabel', { keyword: recordNames.keyword })}
+                      </label>
+                      <textarea
+                        id={`keyword-${index}`}
+                        className={styles.input}
+                        rows={2}
+                        maxLength={SEARCH_KEYWORD_MAX_LENGTH}
+                        autoFocus
+                        value={editDraft}
+                        onChange={(event) => {
+                          setEditDraft(event.target.value);
                           setEditError('');
                         }}
-                      />
-                      <Button
-                        size="sm"
-                        icon={<Copy size={14} aria-hidden="true" />}
-                        onClick={() => {
-                          void copyText(keywords[index]!).then((ok) => {
-                            if (mounted.current)
-                              notify(
-                                ok
-                                  ? t('sidepanel.search.copied', { keyword: recordNames.keyword })
-                                  : t('sidepanel.search.copyFailed'),
-                                ok ? 'success' : 'warning',
-                              );
-                          });
+                        onKeyDown={(event) => {
+                          if (event.nativeEvent.isComposing) return;
+                          if (event.key === 'Enter' && !event.shiftKey) {
+                            event.preventDefault();
+                            saveEdit(index);
+                          }
+                          if (event.key === 'Escape') {
+                            event.preventDefault();
+                            setEditing(null);
+                          }
                         }}
-                      >
-                        {t('common.copy')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        className={styles.searchButton}
-                        icon={<Search size={14} aria-hidden="true" />}
-                        busy={opening === index}
-                        disabled={opening !== null}
-                        onClick={() => void search(index)}
-                      >
-                        {t('common.search')}
-                      </Button>
-                    </div>
-                  </>
-                )}
-              </article>
-            ))}
+                      />
+                      {editError && (
+                        <p className={styles.error} role="alert">
+                          {editError}
+                        </p>
+                      )}
+                      <div className={styles.actions}>
+                        <Button size="sm" onClick={() => setEditing(null)}>
+                          {t('common.cancel')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          icon={<Check size={14} />}
+                          onClick={() => saveEdit(index)}
+                        >
+                          {t('common.save')}
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className={styles.english}>{keywords[index]}</p>
+                      <p className={styles.meaning}>{item.annotation}</p>
+                      {keywords[index] !== item.keyword && (
+                        <p className={styles.editNote}>
+                          {t('sidepanel.search.edited', { user: recordNames.user })}
+                        </p>
+                      )}
+                      <div className={styles.actions}>
+                        <IconButton
+                          label={t('sidepanel.search.editAria', { index: index + 1 })}
+                          icon={<Pencil size={14} />}
+                          onClick={() => {
+                            setEditing(index);
+                            setEditDraft(keywords[index]!);
+                            setEditError('');
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          icon={<Copy size={14} aria-hidden="true" />}
+                          onClick={() => {
+                            void copyText(keywords[index]!).then((ok) => {
+                              if (mounted.current)
+                                notify(
+                                  ok
+                                    ? t('sidepanel.search.copied', { keyword: recordNames.keyword })
+                                    : t('sidepanel.search.copyFailed'),
+                                  ok ? 'success' : 'warning',
+                                );
+                            });
+                          }}
+                        >
+                          {t('common.copy')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          className={styles.searchButton}
+                          icon={<Search size={14} aria-hidden="true" />}
+                          busy={opening === index}
+                          disabled={opening !== null}
+                          onClick={() => void search(index)}
+                        >
+                          {t('common.search')}
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </article>
+              ))}
+            </Card>
           </>
         ) : (
           !busy && (
@@ -512,8 +526,10 @@ export function SearchTab({
         }}
       >
         <summary>
-          <History size={14} aria-hidden="true" />
-          {t('sidepanel.search.recent')} <span>{history.length}</span>
+          <History size={16} aria-hidden="true" />
+          <span className={styles.summaryLabel}>{t('sidepanel.search.recent')}</span>
+          <span className={styles.count}>{history.length}</span>
+          <ChevronDown size={16} aria-hidden="true" className={styles.summaryChevron} />
         </summary>
         <p className={styles.historyHint}>{t('sidepanel.search.historyHint')}</p>
         {history.length ? (

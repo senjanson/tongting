@@ -1,70 +1,75 @@
+/* 品牌：强调色方块标志 + 展示字体的名称 + 字距拉开的小字注记。 */
 .brand {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   min-width: 0;
 }
 
 .mark {
   width: 30px;
   height: 30px;
-  border-radius: 9px;
+  border-radius: var(--tt-logo-radius);
   background: var(--tt-accent);
   color: var(--tt-onaccent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 2.5px;
+  display: grid;
+  place-items: center;
   flex-shrink: 0;
 }
 
-.mark span {
-  width: 3px;
-  border-radius: 3px;
-  background: currentColor;
-  height: 9px;
-}
-
-.mark span:nth-child(2) {
-  height: 18px;
-}
-
-.mark span:nth-child(3) {
-  height: 13px;
+.mark svg {
+  display: block;
 }
 
 .brandText {
   display: flex;
-  flex-direction: column;
-  line-height: 1.15;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
+  line-height: 1.2;
 }
 
 .brandName {
-  font-weight: 600;
-  font-size: 16px;
-  letter-spacing: 1px;
+  margin: 0;
+  font-family: var(--tt-font-display);
+  font-weight: var(--tt-title-weight);
+  font-size: 19px;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .brandNote {
-  font-size: 10px;
-  letter-spacing: 1.5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
   color: var(--tt-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
+/* 状态胶囊：浅强调底 + 深强调字 + 圆点；其他语气沿用各自的提示色。 */
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 9px;
+  padding: 5px 11px;
   border-radius: 999px;
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
   white-space: nowrap;
   background: var(--tt-soft);
-  color: var(--tt-muted);
-  border: 1px solid var(--tt-line);
+  color: var(--tt-text-soft);
   max-width: 100%;
+  min-width: 0;
+}
+
+.pillText {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -73,38 +78,44 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: currentColor;
+  background: var(--tt-muted);
   flex-shrink: 0;
 }
 
 .tone-accent {
   background: var(--tt-tint);
-  color: var(--tt-accent);
-  border-color: transparent;
+  color: var(--tt-accent-ink);
+}
+
+.tone-accent .dot {
+  background: var(--tt-accent);
 }
 
 .tone-warning {
   background: var(--tt-warning-bg);
   color: var(--tt-warning);
-  border-color: var(--tt-warning-line);
 }
 
 .tone-danger {
   background: var(--tt-danger-bg);
   color: var(--tt-danger);
-  border-color: var(--tt-danger-line);
 }
 
 .tone-busy {
   background: var(--tt-info-bg);
   color: var(--tt-info);
-  border-color: var(--tt-info-line);
 }
 
 .tone-demo {
   background: var(--tt-demo-bg);
   color: var(--tt-demo);
-  border-color: var(--tt-demo-line);
+}
+
+.tone-warning .dot,
+.tone-danger .dot,
+.tone-busy .dot,
+.tone-demo .dot {
+  background: currentColor;
 }
 
 .busyDot {
@@ -117,9 +128,11 @@
   }
 }
 
+/* 标签页：文字标签，当前项为正文色 + 2px 强调色下划线。 */
 .tablist {
   display: flex;
   gap: 4px;
+  flex-shrink: 0;
   border-bottom: 1px solid var(--tt-line);
   padding: 0 12px;
   overflow-x: auto;
@@ -130,20 +143,25 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 10px 9px;
+  height: 44px;
+  padding: 0 12px;
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--tt-muted);
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
 }
 
 .tab[aria-selected='true'] {
   border-bottom-color: var(--tt-accent);
-  color: var(--tt-accent);
-  font-weight: 500;
+  color: var(--tt-text);
+  font-weight: 600;
 }
 
 .tab:hover {
@@ -158,11 +176,21 @@
   outline-offset: -2px;
 }
 
+@media (max-width: 380px) {
+  .tablist {
+    gap: 0;
+    padding: 0 6px;
+  }
+  .tab {
+    padding: 0 9px;
+  }
+}
+
 .callout {
   display: flex;
   gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--tt-radius-sm);
+  padding: 12px 14px;
+  border-radius: var(--tt-radius-md);
   border: 1px solid var(--tt-info-line);
   background: var(--tt-info-bg);
   color: var(--tt-text);
@@ -219,7 +247,7 @@
 }
 
 .callout-success .calloutIcon {
-  color: var(--tt-accent);
+  color: var(--tt-accent-ink);
 }
 
 .callout-demo {
@@ -237,25 +265,29 @@
   align-items: center;
   text-align: center;
   gap: 8px;
-  padding: 28px 12px;
+  padding: 28px 16px;
   color: var(--tt-muted);
   font-size: 13px;
+  line-height: 1.6;
 }
 
 .emptyIcon {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 4px;
+  border-radius: var(--tt-radius-md);
   display: grid;
   place-items: center;
-  background: var(--tt-soft);
-  color: var(--tt-muted);
+  background: var(--tt-tint);
+  color: var(--tt-accent-ink);
 }
 
 .emptyTitle {
   color: var(--tt-text);
-  font-size: 14px;
+  font-family: var(--tt-font-display);
+  font-size: 15px;
   font-weight: 600;
+  line-height: 1.45;
 }
 
 .emptyActions {
@@ -269,14 +301,14 @@
 .group {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
 }
 
 .group + .group {
   border-top: 1px solid var(--tt-line);
-  padding-top: 14px;
-  margin-top: 14px;
+  padding-top: 16px;
+  margin-top: 16px;
 }
 
 .groupHead {
@@ -288,43 +320,125 @@
 }
 
 .groupTitle {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  color: var(--tt-muted);
   margin: 0;
+  font-family: var(--tt-font-display);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--tt-text);
 }
 
 .card {
   background: var(--tt-panel);
-  border: 1px solid var(--tt-line);
+  border: 1px solid var(--tt-card-border);
   border-radius: var(--tt-radius);
+  box-shadow: var(--tt-card-shadow);
   padding: 16px;
   min-width: 0;
+}
+
+.cardFlush {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* 列表：52px 行，行间细线。 */
+.list {
+  --tt-row-height: 52px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.list > * + * {
+  border-top: 1px solid var(--tt-line);
+}
+
+.listRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--tt-row-height, 52px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tt-text);
+  font-size: var(--tt-control-font, 14px);
+  text-align: left;
+  cursor: pointer;
+}
+
+.listRow:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.listRow:hover:not(:disabled) .listValue {
+  color: var(--tt-text);
+}
+
+.cardFlush .listRow {
+  padding: 0 16px;
+}
+
+.cardFlush .listRow:hover:not(:disabled) {
+  background: var(--tt-soft);
+}
+
+.listLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.listLabel > svg {
+  color: var(--tt-muted);
+}
+
+.listValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--tt-muted);
+  font-size: 13px;
+}
+
+.listValueText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .banner {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 12px;
+  padding: 8px 16px;
   font-size: 12px;
   line-height: 1.45;
+  border-top: 1px solid var(--tt-line);
   border-bottom: 1px solid var(--tt-line);
   min-width: 0;
+  flex-shrink: 0;
 }
 
 .banner-demo {
   background: var(--tt-demo-bg);
   color: var(--tt-demo);
-  border-bottom-color: var(--tt-demo-line);
+  border-color: var(--tt-demo-line);
   font-weight: 500;
 }
 
 .banner-warning {
   background: var(--tt-warning-bg);
   color: var(--tt-warning);
-  border-bottom-color: var(--tt-warning-line);
+  border-color: var(--tt-warning-line);
 }
 
 .bannerText {
@@ -333,7 +447,7 @@
 }
 
 .dialog {
-  border: 1px solid var(--tt-line);
+  border: 1px solid var(--tt-card-border);
   border-radius: var(--tt-radius);
   background: var(--tt-panel);
   color: var(--tt-text);
@@ -344,7 +458,7 @@
 }
 
 .dialog::backdrop {
-  background: rgb(12 26 22 / 0.45);
+  background: rgb(10 12 11 / 0.5);
 }
 
 .dialogInner {
@@ -358,16 +472,18 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 14px 16px 10px;
+  padding: 16px 16px 10px 20px;
 }
 
 .dialogTitle {
-  font-size: 16px;
-  font-weight: 600;
+  font-family: var(--tt-font-display);
+  font-size: 17px;
+  font-weight: var(--tt-title-weight);
+  line-height: 1.35;
 }
 
 .dialogBody {
-  padding: 0 16px 12px;
+  padding: 0 20px 14px;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -380,7 +496,7 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
-  padding: 12px 16px 14px;
+  padding: 12px 20px 16px;
   border-top: 1px solid var(--tt-line);
 }
 
@@ -388,7 +504,7 @@
   position: fixed;
   left: 8px;
   right: 8px;
-  bottom: 8px;
+  bottom: 12px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -403,16 +519,19 @@
   align-items: flex-start;
   gap: 8px;
   max-width: min(460px, 100%);
-  padding: 9px 10px 9px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--tt-line);
+  padding: 9px 8px 9px 14px;
+  border-radius: var(--tt-radius-md);
+  border: 1px solid var(--tt-line-strong);
   background: var(--tt-panel);
+  color: var(--tt-text);
   box-shadow: var(--tt-shadow);
   font-size: 13px;
+  line-height: 1.5;
 }
 
 .toast-success {
   border-color: var(--tt-accent);
+  background: var(--tt-panel);
 }
 
 .toast-warning {
@@ -428,7 +547,7 @@
 .toastText {
   flex: 1;
   min-width: 0;
-  padding-top: 2px;
+  padding-top: 5px;
 }
 
 .statGrid {
@@ -451,6 +570,6 @@
 
 .statValue {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }

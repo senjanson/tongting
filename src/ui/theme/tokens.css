@@ -1,20 +1,57 @@
 /*
- * 译听 design tokens（取自 A 轻巧侧栏原型：松绿强调色，跟随系统明暗）。
- * 最低 Chrome 116 不支持 light-dark()，因此使用 prefers-color-scheme 媒体查询。
+ * 译听 design tokens：四种外观主题，由 <html data-tt-theme> 切换（见 themes.ts）。
+ * - paper 纸墨（浅，沉静）、ink 夜墨（深，静谧）、cinema 影院（深，字幕优先）、wave 声波（浅，明快）；
+ * - auto（或未设置）跟随系统明暗：浅色用纸墨，深色用夜墨。
+ * 最低 Chrome 116 不支持 light-dark()，因此 auto 使用 prefers-color-scheme 媒体查询；
+ * 夜墨的变量因此在「auto + 深色」与「ink」两处各写一遍，修改时两处保持一致。
  */
+@import './fonts.css';
+
 :root {
-  color-scheme: light dark;
-  --tt-bg: #f3f4f0;
+  --tt-cjk-sans:
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC',
+    'Source Han Sans SC';
+  --tt-cjk-serif:
+    'Noto Serif SC', 'Source Han Serif SC', 'Noto Serif CJK SC', 'Songti SC', 'STSong', 'SimSun';
+  --tt-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --tt-shadow: 0 14px 40px rgb(0 0 0 / 0.14);
+}
+
+/* 纸墨：默认主题，也是 auto 在浅色系统下的样子。 */
+:root,
+:root[data-tt-theme='paper'] {
+  color-scheme: light;
+  --tt-bg: #f4f1ea;
   --tt-panel: #ffffff;
-  --tt-soft: #f3f5f1;
-  --tt-text: #23332b;
-  --tt-muted: #5f6d63;
-  --tt-line: #dfe5dd;
-  --tt-line-strong: #c7d0c6;
-  --tt-accent: #267353;
-  --tt-accent-hover: #1f6247;
-  --tt-tint: #e6f2e9;
-  --tt-onaccent: #ffffff;
+  --tt-soft: #eae6dc;
+  --tt-text: #1b1d1a;
+  --tt-text-soft: #43473f;
+  --tt-muted: #5b6058;
+  --tt-line: #e4dfd3;
+  --tt-line-strong: #cfc8b9;
+  --tt-accent: #1f6b52;
+  --tt-accent-hover: #185640;
+  --tt-tint: #e1ede6;
+  --tt-accent-ink: #1a5a45;
+  --tt-onaccent: #f4f1ea;
+  --tt-hero: #1b1d1a;
+  --tt-cta: #1b1d1a;
+  --tt-cta-hover: #33362f;
+  --tt-on-cta: #f4f1ea;
+  --tt-seg-on: #ffffff;
+  --tt-seg-on-text: #1b1d1a;
+  --tt-seg-shadow: 0 1px 2px rgb(27 29 26 / 0.14);
+  --tt-track: #e7e2d7;
+  --tt-card-border: #e4dfd3;
+  --tt-card-shadow: 0 1px 2px rgb(27 29 26 / 0.04);
+  --tt-radius: 14px;
+  --tt-radius-md: 11px;
+  --tt-radius-sm: 9px;
+  --tt-logo-radius: 9px;
+  --tt-font: 'Figtree Variable', var(--tt-cjk-sans), system-ui, sans-serif;
+  --tt-font-display: var(--tt-cjk-serif), Georgia, serif;
+  --tt-title-weight: 700;
+  --tt-hero-weight: 600;
 
   --tt-warning: #875812;
   --tt-warning-bg: #fbf2df;
@@ -28,29 +65,41 @@
   --tt-info: #2f5f7a;
   --tt-info-bg: #e8f1f6;
   --tt-info-line: #c7dce8;
-
-  --tt-radius: 14px;
-  --tt-radius-sm: 8px;
-  --tt-shadow: 0 14px 40px rgb(0 0 0 / 0.14);
-  --tt-font:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
-  --tt-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+:root:not([data-tt-theme]),
+:root[data-tt-theme='auto'] {
+  color-scheme: light dark;
+}
+
+/* 夜墨（auto + 深色系统）：与下面的 ink 块保持一致。 */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --tt-bg: #171b19;
-    --tt-panel: #212724;
-    --tt-soft: #2a322d;
-    --tt-text: #edf2ec;
-    --tt-muted: #b0bcb3;
-    --tt-line: #3b473f;
-    --tt-line-strong: #4b5a50;
-    --tt-accent: #8cd6af;
-    --tt-accent-hover: #a3e0c0;
-    --tt-tint: #283e32;
-    --tt-onaccent: #163627;
+  :root:not([data-tt-theme]),
+  :root[data-tt-theme='auto'] {
+    --tt-bg: #111412;
+    --tt-panel: #191d1a;
+    --tt-soft: #202521;
+    --tt-text: #e8ece6;
+    --tt-text-soft: #c3c9c1;
+    --tt-muted: #98a098;
+    --tt-line: #2a302c;
+    --tt-line-strong: #3a423c;
+    --tt-accent: #6fc39e;
+    --tt-accent-hover: #8fd6b5;
+    --tt-tint: rgb(111 195 158 / 0.14);
+    --tt-accent-ink: #8fd6b5;
+    --tt-onaccent: #0d1a14;
+    --tt-hero: #f2f4ef;
+    --tt-cta: #6fc39e;
+    --tt-cta-hover: #8fd6b5;
+    --tt-on-cta: #0d1a14;
+    --tt-seg-on: #2e3530;
+    --tt-seg-on-text: #f2f4ef;
+    --tt-seg-shadow: none;
+    --tt-track: #2e3530;
+    --tt-card-border: #2a302c;
+    --tt-card-shadow: none;
+    --tt-shadow: 0 14px 40px rgb(0 0 0 / 0.45);
 
     --tt-warning: #f0c987;
     --tt-warning-bg: #3a3020;
@@ -64,8 +113,135 @@
     --tt-info: #9fcbe3;
     --tt-info-bg: #1f2e36;
     --tt-info-line: #34495a;
-    --tt-shadow: 0 14px 40px rgb(0 0 0 / 0.45);
   }
+}
+
+/* 夜墨：与上面「auto + 深色」块保持一致。 */
+:root[data-tt-theme='ink'] {
+  color-scheme: dark;
+  --tt-bg: #111412;
+  --tt-panel: #191d1a;
+  --tt-soft: #202521;
+  --tt-text: #e8ece6;
+  --tt-text-soft: #c3c9c1;
+  --tt-muted: #98a098;
+  --tt-line: #2a302c;
+  --tt-line-strong: #3a423c;
+  --tt-accent: #6fc39e;
+  --tt-accent-hover: #8fd6b5;
+  --tt-tint: rgb(111 195 158 / 0.14);
+  --tt-accent-ink: #8fd6b5;
+  --tt-onaccent: #0d1a14;
+  --tt-hero: #f2f4ef;
+  --tt-cta: #6fc39e;
+  --tt-cta-hover: #8fd6b5;
+  --tt-on-cta: #0d1a14;
+  --tt-seg-on: #2e3530;
+  --tt-seg-on-text: #f2f4ef;
+  --tt-seg-shadow: none;
+  --tt-track: #2e3530;
+  --tt-card-border: #2a302c;
+  --tt-card-shadow: none;
+  --tt-shadow: 0 14px 40px rgb(0 0 0 / 0.45);
+
+  --tt-warning: #f0c987;
+  --tt-warning-bg: #3a3020;
+  --tt-warning-line: #5c4a2c;
+  --tt-danger: #f2a197;
+  --tt-danger-bg: #3d2522;
+  --tt-danger-line: #5e3833;
+  --tt-demo: #c9b8f4;
+  --tt-demo-bg: #332c47;
+  --tt-demo-line: #4d4368;
+  --tt-info: #9fcbe3;
+  --tt-info-bg: #1f2e36;
+  --tt-info-line: #34495a;
+}
+
+/* 影院：深色，字幕黄为强调色，当前字幕最醒目。 */
+:root[data-tt-theme='cinema'] {
+  color-scheme: dark;
+  --tt-bg: #0f1011;
+  --tt-panel: #18191b;
+  --tt-soft: #1f2123;
+  --tt-text: #ededee;
+  --tt-text-soft: #c9cdd1;
+  --tt-muted: #a0a5ab;
+  --tt-line: #2a2d30;
+  --tt-line-strong: #3a3e42;
+  --tt-accent: #f2c14e;
+  --tt-accent-hover: #f7d27a;
+  --tt-tint: rgb(242 193 78 / 0.13);
+  --tt-accent-ink: #f2c14e;
+  --tt-onaccent: #1a1400;
+  --tt-hero: #f2c14e;
+  --tt-cta: #f2c14e;
+  --tt-cta-hover: #f7d27a;
+  --tt-on-cta: #1a1400;
+  --tt-seg-on: #2e3236;
+  --tt-seg-on-text: #f2c14e;
+  --tt-seg-shadow: none;
+  --tt-track: #33373b;
+  --tt-card-border: transparent;
+  --tt-card-shadow: none;
+  --tt-radius: 16px;
+  --tt-radius-md: 12px;
+  --tt-radius-sm: 10px;
+  --tt-logo-radius: 8px;
+  --tt-font: 'IBM Plex Sans Variable', var(--tt-cjk-sans), system-ui, sans-serif;
+  --tt-font-display: var(--tt-font);
+  --tt-title-weight: 600;
+  --tt-hero-weight: 600;
+  --tt-shadow: 0 14px 40px rgb(0 0 0 / 0.5);
+
+  --tt-warning: #f0c987;
+  --tt-warning-bg: #36301f;
+  --tt-warning-line: #574829;
+  --tt-danger: #f2a197;
+  --tt-danger-bg: #3a2321;
+  --tt-danger-line: #5a3531;
+  --tt-demo: #c9b8f4;
+  --tt-demo-bg: #2e2940;
+  --tt-demo-line: #473f60;
+  --tt-info: #9fcbe3;
+  --tt-info-bg: #1c2a31;
+  --tt-info-line: #31444f;
+}
+
+/* 声波：浅色，电光蓝强调，圆润粗体。 */
+:root[data-tt-theme='wave'] {
+  color-scheme: light;
+  --tt-bg: #eef0f7;
+  --tt-panel: #ffffff;
+  --tt-soft: #e2e5f1;
+  --tt-text: #14162b;
+  --tt-text-soft: #3a3f60;
+  --tt-muted: #50567a;
+  --tt-line: #e4e7f1;
+  --tt-line-strong: #cdd2e4;
+  --tt-accent: #3140e0;
+  --tt-accent-hover: #2633c2;
+  --tt-tint: #e3e6fc;
+  --tt-accent-ink: #2a36c4;
+  --tt-onaccent: #ffffff;
+  --tt-hero: #14162b;
+  --tt-cta: #3140e0;
+  --tt-cta-hover: #2633c2;
+  --tt-on-cta: #ffffff;
+  --tt-seg-on: #3140e0;
+  --tt-seg-on-text: #ffffff;
+  --tt-seg-shadow: none;
+  --tt-track: #e2e5f1;
+  --tt-card-border: transparent;
+  --tt-card-shadow: 0 1px 3px rgb(20 22 43 / 0.06);
+  --tt-radius: 20px;
+  --tt-radius-md: 14px;
+  --tt-radius-sm: 12px;
+  --tt-logo-radius: 10px;
+  --tt-font: 'Bricolage Grotesque Variable', var(--tt-cjk-sans), system-ui, sans-serif;
+  --tt-font-display: var(--tt-font);
+  --tt-title-weight: 800;
+  --tt-hero-weight: 800;
 }
 
 *,

@@ -616,6 +616,8 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
       case 'display/settings':
         applyLocale(msg.locale);
         settings = msg.captions;
+        // 主题只改覆盖层外观属性，随后的 setSettings 统一刷新。
+        overlay.setTheme(msg.uiTheme);
         overlay.setSettings(msg.captions);
         updateNativeHiding();
         return;

@@ -1,46 +1,23 @@
+/*
+ * 字幕列表（字幕工作台与侧栏「字幕」标签共用）。
+ * 双语行：译文用标题字体（--tt-font-display），原文用次要文字色；当前字幕用主题强调底色。
+ * compact：侧栏密度，列表放在一张卡片里（工作台中列表本身已在卡片内）。
+ */
 .root {
   display: flex;
   flex-direction: column;
+  gap: 10px;
   min-height: 0;
   min-width: 0;
   height: 100%;
 }
 
-.displayOptions > summary {
-  cursor: pointer;
-  font-size: 11px;
-  color: var(--tt-muted);
-  margin-bottom: 10px;
-}
-.compact .row {
-  grid-template-columns: 38px minmax(0, 1fr) 25px;
-  gap: 7px;
-  padding: 11px 7px;
-}
-.compact .primaryText {
-  font-size: 12px;
-  line-height: 1.7;
-}
-.compact .secondaryText {
-  font-size: 11px;
-  line-height: 1.6;
-}
-.compact .time,
-.compact .meta,
-.compact .coverage {
-  font-size: 11px;
-}
-.compact .actions button {
-  width: 25px;
-  height: 25px;
-}
-
+/* ── 工具栏 ── */
 .toolbar {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  padding: 0 0 8px;
 }
 
 .search {
@@ -51,7 +28,7 @@
 
 .search svg {
   position: absolute;
-  left: 9px;
+  left: 11px;
   top: 50%;
   transform: translateY(-50%);
   color: var(--tt-muted);
@@ -59,7 +36,18 @@
 }
 
 .search input {
-  padding-left: 30px;
+  padding-left: 34px;
+}
+
+.displayOptions > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--tt-muted);
+  margin-bottom: 8px;
+}
+
+.displayOptions > summary:hover {
+  color: var(--tt-text);
 }
 
 .viewRow {
@@ -67,39 +55,47 @@
   gap: 6px;
   align-items: center;
   flex-wrap: wrap;
-  padding-bottom: 8px;
 }
 
 .viewRow > [role='group'] {
   flex: 1 1 200px;
 }
 
+.coverage {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: var(--tt-radius-sm);
+  background: var(--tt-soft);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--tt-muted);
+}
+
 .meta {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: space-between;
   gap: 4px 10px;
   font-size: 12px;
   color: var(--tt-muted);
-  padding-bottom: 6px;
 }
 
-.coverage {
-  font-size: 12px;
-  color: var(--tt-muted);
-  padding: 6px 8px;
-  background: var(--tt-soft);
-  border-radius: var(--tt-radius-sm);
-  margin-bottom: 8px;
-  line-height: 1.5;
-}
-
+/* ── 列表 ── */
 .listWrap {
   position: relative;
   flex: 1;
   min-height: 160px;
   display: flex;
   flex-direction: column;
+}
+
+.compact .listWrap {
+  background: var(--tt-panel);
+  border: 1px solid var(--tt-card-border);
+  border-radius: var(--tt-radius);
+  box-shadow: var(--tt-card-shadow);
+  overflow: hidden;
 }
 
 .list {
@@ -115,9 +111,17 @@
   overscroll-behavior: contain;
 }
 
+.compact .list {
+  padding: 6px;
+}
+
+.list:focus-visible {
+  outline-offset: -2px;
+}
+
 .follow {
   position: absolute;
-  bottom: 10px;
+  bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
   box-shadow: var(--tt-shadow);
@@ -126,30 +130,32 @@
 
 .row {
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) auto;
-  gap: 6px;
-  padding: 8px 4px 8px 6px;
-  border-radius: 9px;
-  border: 1px solid transparent;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px 8px 12px 12px;
+  border-radius: var(--tt-radius-md);
   content-visibility: auto;
-  contain-intrinsic-size: auto 64px;
+  contain-intrinsic-size: auto 72px;
+  transition: background-color 0.12s;
 }
 
-.rowActive {
+.row:hover {
+  background: var(--tt-soft);
+}
+
+.rowActive,
+.rowActive:hover {
   background: var(--tt-tint);
-  border-color: var(--tt-line);
-}
-
-.rowSelected {
-  border-color: var(--tt-accent);
 }
 
 .time {
   align-self: start;
   border: 0;
   background: transparent;
-  padding: 2px 0;
+  padding: 3px 0 0;
+  font-family: var(--tt-mono);
   font-size: 12px;
+  line-height: 1.5;
   color: var(--tt-muted);
   font-variant-numeric: tabular-nums;
   text-align: left;
@@ -158,8 +164,9 @@
 }
 
 .time:hover {
-  color: var(--tt-accent);
+  color: var(--tt-accent-ink);
   text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .timeStatic {
@@ -172,7 +179,7 @@
 }
 
 .rowActive .time {
-  color: var(--tt-accent);
+  color: var(--tt-accent-ink);
   font-weight: 600;
 }
 
@@ -180,24 +187,38 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .primaryText {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
   white-space: pre-wrap;
 }
 
+/* 译文：标题字体，比原文醒目。 */
+.translatedText {
+  font-family: var(--tt-font-display);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+/* 当前字幕只换颜色不换字重：字重变化会改变换行，使跟随滚动时列表跳动。 */
+.rowActive .translatedText {
+  color: var(--tt-hero);
+}
+
 .secondaryText {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
-  color: var(--tt-muted);
+  color: var(--tt-text-soft);
   white-space: pre-wrap;
 }
 
 .placeholder {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--tt-muted);
   font-style: italic;
 }
@@ -206,13 +227,13 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 .chip {
   font-size: 11px;
-  line-height: 1.4;
-  padding: 0 6px;
+  line-height: 1.5;
+  padding: 0 7px;
   border-radius: 999px;
   background: var(--tt-soft);
   color: var(--tt-muted);
@@ -233,25 +254,37 @@
 
 .actions {
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
   gap: 2px;
+  transition: opacity 0.12s;
 }
 
 .actions button {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
+}
+
+/* 有悬停能力的设备上，非当前行的操作按钮淡一些；键盘聚焦与已收藏时保持清晰。 */
+@media (hover: hover) {
+  .row:not(:hover, :focus-within, .rowActive) .actions button:not([aria-pressed='true']) {
+    opacity: 0.45;
+  }
+}
+
+.favorite[aria-pressed='true'] {
+  color: var(--tt-accent);
 }
 
 .favorite[aria-pressed='true'] svg {
   fill: currentColor;
 }
 
+/* ── 底部操作 ── */
 .footer {
   display: flex;
-  gap: 6px;
-  padding-top: 8px;
+  gap: 8px;
+  padding-top: 12px;
   border-top: 1px solid var(--tt-line);
-  margin-top: 6px;
   flex-wrap: wrap;
 }
 
@@ -259,10 +292,57 @@
   flex: 1 1 120px;
 }
 
+.compact .footer {
+  border-top: 0;
+  padding-top: 2px;
+}
+
+/* ── 侧栏密度 ── */
+.compact .row {
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 10px 6px 10px 8px;
+}
+
+.compact .actions {
+  flex-direction: column;
+}
+
+.compact .actions button {
+  width: 26px;
+  height: 26px;
+}
+
+.compact .primaryText {
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.compact .translatedText {
+  font-size: 14px;
+}
+
+.compact .secondaryText,
+.compact .placeholder {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.compact .time {
+  padding-top: 2px;
+  font-size: 11px;
+}
+
+.compact .meta,
+.compact .coverage {
+  font-size: 11px;
+}
+
+/* ── 导出对话框 ── */
 .exportGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .preview {
@@ -289,12 +369,24 @@
   word-break: break-all;
 }
 
+/* 窄屏与触屏：操作按钮竖排，给字幕文字留出宽度。 */
+@media (max-width: 760px) {
+  .actions {
+    flex-direction: column;
+  }
+}
+
 @media (pointer: coarse) {
-  .actions button {
+  .actions {
+    flex-direction: column;
+  }
+  .actions button,
+  .compact .actions button {
     width: 44px;
     height: 44px;
   }
-  .row {
-    grid-template-columns: 50px minmax(0, 1fr) auto;
+  .row,
+  .compact .row {
+    grid-template-columns: 52px minmax(0, 1fr) auto;
   }
 }

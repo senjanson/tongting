@@ -38,7 +38,7 @@ import {
   type Settings,
   type SettingsPatch,
 } from '../domain/settings';
-import type { ContentToBackground } from '../messaging/content-protocol';
+import type { BackgroundToContent, ContentToBackground } from '../messaging/content-protocol';
 import { CONTENT_PROTOCOL_VERSION } from '../messaging/content-protocol';
 import type { OffscreenEvent, OffscreenStatus } from '../messaging/offscreen-protocol';
 import {
@@ -712,12 +712,7 @@ export class Coordinator implements SessionHost {
       workerInstanceId: this.workerInstanceId,
       locale: getLocale(),
     });
-    conn.send({
-      type: 'display/settings',
-      captions: this.settingsValue.captions,
-      targetLanguage: this.settingsValue.targetLanguage,
-      locale: getLocale(),
-    });
+    conn.send(this.displaySettingsMessage(this.settingsValue));
     const slot = this.slots.get(tabId);
     if (slot?.session && slot.session.identity.documentId === documentId) {
       slot.session.pushSessionState();
@@ -728,6 +723,19 @@ export class Coordinator implements SessionHost {
     }
     if (slot) void this.reconcile(slot);
     this.publish();
+  }
+
+  /** 覆盖层显示设置：字幕外观、目标语言、界面语言与外观主题。 */
+  private displaySettingsMessage(
+    settings: Settings,
+  ): Extract<BackgroundToContent, { type: 'display/settings' }> {
+    return {
+      type: 'display/settings',
+      captions: settings.captions,
+      targetLanguage: settings.targetLanguage,
+      locale: getLocale(),
+      uiTheme: settings.uiTheme,
+    };
   }
 
   private onContentMessage(
@@ -1802,16 +1810,11 @@ export class Coordinator implements SessionHost {
     if (
       localeChanged ||
       JSON.stringify(prev.captions) !== JSON.stringify(next.captions) ||
-      prev.targetLanguage !== next.targetLanguage
+      prev.targetLanguage !== next.targetLanguage ||
+      prev.uiTheme !== next.uiTheme
     ) {
-      for (const page of this.pages.values()) {
-        page.conn.send({
-          type: 'display/settings',
-          captions: next.captions,
-          targetLanguage: next.targetLanguage,
-          locale: getLocale(),
-        });
-      }
+      // 主题只影响外观：与字幕外观一样只重发显示设置，不重启会话、不递增配置版本。
+      for (const page of this.pages.values()) page.conn.send(this.displaySettingsMessage(next));
     }
     // 覆盖层状态文字由 worker 生成：语言变化后按新语言重发。
     if (localeChanged) for (const slot of this.slots.values()) slot.session?.pushSessionState();
