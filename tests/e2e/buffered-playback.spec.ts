@@ -467,7 +467,7 @@ test('disabled local preloading gives actionable setup guidance in the real side
   });
 });
 
-test('incomplete captions explain continuous mode and the selected fallback produces translations', async () => {
+test('incomplete captions in sync-first mode fall back to translating as the video plays', async () => {
   const f = await setupFullChain({
     videos: fixtures.map((fixture) => ({ ...fixture, timedtextBlocked: true })),
   });
@@ -475,36 +475,34 @@ test('incomplete captions explain continuous mode and the selected fallback prod
   await f.ui.page.setViewportSize({ width: 320, height: 1000 });
   await configureProvider(f, { playbackMode: 'buffered', sourceStrategy: 'captions-only' });
   const { page, tabId } = await openWatch(f, CAPTIONED);
+  // 边播放边开始翻译：准备阶段闸门先暂停视频。
+  expect(await video(page).play()).toBe(true);
   await f.ui.ok({ kind: 'session/start', tabId });
-  const failed = await f.ui.waitSession(
-    tabId,
-    (s) => s.error?.code === 'buffered-captions-incomplete',
-    { timeout: 30_000 },
-  );
-  await expect(f.ui.page.getByText(failed.error!.message, { exact: true })).toBeVisible();
-  expect(
-    await f.ui.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
-  ).toBe(true);
-  await f.ui.page.screenshot({
-    path: test.info().outputPath('incomplete-captions-320.png'),
-    fullPage: true,
-  });
-  // 播放方式收在「播放方式」一行里；出错状态下不会自动展开。
-  const playbackRow = f.ui.page.getByRole('button', { name: /^播放方式/ });
-  if ((await playbackRow.getAttribute('aria-expanded')) !== 'true') await playbackRow.click();
-  await f.ui.page
-    .getByRole('group', { name: '播放方式', exact: true })
-    .getByRole('button', { name: '连续播放', exact: true })
-    .click();
-  await f.ui.waitSnapshot((s) => s.settings.playbackMode === 'continuous');
-  await f.ui.ok({ kind: 'session/start', tabId });
+  await expect
+    .poll(async () => (await video(page).state()).paused, { intervals: [100] })
+    .toBe(true);
+  // 完整轨道读不到、又不能预读音频：不再报错，本次改为边播边译并说明原因。
   const session = await f.ui.waitSession(
     tabId,
     (s) => s.phase === 'running' && s.sourceMode === 'incremental-captions',
     { timeout: 30_000 },
   );
   expect(session.error).toBeUndefined();
-  await video(page).seek(1);
-  expect(await video(page).play()).toBe(true);
+  expect(session.playbackBuffer).toBeUndefined();
+  expect(session.notice?.message).toContain('边播边译');
+  await expect(f.ui.page.getByText(session.notice!.message, { exact: true })).toBeVisible();
+  expect(
+    await f.ui.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+  ).toBe(true);
+  await f.ui.page.screenshot({
+    path: test.info().outputPath('incomplete-captions-fallback-320.png'),
+    fullPage: true,
+  });
+  // 退回后闸门交还播放：准备阶段暂停的视频自动继续播放，不需要用户再点播放，并显示译文。
+  await expect.poll(async () => (await video(page).state()).paused).toBe(false);
+  const resumed = await video(page).state();
+  await expect
+    .poll(async () => (await video(page).state()).currentTimeMs)
+    .toBeGreaterThan(resumed.currentTimeMs + 350);
   await waitOverlay(page, (s) => !!s.main?.startsWith('译[zh-CN]'), 15_000);
 });

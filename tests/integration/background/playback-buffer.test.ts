@@ -148,6 +148,31 @@ describe('buffered session orchestration', () => {
     expect(latest(h).playbackBuffer).toBeUndefined();
     expect(h.offscreen.requests.some((r) => r.kind === 'capture/start')).toBe(true);
   });
+  it('without captions and without preloadable recognition, sync-first falls back to live recognition', async () => {
+    const h = harness();
+    await configure(h, { asr: true, buffered: true });
+    await h.coordinator.handleCommand({
+      kind: 'settings/update',
+      patch: { asr: { backend: 'sub2api', sub2apiModel: 'asr-test' } },
+    });
+    const content = h.content(1);
+    content.hello();
+    content.navigate('aaaaaaaaaaa', { tracks: false });
+    content.player({ currentTimeMs: 30000, durationMs: 120000, paused: true }, 'pause');
+    await wait(10);
+    await h.coordinator.handleCommand({ kind: 'session/start', tabId: 1 });
+    await h.coordinator.idle();
+    await wait(20);
+    expect(latest(h).error).toBeUndefined();
+    expect(latest(h)).toMatchObject({
+      phase: 'running',
+      sourceMode: 'asr',
+      notice: { code: 'buffered-fallback-asr', level: 'warning' },
+    });
+    // 边播边识别：不保持视频，也不向页面下发缓冲闸门。
+    expect(latest(h).playbackBuffer).toBeUndefined();
+    expect(h.offscreen.requests.some((r) => r.kind === 'capture/start')).toBe(true);
+  });
   it('shows preload failures as blocked rather than claiming buffered silence', async () => {
     const h = harness();
     const { requests } = await startPreload(h);

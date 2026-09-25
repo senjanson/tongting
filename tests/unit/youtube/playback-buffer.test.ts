@@ -365,6 +365,66 @@ describe('playback buffer controller', () => {
     expect(current.paused).toBe(true);
   });
 
+  it('handing back a held video restarts it once and stops supervising', async () => {
+    gate.update(policy());
+    expect(video.paused).toBe(true);
+    gate.onMediaEvent('pause');
+    gate.handBack();
+    expect(video.play).toHaveBeenCalledTimes(1);
+    expect(video.paused).toBe(false);
+    // Its own play event is not mistaken for a user gesture, and no policy remains.
+    gate.onMediaEvent('play');
+    await Promise.resolve();
+    video.currentTime = 200;
+    vi.advanceTimersByTime(1_000);
+    expect(video.pause).toHaveBeenCalledTimes(1);
+    expect(gate.stats()).toEqual({ holding: false, userPaused: false });
+  });
+
+  it('handing back never starts a video the user paused', () => {
+    video.paused = true;
+    gate.update(policy());
+    gate.handBack();
+    expect(video.play).not.toHaveBeenCalled();
+
+    video.paused = false;
+    gate.update(policy({ sessionId: 'session-b' }));
+    expect(video.paused).toBe(true);
+    gate.userIntent('pause');
+    gate.handBack();
+    expect(video.play).not.toHaveBeenCalled();
+  });
+
+  it('handing back keeps a resume already in flight instead of cancelling it', async () => {
+    gate.update(policy());
+    gate.onMediaEvent('pause');
+    video.play.mockImplementation(() => {
+      video.paused = false;
+      return new Promise<void>(() => undefined);
+    });
+    gate.update(policy({ readyUntilMs: 30_000 }));
+    expect(video.play).toHaveBeenCalledTimes(1);
+    gate.handBack();
+    await Promise.resolve();
+    expect(video.paused).toBe(false);
+    expect(video.pause).toHaveBeenCalledTimes(1);
+    expect(video.play).toHaveBeenCalledTimes(1);
+  });
+
+  it('handing back does not start playback over an ad or after the video ended', () => {
+    gate.update(policy());
+    gate.onMediaEvent('ad-start');
+    gate.handBack();
+    expect(video.play).not.toHaveBeenCalled();
+
+    gate.onMediaEvent('ad-end');
+    gate.update(policy({ sessionId: 'session-b' }));
+    expect(video.paused).toBe(true);
+    video.ended = true;
+    gate.handBack();
+    expect(video.play).not.toHaveBeenCalled();
+  });
+
   it('ads revoke held ownership; ad completion does not start a paused video', () => {
     gate.update(policy());
     gate.onMediaEvent('ad-start');

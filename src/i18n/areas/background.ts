@@ -147,8 +147,6 @@ const zhCN = {
   'background.session.liveUnsupported':
     '暂不支持直播：直播的字幕与音频时间轴尚未验证。请在普通录播视频上使用。',
   'background.session.shortsUnverified': 'Shorts 页面尚未经过验证，字幕位置与时间可能不准确。',
-  'background.session.partialCaptionsBuffered':
-    '无法读取完整字幕轨道，当前只能读取部分字幕。请在设置中将播放模式切换为「连续播放」，即可使用增量字幕翻译；如需「同步优先」，请将字幕来源改为「缺失时识别语音」，并配置支持音频预读的本地识别服务。',
   'background.session.bridgeNotReadyCaptionsOnly':
     '页面字幕接入尚未就绪（播放器可能仍在加载），暂时读取不到字幕。请稍后重试。',
   'background.session.bridgeNotReadyNoAsr':
@@ -165,7 +163,17 @@ const zhCN = {
     '无法自动确定接口协议，请在设置页「检查连接」或手动选择协议。',
   'background.session.trackLoadTimeout': '读取字幕轨道超时',
   'background.session.incrementalCaptions':
-    '无法读取完整字幕轨道，改为读取播放器当前显示的字幕：只覆盖已播放部分，且需保持 YouTube 字幕开启。',
+    '无法读取完整字幕轨道（{reason}），改为读取播放器当前显示的字幕：只覆盖已播放部分，且需保持 YouTube 字幕开启。',
+  'background.session.bufferedFallbackIncremental':
+    '无法读取完整字幕轨道（{reason}），本次改为边播边译：只翻译播放器已显示的字幕，视频不等待译文，需保持 YouTube 字幕开启。想让视频先缓冲译文，可配置支持音频预读的本地识别服务。',
+  'background.session.bufferedFallbackAsr':
+    '同步优先需要能预读音频的本地识别服务，当前识别服务不支持预读，本次改为边播边识别翻译，视频不等待译文。',
+  'background.session.fullTrackReason.timeout': '播放器没有返回可读取的字幕内容',
+  'background.session.fullTrackReason.parse': '字幕内容格式无法识别',
+  'background.session.fullTrackReason.player': '暂时读不到播放器字幕信息',
+  'background.session.fullTrackReason.bridge': '页面字幕接入未就绪',
+  'background.session.fullTrackReason.track': '找不到对应的字幕轨道',
+  'background.session.fullTrackReason.other': '原因代码 {code}',
   'background.session.preloadLocalRequired':
     '无完整字幕时，同步优先需要启用音频预读的本地识别服务。也可切换为「连续播放」。',
   'background.session.bufferPreparing': '正在准备翻译，缓冲完成后按视频时间播放。',
@@ -603,8 +611,6 @@ const en: Record<keyof typeof zhCN, string> = {
     'Live streams are not supported yet: their subtitle and audio timing has not been verified. Use a regular (non-live) video.',
   'background.session.shortsUnverified':
     'Shorts pages have not been verified; subtitle position and timing may be off.',
-  'background.session.partialCaptionsBuffered':
-    'The full subtitle track cannot be read; only part of the subtitles is available. Switch the playback mode to "Continuous" in Settings to translate subtitles as they appear. To keep "Sync first", set the subtitle source to "Recognize speech when missing" and set up a local recognition service that supports audio preloading.',
   'background.session.bridgeNotReadyCaptionsOnly':
     'The page subtitle hook is not ready yet (the player may still be loading), so subtitles cannot be read right now. Try again shortly.',
   'background.session.bridgeNotReadyNoAsr':
@@ -620,7 +626,17 @@ const en: Record<keyof typeof zhCN, string> = {
     'Could not detect the API protocol automatically. Run "Check connection" in Settings or pick a protocol manually.',
   'background.session.trackLoadTimeout': 'Timed out reading the subtitle track',
   'background.session.incrementalCaptions':
-    'The full subtitle track cannot be read, so the subtitles shown by the player are used instead. This only covers what has played, and YouTube subtitles must stay on.',
+    'The full subtitle track cannot be read ({reason}), so the subtitles shown by the player are used instead. This only covers what has played, and YouTube subtitles must stay on.',
+  'background.session.bufferedFallbackIncremental':
+    'The full subtitle track cannot be read ({reason}), so this session translates as the video plays: only subtitles the player shows are translated, the video does not wait for translations, and YouTube subtitles must stay on. To buffer translations before playback, set up a local recognition service with audio preloading.',
+  'background.session.bufferedFallbackAsr':
+    '"Sync first" needs a local recognition service that can preload audio. The current recognition service cannot, so this session recognizes and translates as the video plays, without waiting for translations.',
+  'background.session.fullTrackReason.timeout': 'the player returned no readable subtitle content',
+  'background.session.fullTrackReason.parse': 'the subtitle format is not recognized',
+  'background.session.fullTrackReason.player': 'player subtitle info is unavailable right now',
+  'background.session.fullTrackReason.bridge': 'the page subtitle hook is not ready',
+  'background.session.fullTrackReason.track': 'the subtitle track was not found',
+  'background.session.fullTrackReason.other': 'reason code {code}',
   'background.session.preloadLocalRequired':
     'Without a full subtitle track, "Sync first" needs a local recognition service with audio preloading. You can also switch to "Continuous".',
   'background.session.bufferPreparing':

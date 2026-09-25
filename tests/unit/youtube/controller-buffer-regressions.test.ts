@@ -184,7 +184,23 @@ function start() {
       },
     });
   const clear = () => port().receive({ type: 'session/state', session: null });
-  return { controller, welcome, session, clear };
+  /** 同一会话继续运行，但 worker 不再下发闸门（同步优先退回边播边译）。 */
+  const ungated = (
+    phase: 'running' | 'paused' = 'running',
+    sourceMode: 'incremental-captions' | 'asr' | 'full-track' = 'incremental-captions',
+  ) =>
+    port().receive({
+      type: 'session/state',
+      session: {
+        sessionId: 'session-buffer-01',
+        epoch: 0,
+        videoId: A,
+        phase,
+        outputMode: 'subtitle',
+        sourceMode,
+      },
+    });
+  return { controller, welcome, session, clear, ungated };
 }
 
 const settle = (ms = 20) => new Promise((r) => setTimeout(r, ms));
@@ -231,5 +247,65 @@ describe('buffer gate inside the content controller', () => {
     t.session('running', 1, 111_000);
     await vi.waitFor(() => expect(page.play).toHaveBeenCalledTimes(1));
     expect(page.media.paused).toBe(false);
+  });
+
+  it('falling back to live translation restarts the video the gate paused while preparing', async () => {
+    const page = buildPage();
+    const t = start();
+    t.welcome();
+    t.session('starting', 0, 3_000);
+    await settle();
+    expect(page.pause).toHaveBeenCalledTimes(1);
+    expect(page.media.paused).toBe(true);
+    // 完整轨道读不到：会话继续运行，但不再保持视频。
+    t.ungated();
+    await vi.waitFor(() => expect(page.play).toHaveBeenCalledTimes(1));
+    expect(page.media.paused).toBe(false);
+    await settle(150);
+    expect(page.pause).toHaveBeenCalledTimes(1);
+  });
+
+  it('a video the user had paused before translation stays paused after the fallback', async () => {
+    const page = buildPage();
+    page.media.paused = true;
+    const t = start();
+    t.welcome();
+    t.session('starting', 0, 3_000);
+    await settle();
+    t.ungated();
+    await settle(150);
+    expect(page.play).not.toHaveBeenCalled();
+    expect(page.media.paused).toBe(true);
+  });
+
+  it('falling back to live recognition also restarts the held video', async () => {
+    const page = buildPage();
+    const t = start();
+    t.welcome();
+    t.session('starting', 0, 3_000);
+    await settle();
+    expect(page.media.paused).toBe(true);
+    t.ungated('running', 'asr');
+    await vi.waitFor(() => expect(page.play).toHaveBeenCalledTimes(1));
+  });
+
+  it('switching to continuous playback, pausing or stopping the session leaves a held video paused', async () => {
+    const page = buildPage();
+    const t = start();
+    t.welcome();
+    t.session('running', 0, 3_000);
+    await settle();
+    expect(page.media.paused).toBe(true);
+    // 用户改成「连续播放」：完整轨道会话不再下发闸门。
+    t.ungated('running', 'full-track');
+    await settle(150);
+    t.session('running', 0, 3_000);
+    await settle();
+    t.ungated('paused');
+    await settle(150);
+    t.clear();
+    await settle(150);
+    expect(page.play).not.toHaveBeenCalled();
+    expect(page.media.paused).toBe(true);
   });
 });

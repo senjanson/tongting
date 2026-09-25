@@ -22,6 +22,11 @@ export interface PlaybackBufferController {
   userIntent(intent: 'play' | 'pause' | 'seek'): void;
   /** Release ownership without starting a video which is currently paused. */
   reset(): void;
+  /**
+   * The session keeps running without a gate (e.g. it fell back to live translation):
+   * release ownership like `reset`, but restart the video if this gate is what paused it.
+   */
+  handBack(): void;
   dispose(): void;
   stats(): PlaybackBufferStats;
 }
@@ -326,6 +331,22 @@ export function createPlaybackBufferController(opts: {
     publish();
   }
 
+  function handBack() {
+    if (disposed) return;
+    const target = opts.getVideo();
+    const owned = !!target && target === video && !userPaused && (holding || !!pendingPlay);
+    // A resume already started by the gate is kept rather than cancelled by reset().
+    pendingPlay = null;
+    reset();
+    if (!owned || !target.paused || target.ended || adShowing()) return;
+    ownPlayEvents.set(target, (ownPlayEvents.get(target) ?? 0) + 1);
+    try {
+      void Promise.resolve(target.play()).catch(() => consume(ownPlayEvents, target));
+    } catch {
+      consume(ownPlayEvents, target);
+    }
+  }
+
   return {
     update(next) {
       if (disposed) return;
@@ -411,6 +432,7 @@ export function createPlaybackBufferController(opts: {
     },
     userIntent,
     reset,
+    handBack,
     dispose() {
       if (disposed) return;
       reset();

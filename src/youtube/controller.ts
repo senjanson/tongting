@@ -344,22 +344,34 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
   });
 
   function applySession(next: OverlaySession | null) {
+    const previous = session;
     const changedSession = !!session && session.sessionId !== next?.sessionId;
     session = next;
     overlay.setSession(next);
-    playbackBuffer.update(
-      next?.playbackBuffer && next.videoId === nav.videoId
-        ? {
-            sessionId: next.sessionId,
-            epoch: next.epoch,
-            videoId: next.videoId,
-            enabled: true,
-            // starting 阶段闸门同样生效；worker 在 starting 与 running 期间都会为跳转递增 epoch。
-            active: next.phase === 'starting' || next.phase === 'running',
-            ...next.playbackBuffer,
-          }
-        : null,
-    );
+    const live = !!next && (next.phase === 'starting' || next.phase === 'running');
+    if (next?.playbackBuffer && next.videoId === nav.videoId) {
+      playbackBuffer.update({
+        sessionId: next.sessionId,
+        epoch: next.epoch,
+        videoId: next.videoId,
+        enabled: true,
+        // starting 阶段闸门同样生效；worker 在 starting 与 running 期间都会为跳转递增 epoch。
+        active: live,
+        ...next.playbackBuffer,
+      });
+    } else if (
+      live &&
+      previous?.playbackBuffer &&
+      previous.sessionId === next.sessionId &&
+      next.videoId === nav.videoId &&
+      (next.sourceMode === 'incremental-captions' || next.sourceMode === 'asr')
+    ) {
+      // 同步优先退回边播边译：会话继续运行但不再保持视频，闸门在准备阶段暂停的视频要恢复播放。
+      // 用户切换连续播放、暂停或停止翻译时仍走 update(null)，已暂停的视频留给用户点击播放。
+      playbackBuffer.handBack();
+    } else {
+      playbackBuffer.update(null);
+    }
     if (!next || changedSession) {
       loadRevision++;
       clearPassiveIntent();

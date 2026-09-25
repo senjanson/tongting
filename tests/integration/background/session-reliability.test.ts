@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createIncrementalCaptionAssembler } from '@src/captions/incremental';
 import type { TranscriptRecord } from '@src/storage/db';
-import { errorNextStep, sessionProblem } from '@src/ui/state/derive';
+import { sessionProblem } from '@src/ui/state/derive';
 import {
   configure,
   createHarness,
@@ -106,45 +106,38 @@ describe('buffered captions diagnostics and recovery', () => {
     ['captions-only', 'timeout'],
     ['captions-first', 'timeout'],
   ] as const)(
-    'explains incomplete captions for %s after %s and recovers in continuous mode',
+    'keeps translating as the video plays when full captions fail in sync-first mode (%s, %s)',
     async (sourceStrategy, reason) => {
       const h = harness();
       await configure(h, { buffered: true });
       await h.coordinator.handleCommand({ kind: 'settings/update', patch: { sourceStrategy } });
       if (reason === 'timeout') h.deps.timings = { trackLoadTimeoutMs: 30 };
       const c = await start(h, { fallback: reason === 'failure', timeout: reason === 'timeout' });
+      await h.coordinator.idle();
+      // 同步优先做不到（没有完整轨道、也不能预读音频）：本次改为边播边译，而不是整个功能报错。
       expect(latest(h)).toMatchObject({
-        phase: 'error',
+        phase: 'running',
         sourceMode: 'incremental-captions',
-        error: {
-          code: 'buffered-captions-incomplete',
-          retryable: false,
-        },
+        notice: { code: 'incremental-captions', level: 'warning' },
       });
-      expect(latest(h).notice).toBeUndefined();
-      expect(latest(h).error!.message).toContain('连续播放');
-      expect(latest(h).error!.message).not.toContain('没有可读取的字幕');
-      expect(errorNextStep(latest(h).error!).action).toBe('open-settings');
+      expect(latest(h).error).toBeUndefined();
+      const message = latest(h).notice!.message;
+      expect(message).toContain('边播边译');
+      // 说明读取完整轨道失败的具体原因，便于在不同电脑上定位差异。
+      expect(message).toContain(
+        reason === 'timeout' ? '播放器没有返回可读取的字幕内容' : 'track-fetch-failed',
+      );
+      // 不保持视频：没有缓冲状态下发给页面闸门。
+      expect(latest(h).playbackBuffer).toBeUndefined();
+      expect(c.messages('session/state').at(-1)).toMatchObject({
+        session: { playbackBuffer: undefined },
+      });
+      // 显示字幕的读取保持开启。
       expect(
         c.requests
           .filter((r) => r.request.kind === 'captions/observe-visible')
           .map((r) => (r.request as { enable: boolean }).enable),
-      ).toEqual([true, false]);
-
-      await h.coordinator.handleCommand({
-        kind: 'settings/update',
-        patch: { playbackMode: 'continuous' },
-      });
-      await h.coordinator.handleCommand({ kind: 'session/start', tabId: 1 });
-      await vi.waitFor(() => expect(trackRequests(c)).toBe(2), { interval: 5 });
-      trackFailure(c);
-      await h.coordinator.idle();
-      expect(latest(h)).toMatchObject({
-        phase: 'running',
-        sourceMode: 'incremental-captions',
-        notice: { code: 'incremental-captions' },
-      });
-      expect(latest(h).error).toBeUndefined();
+      ).toEqual([true]);
     },
   );
 
@@ -238,7 +231,14 @@ describe('transcript snapshots are coalesced without losing the last update or r
         expect(c.messages('session/cues').at(-1)).toMatchObject({ full: true, cues: [] });
         c.player({ currentTimeMs: 0, durationMs: 20_000, paused: true }, 'pause');
         await vi.waitFor(() => expect(FakeScheduler.all.at(-1)!.cues).toHaveLength(1));
-      } else expect(latest(h).error!.code).toBe('buffered-captions-incomplete');
+      } else {
+        expect(latest(h).error).toBeUndefined();
+        expect(latest(h)).toMatchObject({
+          phase: 'running',
+          sourceMode: 'incremental-captions',
+          notice: { code: 'incremental-captions' },
+        });
+      }
       await h.coordinator.handleCommand({ kind: 'session/stop', tabId: 1 });
       await h.coordinator.idle();
       const track = h.transcripts.get('aaaaaaaaaaa|zh-CN|track:en') as TranscriptRecord;

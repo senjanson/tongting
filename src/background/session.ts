@@ -177,6 +177,8 @@ export class TranslationSession {
   private scheduler?: TranslationScheduler;
   private preloader?: AudioPreloader;
   private bufferTimer?: ReturnType<typeof setInterval>;
+  /** 完整字幕轨道读取失败的原因（给用户看的短语），用于说明为何改读显示字幕。 */
+  private fullTrackFailure?: string;
   private dubbing?: DubbingController;
   private dubbingUnsub?: () => void;
   private schedulerUnsub?: () => void;
@@ -377,7 +379,27 @@ export class TranslationSession {
       sourceReady = await this.tryCaptionSource(settings, check, signal);
     }
     check();
-    if (settings.playbackMode === 'buffered' && this.sourceMode === 'incremental-captions') {
+    const canPreload = settings.playbackMode === 'buffered' && this.canPreloadAudio(settings);
+    if (
+      settings.playbackMode === 'buffered' &&
+      this.sourceMode === 'incremental-captions' &&
+      !canPreload
+    ) {
+      // 没有完整轨道、也无法预读音频：同步优先做不到，本次按边播边译继续（bufferState 不再保持视频），
+      // 并说明原因与改进办法，而不是让整个功能不可用。
+      this.notice = {
+        code: 'incremental-captions',
+        message: t('background.session.bufferedFallbackIncremental', {
+          reason: this.fullTrackFailure ?? t('background.session.fullTrackReason.timeout'),
+        }),
+        level: 'warning',
+      };
+    }
+    if (
+      settings.playbackMode === 'buffered' &&
+      this.sourceMode === 'incremental-captions' &&
+      canPreload
+    ) {
       await page.conn
         .request(
           { kind: 'captions/observe-visible', videoId: this.identity.videoId, enable: false },
@@ -389,14 +411,6 @@ export class TranslationSession {
       this.incremental = undefined;
       if (this.notice?.code === 'incremental-captions') this.notice = undefined;
       sourceReady = false;
-      if (settings.sourceStrategy === 'captions-only' || settings.asr.backend === 'none') {
-        throw new AppError({
-          code: 'buffered-captions-incomplete',
-          category: 'config',
-          retryable: false,
-          message: t('background.session.partialCaptionsBuffered'),
-        });
-      }
     }
     if (!sourceReady) {
       // 等待上限内页面仍未确认字幕可用性：不能断言「视频没有字幕」，也不在无识别服务时误报。
@@ -423,9 +437,17 @@ export class TranslationSession {
           message: t('background.session.noCaptions'),
         });
       }
-      if (settings.playbackMode === 'buffered')
-        await this.startPreloadedAsr(settings, check, signal);
-      else await this.startAsrSource(settings, check, signal, control.recovery?.leaseId);
+      if (canPreload) await this.startPreloadedAsr(settings, check, signal);
+      else {
+        await this.startAsrSource(settings, check, signal, control.recovery?.leaseId);
+        if (settings.playbackMode === 'buffered') {
+          this.notice = {
+            code: 'buffered-fallback-asr',
+            message: t('background.session.bufferedFallbackAsr'),
+            level: 'warning',
+          };
+        }
+      }
     }
     check();
     this.opAbort = undefined;
@@ -603,10 +625,11 @@ export class TranslationSession {
       check();
       await this.applyTrack(data);
       return true;
-    } catch {
+    } catch (error) {
       // 是否「被新意图取代」只由 check() 判定；页面带来的 cancelled 类错误按字幕读取失败处理。
       check();
       this.trackWaiter = undefined;
+      this.fullTrackFailure = fullTrackFailureReason(error);
       // 完整轨道不可读：退回仅读取当前显示字幕（覆盖有限）。
       const ok = await this.abortable(
         signal,
@@ -639,7 +662,7 @@ export class TranslationSession {
       this.scheduler?.setCues([], this.schedulerIdentity());
       this.notice = {
         code: 'incremental-captions',
-        message: t('background.session.incrementalCaptions'),
+        message: t('background.session.incrementalCaptions', { reason: this.fullTrackFailure }),
         level: 'warning',
       };
       return true;
@@ -739,6 +762,15 @@ export class TranslationSession {
     await this.acquireCapture(settings, route, check, signal);
   }
 
+  /** 同步优先能否改用音频预读识别：只有本地识别服务支持预读。 */
+  private canPreloadAudio(settings: Settings): boolean {
+    return (
+      settings.sourceStrategy !== 'captions-only' &&
+      settings.asr.backend === 'local' &&
+      !!this.host.deps.preloadYoutubeAudio
+    );
+  }
+
   private async startPreloadedAsr(
     settings: Settings,
     check: () => void,
@@ -836,6 +868,8 @@ export class TranslationSession {
   private bufferState(): { snapshot: PlaybackBuffer; readyUntilMs: number } | undefined {
     const settings = this.host.settings();
     if (settings.playbackMode !== 'buffered') return undefined;
+    // 增量字幕与边播边识别无法提前准备译文：同步优先本次退回边播边译，不再保持视频。
+    if (this.sourceMode === 'incremental-captions' || this.sourceMode === 'asr') return undefined;
     const player = this.lastPlayer ?? this.host.page(this.identity.tabId)?.player;
     const position = player?.currentTimeMs ?? 0;
     const targetMs = settings.bufferSeconds * 1_000;
@@ -2409,6 +2443,28 @@ export function chooseTrack(
 }
 
 /** 页面（内容脚本）带回的错误一律视为字幕读取失败；是否被新意图取代只由协调器判定。 */
+/** 把完整轨道读取失败的错误转成简短原因（不含字幕内容或 URL）。 */
+function fullTrackFailureReason(error: unknown): string {
+  const code = toAppErrorInfo(error, { category: 'captions' }).code;
+  switch (code) {
+    case 'captions-load-timeout':
+    case 'track-load-timeout':
+      return t('background.session.fullTrackReason.timeout');
+    case 'captions-parse-failed':
+      return t('background.session.fullTrackReason.parse');
+    case 'captions-player-unavailable':
+    case 'player-unavailable':
+      return t('background.session.fullTrackReason.player');
+    case 'captions-bridge-unavailable':
+      return t('background.session.fullTrackReason.bridge');
+    case 'captions-track-not-found':
+    case 'captions-no-tracks':
+      return t('background.session.fullTrackReason.track');
+    default:
+      return t('background.session.fullTrackReason.other', { code: clip(code, 40) });
+  }
+}
+
 function externalCaptionError(error: unknown): AppErrorInfo {
   const info = toAppErrorInfo(error, { category: 'captions' });
   return info.category === 'cancelled' ? { ...info, category: 'captions', retryable: true } : info;

@@ -366,6 +366,7 @@ const NOTICE_SETTINGS_CODES = new Set([
   'tts-error',
   'host-permission-missing',
   'asr-host-permission-missing',
+  'buffered-fallback-asr',
 ]);
 
 export function noticeHasSettingsAction(code: string): boolean {
