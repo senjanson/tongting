@@ -119,6 +119,61 @@ describe('诊断日志', () => {
     expect(JSON.stringify(failures)).not.toContain('SECRET');
   });
 
+  it('服务在错误里回显任意格式的 Key 时，日志与导出都不出现 Key 原文', async () => {
+    const { h, store } = withDiagnostics();
+    const ui = await configure(h);
+    // 不带 sk- 前缀、含标点的 Key：通用规则认不出，只能靠登记原文。
+    const oddKey = 'Relay.Key_7f3e-2291';
+    expect(
+      (await ui.command({ kind: 'credentials/set', apiKey: oddKey, remember: false })).ok,
+    ).toBe(true);
+    const content = h.content(1, { documentId: 'doc-1' });
+    content.hello();
+    content.navigate('aaaaaaaaaaa');
+    await wait(20);
+    await ui.command({ kind: 'session/start', tabId: 1 });
+    await wait(30);
+    content.trackData();
+    await h.coordinator.idle();
+    await wait(100);
+    const scheduler = FakeScheduler.all.at(-1)!;
+    const cue = scheduler.cues[0]!;
+    scheduler.emit([
+      {
+        cueId: cue.id,
+        cueRevision: cue.revision,
+        state: 'failed',
+        error: {
+          code: 'auth-invalid',
+          category: 'auth',
+          retryable: false,
+          message: `Invalid key ${oddKey}`,
+          httpStatus: 401,
+          detail: `invalid_api_key key=${oddKey}`,
+        },
+      },
+    ]);
+    content.send({
+      type: 'diag/log',
+      entries: [
+        {
+          t: Date.now(),
+          src: 'page',
+          level: 'info',
+          event: 'page.echo',
+          data: { note: `x ${oddKey}` },
+        },
+      ],
+    });
+    await wait(150);
+
+    expect(store.entries().some((e) => e.event === 'translate.failed')).toBe(true);
+    expect(JSON.stringify(store.entries())).not.toContain(oddKey);
+    const { text } = await exportText(ui);
+    expect(text).toMatch(/translate\.failed .*"httpStatus":401/);
+    expect(text).not.toContain(oddKey);
+  });
+
   it('记录检查连接结果与界面操作失败（只记命令种类，不记参数）', async () => {
     const { h, store } = withDiagnostics();
     const ui = await configure(h);

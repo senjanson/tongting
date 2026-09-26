@@ -4,9 +4,11 @@
  * 调用方只应传入状态、计数、长度、错误码等；这里再兜底一层：
  * - 敏感字段名（key / token / authorization / cookie / secret / password / signature / pot …）的字符串值替换为 [redacted]；
  * - 字符串里的 URL 只保留 origin + pathname 与参数名，不保留任何参数值；
- * - 形如 sk-xxx 的密钥、Bearer 令牌、40 位以上的连续令牌字符替换为 [redacted]；
+ * - 当前上下文登记过的 Key / 令牌按原文替换；形如 sk-xxx 的密钥、Bearer 令牌、40 位以上的连续令牌字符替换为 [redacted]；
  * - 字符串截断，数组、对象与嵌套深度限长。
  */
+
+import { scrubKnownSecrets } from '../domain/known-secrets';
 
 const SENSITIVE_KEY =
   /(api[-_]?key|apikey|token|secret|passw(or)?d|authorization|cookie|credential|bearer|signature|^sig$|^pot$|^potc$)/i;
@@ -34,7 +36,7 @@ export function redactUrl(raw: string): string {
 }
 
 export function redactString(value: string): string {
-  const cleaned = value
+  const cleaned = scrubKnownSecrets(value, REDACTED)
     .replace(URL_RE, (m) => redactUrl(m))
     .replace(BEARER_RE, `Bearer ${REDACTED}`)
     .replace(KEY_RE, REDACTED)

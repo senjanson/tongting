@@ -11,6 +11,7 @@
  * - 空闲一段时间后关闭专用 AudioContext。
  */
 import { AppError, toAppErrorInfo } from '../../domain/errors';
+import { rememberSecret } from '../../domain/known-secrets';
 import type { OffscreenEvent, OffscreenRequest } from '../../messaging/offscreen-protocol';
 import { releaseAllSync } from '../cleanup';
 import { t } from '../../i18n';
@@ -166,6 +167,7 @@ export class TtsPlayer {
 
   private async run(entry: Entry, req: TtsPlayRequest): Promise<void> {
     try {
+      rememberSecret(req.apiKey);
       const key = this.cacheKey(req);
       let audio = this.cacheGet(key);
       if (!audio) {

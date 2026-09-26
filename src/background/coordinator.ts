@@ -15,6 +15,7 @@ import {
   toAppErrorInfo,
   type AppErrorInfo,
 } from '../domain/errors';
+import { rememberSecret } from '../domain/known-secrets';
 import {
   clampCapabilityFields,
   parseCapabilityMatrix,
@@ -272,6 +273,9 @@ export class Coordinator implements SessionHost {
     ]);
     this.apiKeyState = apiKey;
     this.asrTokenState = asrToken;
+    // 服务可能在错误正文里回显凭证：登记原文，错误详情与诊断日志按原文脱敏。
+    rememberSecret(apiKey.value);
+    rememberSecret(asrToken.value);
     // 首次安装的默认值（含按界面语言选择的目标语言）落盘后固定，之后切换界面语言不再改变它。
     let persist = loaded.status === 'initial';
     if (loaded.needsPersistence) {
@@ -1990,6 +1994,7 @@ export class Coordinator implements SessionHost {
         retryable: false,
         message: t('background.coordinator.emptyKey'),
       });
+    rememberSecret(trimmed);
     const rememberChanged = remember !== this.settingsValue.rememberCredentials;
     if (rememberChanged) {
       // 原设置读取失败时先重试读取，读不到则只在内存中记下这次选择，不用默认值覆盖原设置。
@@ -2073,6 +2078,7 @@ export class Coordinator implements SessionHost {
 
   private async setAsrToken(token: string, intent: number): Promise<{ persisted: boolean }> {
     if (intent !== this.asrTokenIntent) throw cancelledError('credential superseded');
+    rememberSecret(token);
     this.invalidateCredentials('asrToken');
     const remember = this.settingsValue.rememberCredentials;
     const persisted = await saveSecret(this.deps.storage, 'asrToken', token, remember);

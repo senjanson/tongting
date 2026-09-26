@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { t } from '../i18n';
+import { scrubKnownSecrets } from './known-secrets';
 
 export const ErrorCategorySchema = z.enum([
   'config', // 未配置或配置无效
@@ -88,15 +89,18 @@ const SECRET_PATTERNS: RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
   /([?&](?:key|api_key|apikey|token|access_token|signature|sig|pot|auth)=)[^&\s#]+/gi,
   /("?(?:authorization|api[_-]?key|x-api-key|token)"?\s*[:=]\s*"?)[^",\s}]+/gi,
+  // 不带前缀的 Key（如 32 位十六进制）：24 位以上且同时含字母与数字的连续串。
+  /\b(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{24,}\b/g,
 ];
 
 /** 日志与错误文本脱敏。只做防御性处理，不能代替「不记录敏感字段」。 */
 export function redactSecrets(text: string): string {
-  let out = text;
+  let out = scrubKnownSecrets(text, '[REDACTED_KEY]');
   out = out.replace(SECRET_PATTERNS[0]!, '[REDACTED_KEY]');
   out = out.replace(SECRET_PATTERNS[1]!, 'Bearer [REDACTED]');
   out = out.replace(SECRET_PATTERNS[2]!, '$1[REDACTED]');
   out = out.replace(SECRET_PATTERNS[3]!, '$1[REDACTED]');
+  out = out.replace(SECRET_PATTERNS[4]!, '[REDACTED_KEY]');
   return out;
 }
 
