@@ -68,6 +68,10 @@ export interface SessionTimings {
   /** 停止流程中每个等待步骤的上限。 */
   stopStepTimeoutMs: number;
   transcriptSaveDebounceMs: number;
+  /** 实时识别下视频自然结束：等待结尾音频识别完的上限。 */
+  asrEndDrainMs: number;
+  /** 结尾识别完成后，等待这些字幕翻译完的上限。 */
+  asrEndTranslateMs: number;
 }
 
 export const DEFAULT_SESSION_TIMINGS: SessionTimings = {
@@ -78,6 +82,8 @@ export const DEFAULT_SESSION_TIMINGS: SessionTimings = {
   tracksWaitMs: 14_000,
   stopStepTimeoutMs: 5_000,
   transcriptSaveDebounceMs: 2_000,
+  asrEndDrainMs: 12_000,
+  asrEndTranslateMs: 8_000,
 };
 
 const CONTENT_PATCH_DELAY_MS = 80;
@@ -210,6 +216,8 @@ export class TranslationSession {
   private translationFailureLog: { key: string; count: number } = { key: '', count: 0 };
   private dubbingSpeaking = false;
   private endedPaused = false;
+  /** 视频结束后排空识别尾段的代号；重播、跳转会使进行中的排空失效。 */
+  private endDrainToken = 0;
   private contentPatch = new Map<string, DisplayCue>();
   private contentPatchTimer?: ReturnType<typeof setTimeout>;
   private transcriptTimer?: ReturnType<typeof setTimeout>;
@@ -231,6 +239,8 @@ export class TranslationSession {
   private backfill = false;
   /** 最近一次翻译失败；之后有任一字幕翻译成功则清除。 */
   private lastTranslationFailure?: AppErrorInfo;
+  /** 由翻译失败写入 this.error 的阻断错误；换模型、换 Key 或之后翻译成功时按来源清除。 */
+  private translationBlockingError?: AppErrorInfo;
   /** 配置变化导致无法在会话内切换（例如需重新检测协议），需要以新会话重启。 */
   restartRequested = false;
 
@@ -628,6 +638,15 @@ export class TranslationSession {
         clearTimeout(timeoutTimer),
       );
       check();
+      // 合法 JSON 但没有任何有效字幕（空 events、条目全部无效）：不能当作完整轨道成功，按读取失败回退。
+      if (data.cues.length === 0) {
+        throw new AppError({
+          code: 'captions-empty',
+          category: 'captions',
+          retryable: true,
+          message: t('background.session.fullTrackReason.empty'),
+        });
+      }
       await this.applyTrack(data);
       return true;
     } catch (error) {
@@ -1332,6 +1351,7 @@ export class TranslationSession {
     this.dubbing?.setConfig(this.dubbingConfig(this.host.settings()));
     this.setDuck(false);
     this.error = undefined;
+    this.translationBlockingError = undefined;
     this.scheduler?.resume();
     this.updatePreloader();
     if (this.lastPlayer) this.feedPlayer(this.lastPlayer, 'tick');
@@ -1516,6 +1536,18 @@ export class TranslationSession {
     // 内容端合并高频切换；worker 仍验证轨道归属，不能用永久次数限制丢掉最终选择。
     const tracks = this.host.page(this.identity.tabId)?.tracks ?? [];
     if (!tracks.some((t) => t.trackKey === data.track.trackKey)) return;
+    if (data.cues.length === 0) {
+      // 运行中换到的轨道没有有效字幕：保留当前来源与译文，不清空。
+      diag(
+        'captions.track-empty',
+        {
+          session: this.identity.sessionId,
+          track: `${data.track.languageCode}:${data.track.kind}`,
+        },
+        'warn',
+      );
+      return;
+    }
     if (this.incremental) {
       const page = this.host.page(this.identity.tabId);
       page?.conn
@@ -1793,21 +1825,23 @@ export class TranslationSession {
     // 视频结束：停止配音与在途请求；再次播放时恢复（识别捕获需重新开始）。
     if (state.ended && !this.endedPaused && this.phase === 'running') {
       this.endedPaused = true;
-      this.scheduler?.pause();
       this.dubbing?.invalidate(this.identity.epoch);
       this.setDuck(false);
+      if (this.sourceMode === 'asr' && this.capture) {
+        // 实时识别：结尾几秒的音频还在分段缓冲或识别队列里。先发结束锚点（之后的音频丢弃），
+        // 再排空识别并翻译尾段（均有上限），然后结束会话；调度器保持运行以翻译尾段。
+        this.feedPlayer(state, reason);
+        void this.finishAsrAfterEnd(++this.endDrainToken);
+        return;
+      }
+      this.scheduler?.pause();
       if (this.sourceMode === 'asr') {
-        this.host.onFatal(this, {
-          code: 'video-ended',
-          category: 'youtube',
-          retryable: true,
-          message: t('background.session.videoEnded'),
-          at: this.host.deps.now(),
-        });
+        this.host.onFatal(this, this.videoEndedError());
         return;
       }
     } else if (!state.ended && this.endedPaused) {
       this.endedPaused = false;
+      this.endDrainToken++;
       if (this.phase === 'running') this.scheduler?.resume();
       refeed = true;
     }
@@ -1817,6 +1851,49 @@ export class TranslationSession {
     // 重播后重新执行会话级静音，即使下一句中文尚未开始。
     if (prev?.ended && !state.ended) this.setDuck(this.dubbingSpeaking);
     this.updatePreloader(seek);
+  }
+
+  private videoEndedError(): AppErrorInfo {
+    return {
+      code: 'video-ended',
+      category: 'youtube',
+      retryable: true,
+      message: t('background.session.videoEnded'),
+      at: this.host.deps.now(),
+    };
+  }
+
+  /** 视频自然结束（实时识别）：排空结尾音频的识别、等待尾段翻译，然后结束会话。重播、跳转或停止时放弃。 */
+  private async finishAsrAfterEnd(token: number): Promise<void> {
+    const current = () => token === this.endDrainToken && this.endedPaused && !this.isStopping;
+    const { asrEndDrainMs, asrEndTranslateMs } = this.timings;
+    const capture = this.capture;
+    if (capture) {
+      const drained = await this.host.deps.offscreen
+        .request(
+          { kind: 'capture/drain', leaseId: capture.leaseId, timeoutMs: asrEndDrainMs },
+          asrEndDrainMs + 3_000,
+        )
+        .then((r) => (r as { drained?: boolean } | undefined)?.drained ?? false)
+        .catch(() => false);
+      if (!current()) return;
+      diag('asr.end-drain', { session: this.identity.sessionId, drained });
+    }
+    // 尾段字幕（结尾 30 秒内）翻译完或达到上限后再结束。
+    const endMs = this.lastPlayer?.currentTimeMs ?? 0;
+    const deadline = this.host.deps.now() + asrEndTranslateMs;
+    const tailPending = () =>
+      this.sortedCues().some(
+        (c) =>
+          c.endMs >= endMs - 30_000 &&
+          (c.translationState === 'pending' || c.translationState === 'running'),
+      );
+    while (current() && this.phase === 'running' && tailPending()) {
+      if (this.host.deps.now() >= deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    if (!current()) return;
+    this.host.onFatal(this, this.videoEndedError());
   }
 
   /**
@@ -1863,7 +1940,8 @@ export class TranslationSession {
       epochMs: s?.sampledAtEpochMs ?? this.host.deps.now(),
       mediaTimeMs: s?.currentTimeMs ?? 0,
       playbackRate: s?.playbackRate ?? 1,
-      paused: s?.paused ?? true,
+      // 播放结束等同暂停：之后捕获到的音频不属于视频内容。
+      paused: (s?.paused ?? true) || !!s?.ended,
       seeking: s?.seeking ?? false,
       buffering: s?.buffering ?? false,
       ad: s?.ad ?? false,
@@ -1918,6 +1996,8 @@ export class TranslationSession {
     }
     this.dubbing?.invalidate(this.identity.epoch);
     this.dubbing?.setConfig(this.dubbingConfig(settings));
+    // 调度器 setConfig 会解除阻断；旧配置的翻译错误（如模型不存在）一并清除，新配置失败时会重新写入。
+    this.clearTranslationError();
     this.scheduler?.setConfig(this.translationConfig(settings), configRevision, provider);
     this.scheduler?.setCues(this.sortedCues(), this.schedulerIdentity());
     if (this.phase === 'paused') this.scheduler?.pause();
@@ -1960,12 +2040,21 @@ export class TranslationSession {
   /** 预取、缓存、超时等只影响调度、不影响译文内容的设置：不清空译文，不递增 configRevision。 */
   onSchedulingSettingsChanged(settings: Settings, provider: TextProvider): void {
     if (this.isStopping || !this.scheduler) return;
+    // 换 Key 等同样经 setConfig 解除调度器阻断，与之保持一致。
+    this.clearTranslationError();
     this.scheduler.setConfig(
       this.translationConfig(settings),
       this.identity.configRevision,
       provider,
     );
     if (this.phase === 'paused') this.scheduler.pause();
+  }
+
+  /** 只清除由翻译失败写入的错误，不影响识别、捕获等其他来源的错误。 */
+  private clearTranslationError(): void {
+    if (this.error && this.error === this.translationBlockingError) this.error = undefined;
+    this.translationBlockingError = undefined;
+    this.lastTranslationFailure = undefined;
   }
 
   retryFailed(): number {
@@ -2062,14 +2151,19 @@ export class TranslationSession {
     this.cueVersion++;
     if (latestError && ['auth', 'permission', 'quota', 'config'].includes(latestError.category)) {
       this.error = latestError;
+      this.translationBlockingError = latestError;
     } else if (
       !latestError &&
       this.error &&
-      ['auth', 'permission', 'quota', 'rate-limit', 'network', 'timeout', 'server'].includes(
-        this.error.category,
-      )
+      (this.error === this.translationBlockingError ||
+        ['auth', 'permission', 'quota', 'rate-limit', 'network', 'timeout', 'server'].includes(
+          this.error.category,
+        ))
     ) {
-      if (changed.some((c) => c.translationState === 'done')) this.error = undefined;
+      if (changed.some((c) => c.translationState === 'done')) {
+        this.error = undefined;
+        this.translationBlockingError = undefined;
+      }
     }
     this.queueContentPatch(changed, []);
     this.host.emitUiCues(this.identity.sessionId, {
@@ -2521,6 +2615,8 @@ function fullTrackFailureReason(error: unknown): string {
       return t('background.session.fullTrackReason.timeout');
     case 'captions-parse-failed':
       return t('background.session.fullTrackReason.parse');
+    case 'captions-empty':
+      return t('background.session.fullTrackReason.empty');
     case 'captions-player-unavailable':
     case 'player-unavailable':
       return t('background.session.fullTrackReason.player');

@@ -39,7 +39,13 @@ import { UiClientProvider, useBackground, useClientState, useCues } from '../sta
 import { cueQuote } from '../transcript/text';
 import { TranscriptView, type TranscriptSource } from '../transcript/TranscriptView';
 import { NoteAutosaver, type NoteSaveStatus } from './note-autosaver';
-import { clearNoteDraft, readNoteDraft, writeNoteDraft, type NoteDraft } from './note-drafts';
+import {
+  clearNoteDraft,
+  readNoteDraft,
+  readNoteDrafts,
+  writeNoteDraft,
+  type NoteDraft,
+} from './note-drafts';
 import styles from './workspace.module.css';
 
 const RECORD_LIST_LIMIT = 200;
@@ -690,6 +696,12 @@ function isConflict(error: unknown): boolean {
   return error instanceof NoteConflictError;
 }
 
+/** 本页在一次读取中写入的草稿（关闭页面或切换视频时仍有未保存内容）；text 为 null 表示尚未写入。 */
+interface OwnDraft {
+  id: string;
+  text: string | null;
+}
+
 function NotesPanel({
   videoId,
   snapshot,
@@ -715,6 +727,8 @@ function NotesPanel({
   const loadStatus = load.nonce === loadNonce ? load.status : 'loading';
   const [draft, setDraft] = useState<NoteDraft | undefined>(undefined);
   const saverRef = useRef<NoteAutosaver | null>(null);
+  /** 与 saverRef 同时设置：beforeunload 写入的草稿与卸载时写入的是同一份。 */
+  const ownDraftRef = useRef<OwnDraft | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const textRef = useRef('');
   /** 本页读取或上次成功保存时的 updatedAt，用于冲突检测。 */
@@ -734,8 +748,11 @@ function NotesPanel({
   const recordCues = recordState.status === 'ready' ? (recordState.loaded?.record.cues ?? []) : [];
 
   // 读取笔记；读取失败时禁止编辑，避免空内容覆盖已有笔记。
+  // 草稿只删除内容已保存的、与笔记相同的、本页写入且已保存的，或用户丢弃的那份；
+  // 用户尚未处理的旧草稿在切换视频、重新读取、另行编辑保存后都保留。
   useEffect(() => {
     let cancelled = false;
+    const own: OwnDraft = { id: crypto.randomUUID(), text: null };
     getNote(videoId).then(
       (note) => {
         if (cancelled) return;
@@ -745,15 +762,24 @@ function NotesPanel({
         setText(baseline);
         setLoad({ status: 'ready', nonce: loadNonce });
         setSaveStatus('idle');
-        const pendingDraft = readNoteDraft(videoId);
-        setDraft(pendingDraft && pendingDraft.text !== baseline ? pendingDraft : undefined);
+        // 与已保存笔记相同的草稿是多余的。
+        clearNoteDraft(videoId, { text: baseline });
+        setDraft(readNoteDraft(videoId));
+        ownDraftRef.current = own;
         saverRef.current = new NoteAutosaver({
           videoId,
           baseline,
           save: async (id, value) => {
             const saved = await saveNoteChecked(id, value, baseUpdatedAt.current);
             baseUpdatedAt.current = saved.updatedAt;
-            clearNoteDraft(id);
+            // 内容已保存的草稿（例如恢复后保存的那份）不再需要。
+            clearNoteDraft(id, { text: value });
+            // 本页写入的草稿是输入框较早的内容：仍在编辑且输入框当前内容已保存时一并删除
+            // （卸载后由上一行按内容、或 dispose 成功后按 id 删除）。
+            if (ownDraftRef.current === own && own.text !== null && value === textRef.current) {
+              clearNoteDraft(id, { id: own.id });
+              own.text = null;
+            }
             channelRef.current?.postMessage({ videoId: id, updatedAt: saved.updatedAt });
           },
           isConflict,
@@ -768,21 +794,29 @@ function NotesPanel({
       cancelled = true;
       const saver = saverRef.current;
       saverRef.current = null;
+      ownDraftRef.current = null;
       if (!saver) return;
       const unsaved = textRef.current;
       const base = baseUpdatedAt.current;
       if (discardUnsaved.current) {
         discardUnsaved.current = false;
-        clearNoteDraft(videoId);
+        // 用户放弃本页修改：只删除本页写入的草稿。
+        clearNoteDraft(videoId, { id: own.id });
         saver.discard();
         return;
       }
       if (saver.hasUnsaved) {
-        // 先同步写入草稿，保存成功后再清除；失败时保留，下次打开提示恢复。
-        writeNoteDraft(videoId, { text: unsaved, savedAt: Date.now(), baseUpdatedAt: base });
+        // 先同步写入本页草稿（与尚未处理的旧草稿并存），保存成功后再删除；失败时保留，下次打开提示恢复。
+        own.text = unsaved;
+        writeNoteDraft(videoId, {
+          id: own.id,
+          text: unsaved,
+          savedAt: Date.now(),
+          baseUpdatedAt: base,
+        });
       }
       void saver.dispose().then((ok) => {
-        if (ok) clearNoteDraft(videoId);
+        if (ok) clearNoteDraft(videoId, { id: own.id });
       });
     };
   }, [videoId, loadNonce]);
@@ -828,11 +862,16 @@ function NotesPanel({
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       const saver = saverRef.current;
       if (saver?.hasUnsaved) {
-        writeNoteDraft(videoId, {
-          text: textRef.current,
-          savedAt: Date.now(),
-          baseUpdatedAt: baseUpdatedAt.current,
-        });
+        const own = ownDraftRef.current;
+        if (own) {
+          own.text = textRef.current;
+          writeNoteDraft(videoId, {
+            id: own.id,
+            text: own.text,
+            savedAt: Date.now(),
+            baseUpdatedAt: baseUpdatedAt.current,
+          });
+        }
         void saver.flush();
         event.preventDefault();
       }
@@ -853,10 +892,19 @@ function NotesPanel({
     await saverRef.current?.retry();
   };
 
+  // 恢复后草稿保留到内容保存成功（save 回调按内容删除）；其他草稿下次打开时提示。
   const restoreDraft = () => {
     if (!draft) return;
     onChange(draft.text);
     setDraft(undefined);
+  };
+
+  // 用户明确丢弃这份草稿（内容相同的副本一并删除）；还有其他草稿时接着提示。
+  const discardDraft = () => {
+    if (!draft) return;
+    clearNoteDraft(videoId, { text: draft.text });
+    const ownId = ownDraftRef.current?.id;
+    setDraft(readNoteDrafts(videoId).find((d) => d.id !== ownId && d.text !== textRef.current));
   };
 
   const insertQuote = useCallback((cue: Cue) => {
@@ -935,14 +983,7 @@ function NotesPanel({
                   <Button size="sm" onClick={restoreDraft}>
                     {t('options.workspace.restoreDraft')}
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      clearNoteDraft(videoId);
-                      setDraft(undefined);
-                    }}
-                  >
+                  <Button size="sm" variant="ghost" onClick={discardDraft}>
                     {t('options.workspace.discardDraft')}
                   </Button>
                 </>

@@ -295,3 +295,51 @@ describe('RecognitionQueue', () => {
     expect(queue.status().state).toBe('unavailable');
   });
 });
+
+describe('RecognitionQueue.whenIdle（视频结束时排空尾段）', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('空闲时立即完成；有排队与在途时等全部识别完', async () => {
+    const { queue, calls } = setup();
+    let idle = false;
+    await queue.whenIdle();
+    queue.enqueue(seg('a', 2000));
+    queue.enqueue(seg('b', 2000));
+    void queue.whenIdle().then(() => (idle = true));
+    calls[0]!.resolve(ok('one'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(idle).toBe(false);
+    calls[1]!.resolve(ok('two'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(idle).toBe(true);
+  });
+
+  it('重试等待期间不算空闲；阻断或释放时立即完成', async () => {
+    const { queue, calls } = setup();
+    queue.enqueue(seg('a', 2000));
+    let idle = false;
+    void queue.whenIdle().then(() => (idle = true));
+    calls[0]!.reject(
+      new AppError({ code: 'asr-http-500', category: 'server', retryable: true, message: 'x' }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(idle).toBe(false);
+    calls.length = 0;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(calls).toHaveLength(1);
+    calls[0]!.reject(
+      new AppError({ code: 'asr-auth', category: 'auth', retryable: false, message: 'x' }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(idle).toBe(true);
+
+    const other = setup();
+    other.queue.enqueue(seg('b', 2000));
+    let released = false;
+    void other.queue.whenIdle().then(() => (released = true));
+    other.queue.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(released).toBe(true);
+  });
+});

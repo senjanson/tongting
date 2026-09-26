@@ -3,6 +3,7 @@ import {
   buildTranslationCacheKey,
   createMemoryTranslationCache,
 } from '@src/storage/translation-cache';
+import { translatedUntil } from '@src/translation/playback-buffer';
 import {
   createTranslationScheduler,
   createTranslationSchedulerWithOptions,
@@ -890,5 +891,52 @@ describe('translation scheduler: full-track backfill', () => {
     scheduler.pause();
     await settle();
     expect(provider.open()).toHaveLength(0);
+  });
+});
+
+describe('translation scheduler: cues longer than 60 s', () => {
+  it('requests a 0–120 s cue at playhead 95 s so the translated range moves past the playhead', async () => {
+    // 已保存的字幕记录、ASR 等来源不经过 normalize 的 60 s 上限，直接进入调度器。
+    const { provider, scheduler, updates } = setup({ config: { prefetch: false } });
+    const long = makeCue('long', 0, 120_000, 'Background music keeps playing for two minutes.');
+    scheduler.setPlayhead({ mediaTimeMs: 95_000, playing: true, playbackRate: 1 });
+    scheduler.setCues([long], identityA);
+
+    await waitUntil(() => provider.calls.length === 1);
+    expect(ids(provider.calls[0]!)).toEqual(['long']);
+    const ranges = [{ startMs: 0, endMs: 150_000 }];
+    expect(translatedUntil(95_000, ranges, [long])).toBe(95_000);
+
+    provider.respond(provider.calls[0]!);
+    await waitUntil(() => updates.doneFor('long').length === 1);
+    const done = updates.doneFor('long')[0]!;
+    const translated = {
+      ...long,
+      translationState: 'done' as const,
+      translatedText: done.translatedText,
+    };
+    expect(translatedUntil(95_000, ranges, [translated])).toBe(150_000);
+  });
+
+  it('recomputes the lookback when a long cue arrives or an existing cue grows through upsertCues', async () => {
+    const { provider, scheduler } = setup({ config: { prefetch: false } });
+    scheduler.setPlayhead({ mediaTimeMs: 170_000, playing: true, playbackRate: 1 });
+    const grow = makeCue('grow', 5_000, 20_000, 'A caption whose end is extended later.');
+    scheduler.setCues([grow], identityA);
+    await settle();
+    expect(provider.calls).toHaveLength(0);
+
+    scheduler.upsertCues([
+      makeCue('asr-long', 60_000, 180_000, 'A long ASR segment.', { source: 'asr' }),
+    ]);
+    await waitUntil(() => provider.calls.length === 1);
+    expect(ids(provider.calls[0]!)).toEqual(['asr-long']);
+    provider.respond(provider.calls[0]!);
+    await settle();
+
+    // 只改时间（revision/文本不变）也要重算跨度：grow 的新跨度超过 asr-long，起点落在旧窗口之外。
+    scheduler.upsertCues([{ ...grow, endMs: 175_000 }]);
+    await waitUntil(() => provider.calls.length === 2);
+    expect(ids(provider.calls[1]!)).toEqual(['grow']);
   });
 });

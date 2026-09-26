@@ -219,3 +219,89 @@ describe('buffered playback failure and configuration recovery', () => {
     },
   );
 });
+
+describe('translation errors are cleared when the translation config changes', () => {
+  async function startFullTrack() {
+    const h = createHarness();
+    active.push(h);
+    await configure(h, { buffered: true });
+    const content = h.content(1);
+    content.hello();
+    content.navigate('aaaaaaaaaaa');
+    content.player({ currentTimeMs: 0, durationMs: 8000, paused: true }, 'pause');
+    await wait(10);
+    await h.coordinator.handleCommand({ kind: 'session/start', tabId: 1 });
+    await wait(30);
+    content.trackData();
+    await h.coordinator.idle();
+    await wait(50);
+    return h;
+  }
+
+  const failAll = (category: 'config' | 'auth', code: string) => {
+    const scheduler = FakeScheduler.all.at(-1)!;
+    scheduler.emit(
+      scheduler.cues.map((c) => ({
+        cueId: c.id,
+        cueRevision: c.revision,
+        state: 'failed' as const,
+        error: { code, category, retryable: false, message: code },
+      })),
+    );
+  };
+  const translateAll = () => {
+    const scheduler = FakeScheduler.all.at(-1)!;
+    scheduler.emit(
+      scheduler.cues.map((c) => ({
+        cueId: c.id,
+        cueRevision: c.revision,
+        state: 'done' as const,
+        translatedText: '译文',
+      })),
+    );
+  };
+
+  it('clears model-not-found after a valid model is saved, so buffered playback becomes ready', async () => {
+    const h = await startFullTrack();
+    failAll('config', 'model-not-found');
+    await wait(10);
+    expect(latest(h).error).toMatchObject({ code: 'model-not-found' });
+    expect(latest(h).playbackBuffer?.state).toBe('blocked');
+
+    await h.coordinator.handleCommand({
+      kind: 'settings/update',
+      patch: { provider: { model: 'gpt-5.6-luna' } },
+    });
+    await h.coordinator.idle();
+    expect(latest(h).error).toBeUndefined();
+    translateAll();
+    await wait(10);
+    expect(latest(h).playbackBuffer).toMatchObject({ state: 'ready' });
+    expect(latest(h).error).toBeUndefined();
+    expect(latest(h).notice?.code).not.toBe('translation-failing');
+  });
+
+  it('a config error is also cleared when a later translation succeeds', async () => {
+    const h = await startFullTrack();
+    failAll('config', 'model-not-found');
+    await wait(10);
+    translateAll();
+    await wait(10);
+    expect(latest(h).error).toBeUndefined();
+    expect(latest(h).playbackBuffer).toMatchObject({ state: 'ready' });
+  });
+
+  it('clears an auth error as soon as a new API key is saved', async () => {
+    const h = await startFullTrack();
+    failAll('auth', 'auth-invalid');
+    await wait(10);
+    expect(latest(h).error).toMatchObject({ code: 'auth-invalid' });
+    await h.coordinator.handleCommand({
+      kind: 'credentials/set',
+      apiKey: 'sk-test-another-key-123456',
+      remember: false,
+    });
+    await h.coordinator.idle();
+    expect(latest(h).error).toBeUndefined();
+  });
+});

@@ -93,6 +93,12 @@ export const OffscreenRequestSchema = z.discriminatedUnion('kind', [
     leaseId: LeaseId,
     epoch: z.number().int().nonnegative(),
   }),
+  /** 视频自然结束：收尾已缓冲的音频并等待识别排空（有上限），返回 { drained }。 */
+  z.object({
+    kind: z.literal('capture/drain'),
+    leaseId: LeaseId,
+    timeoutMs: z.number().int().min(0).max(60_000),
+  }),
   /** 暂停翻译但保留原声播放：停止送识别，保留原声路径。 */
   z.object({ kind: z.literal('capture/set-recognition'), leaseId: LeaseId, enabled: z.boolean() }),
   z.object({

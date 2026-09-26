@@ -4,6 +4,7 @@
  * 输出不变量（RawCaptionCue[]）：
  * - 按 startMs 严格升序（相同起点的片段合并为一条）；
  * - 每条 0 <= startMs < endMs <= MAX_MEDIA_TIME_MS，endMs <= 下一条 startMs；
+ * - 每条 endMs - startMs <= MAX_SINGLE_CUE_DURATION_MS（重复段合并也不突破）；
  * - text 非空、已清洗、长度不超过 MAX_CUE_TEXT_LENGTH。
  */
 import { MAX_CUE_TEXT_LENGTH, MAX_MEDIA_TIME_MS, type RawCaptionCue } from '../domain/cue';
@@ -148,8 +149,14 @@ export function finalizeCandidates(
     if (truncated) stats.truncated++;
 
     const prev = out[out.length - 1];
-    // 重复段：文本相同且时间相接/重叠，合并为一条。
-    if (prev && prev.text === t.text && w.startMs <= prev.endMs + 50) {
+    // 重复段：文本相同且时间相接/重叠，合并为一条。合并后超过单条时长上限时另起一条
+    // （长段 [Music] 等），保持每条不超过 MAX_SINGLE_CUE_DURATION_MS，下游窗口依赖该上限。
+    if (
+      prev &&
+      prev.text === t.text &&
+      w.startMs <= prev.endMs + 50 &&
+      Math.max(prev.endMs, endMs) - prev.startMs <= MAX_SINGLE_CUE_DURATION_MS
+    ) {
       prev.endMs = Math.max(prev.endMs, endMs);
       stats.duplicates++;
       continue;

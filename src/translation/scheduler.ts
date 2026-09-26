@@ -121,7 +121,7 @@ export const DEFAULT_SCHEDULER_OPTIONS: Omit<SchedulerOptions, 'timers'> = {
 
 /** 允许的最长译文（与 Cue.translatedText 上限一致）。 */
 const MAX_TRANSLATED_LENGTH = 8_000;
-/** 查找窗口起点时额外回看的 cue 时长上限。 */
+/** 查找窗口起点时额外回看的 cue 时长（下限；实际按当前 cue 的最长跨度放宽）。 */
 const MAX_CUE_SPAN_MS = 60_000;
 
 type EntryStatus = 'inactive' | 'skipped' | 'idle' | 'lookup' | 'running' | 'done' | 'failed';
@@ -231,6 +231,8 @@ export function createTranslationSchedulerWithOptions(
   let order: Entry[] = [];
   let orderIndex = new Map<Entry, number>();
   let orderDirty = true;
+  /** order 中最长的 cue 跨度；随 order 一起重算（已保存记录、ASR 等来源不保证 ≤ MAX_CUE_SPAN_MS）。 */
+  let longestCueSpanMs = 0;
 
   const inflight = new Map<number, Batch>();
   const memory = new Map<string, string>();
@@ -385,6 +387,11 @@ export function createTranslationSchedulerWithOptions(
         a.cue.startMs - b.cue.startMs || (a.cue.id < b.cue.id ? -1 : a.cue.id > b.cue.id ? 1 : 0),
     );
     orderIndex = new Map(order.map((entry, index) => [entry, index]));
+    longestCueSpanMs = 0;
+    for (const entry of order) {
+      const span = entry.cue.endMs - entry.cue.startMs;
+      if (span > longestCueSpanMs) longestCueSpanMs = span;
+    }
     orderDirty = false;
   }
 
@@ -478,8 +485,11 @@ export function createTranslationSchedulerWithOptions(
     const aheadEnd = t + opts.currentAheadMs * rate;
     const allowPrefetch = prefetchAllowed();
     const prefetchEnd = allowPrefetch ? t + opts.prefetchAheadMs * rate : aheadEnd;
+    // 起点早于 lowStart 的 cue 必然在回看窗口前结束；按实际最长跨度放宽，正在显示的长 cue 不会漏掉。
     const lowStart =
-      t - Math.max(opts.trackLookbehindMs, opts.incrementalLookbehindMs) - MAX_CUE_SPAN_MS;
+      t -
+      Math.max(opts.trackLookbehindMs, opts.incrementalLookbehindMs) -
+      Math.max(MAX_CUE_SPAN_MS, longestCueSpanMs);
 
     let lo = 0;
     let hi = order.length;

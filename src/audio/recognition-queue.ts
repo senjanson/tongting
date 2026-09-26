@@ -118,6 +118,7 @@ export class RecognitionQueue {
   private lastBacklogDropAt = -Infinity;
   private failure: { at: number; state: 'error' | 'unavailable' } | null = null;
   private lastStatusKey = '';
+  private idleWaiters: Array<() => void> = [];
 
   constructor(options: RecognitionQueueOptions) {
     this.o = {
@@ -213,6 +214,21 @@ export class RecognitionQueue {
     }
   }
 
+  /** 没有排队、在途与重试等待，或已阻断、停用、释放时 resolve（视频结束时排空尾段用）。 */
+  whenIdle(): Promise<void> {
+    if (this.isSettled()) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.push(resolve));
+  }
+
+  private isSettled(): boolean {
+    return (
+      this.disposed ||
+      !this.enabled ||
+      !!this.blocked ||
+      (!this.inFlight && this.queue.length === 0 && this.retryTimer === null)
+    );
+  }
+
   /** 中止在途请求、清空排队并使旧结果失效（epoch 变化、暂停识别）。 */
   reset(): void {
     this.generation++;
@@ -254,6 +270,9 @@ export class RecognitionQueue {
   }
 
   private notify(force = false): void {
+    if (this.idleWaiters.length && this.isSettled()) {
+      for (const resolve of this.idleWaiters.splice(0)) resolve();
+    }
     if (!this.o.onStatus) return;
     const s = this.status();
     const key = `${s.state}|${s.queued}|${s.inFlight}|${s.droppedSegments}|${s.failedSegments}|${s.lastError?.code ?? ''}`;

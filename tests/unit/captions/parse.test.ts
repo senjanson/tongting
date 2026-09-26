@@ -18,7 +18,7 @@ import {
   parseVtt,
 } from '@src/captions/parse';
 import { decodeEntities, joinCaptionText, normalizeCaptionText } from '@src/captions/text';
-import { finalizeCandidates } from '@src/captions/normalize';
+import { MAX_SINGLE_CUE_DURATION_MS, finalizeCandidates } from '@src/captions/normalize';
 
 const fixture = (name: string) =>
   readFileSync(resolve(import.meta.dirname, '../../fixtures/youtube', name), 'utf8');
@@ -240,5 +240,63 @@ describe('review 16a/16f', () => {
     const lri = String.fromCharCode(0x2066);
     const pdi = String.fromCharCode(0x2069);
     expect(normalizeCaptionText(`abc${rlo}gpj.exe ${lri}x${pdi}`)).toBe('abcgpj.exe x');
+  });
+});
+
+describe('repeated cue merging keeps the single-cue duration cap', () => {
+  const expectCapped = (cues: RawCaptionCue[]) => {
+    for (const c of cues)
+      expect(c.endMs - c.startMs).toBeLessThanOrEqual(MAX_SINGLE_CUE_DURATION_MS);
+  };
+
+  it('splits a long run of identical json3 events into contiguous cues of at most 60 s', () => {
+    // 30 条每 5 s 一条、时长 7 s 的 [Music]：之前会合并成一条 0–152 s。
+    const events = Array.from({ length: 30 }, (_, i) => ({
+      tStartMs: i * 5_000,
+      dDurationMs: 7_000,
+      segs: [{ utf8: '[Music]' }],
+    }));
+    const r = parseJson3({ events });
+    expectWellFormed(r.cues);
+    expectCapped(r.cues);
+    expect(r.cues).toEqual([
+      { startMs: 0, endMs: 60_000, text: '[Music]' },
+      { startMs: 60_000, endMs: 120_000, text: '[Music]' },
+      { startMs: 120_000, endMs: 152_000, text: '[Music]' },
+    ]);
+    expect(r.stats.duplicates).toBe(27);
+    expect(r.rejectedCount).toBe(0);
+  });
+
+  it('splits at an original cue boundary without gaps when the step does not divide 60 s', () => {
+    const r = finalizeCandidates(
+      'json3',
+      Array.from({ length: 20 }, (_, i) => ({
+        startMs: i * 7_000,
+        endMs: (i + 1) * 7_000,
+        text: '♪',
+      })),
+    );
+    expectWellFormed(r.cues);
+    expectCapped(r.cues);
+    expect(r.cues.map((c) => [c.startMs, c.endMs])).toEqual([
+      [0, 56_000],
+      [56_000, 112_000],
+      [112_000, 140_000],
+    ]);
+    for (let i = 1; i < r.cues.length; i++) expect(r.cues[i]!.startMs).toBe(r.cues[i - 1]!.endMs);
+  });
+
+  it('still merges short repeated runs and keeps a merge that lands exactly on the cap', () => {
+    const r = finalizeCandidates('json3', [
+      { startMs: 0, endMs: 30_000, text: 'same' },
+      { startMs: 30_020, endMs: 60_000, text: 'same' },
+      { startMs: 60_000, endMs: 61_000, text: 'same' },
+    ]);
+    expect(r.cues).toEqual([
+      { startMs: 0, endMs: 60_000, text: 'same' },
+      { startMs: 60_000, endMs: 61_000, text: 'same' },
+    ]);
+    expect(r.stats.duplicates).toBe(1);
   });
 });

@@ -423,6 +423,11 @@ export function createOffscreenHost(deps: OffscreenHostDeps): OffscreenHost {
         lease!.owner = { ...lease!.owner, epoch: request.epoch };
         return { epoch: request.epoch };
       }
+      case 'capture/drain': {
+        const t = target(request.leaseId);
+        if (!t.session) return { drained: true };
+        return { drained: await t.session.drain(request.timeoutMs) };
+      }
       case 'capture/set-recognition': {
         const t = target(request.leaseId);
         if (t.session) t.session.setRecognition(request.enabled);

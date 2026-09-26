@@ -141,6 +141,61 @@ describe('buffered captions diagnostics and recovery', () => {
     },
   );
 
+  it.each([true, false])(
+    'treats a caption track with no valid cues as a read failure and falls back (buffered=%s)',
+    async (buffered) => {
+      const h = harness();
+      await configure(h, { buffered });
+      // HTTP 200 + {"events":[]}（或条目全部无效）解析后为 0 条：不能当作完整轨道成功。
+      const c = await start(h, { count: 0 });
+      await h.coordinator.idle();
+      expect(latest(h)).toMatchObject({
+        phase: 'running',
+        sourceMode: 'incremental-captions',
+        notice: { code: 'incremental-captions', level: 'warning' },
+      });
+      expect(latest(h).notice!.message).toContain('播放器返回的字幕轨道没有内容');
+      // 同步优先不会因空轨道显示「已就绪」。
+      expect(latest(h).playbackBuffer).toBeUndefined();
+      expect(
+        c.requests
+          .filter((r) => r.request.kind === 'captions/observe-visible')
+          .map((r) => (r.request as { enable: boolean }).enable),
+      ).toEqual([true]);
+    },
+  );
+
+  it('keeps the current track and translations when the player switches to an empty track while running', async () => {
+    const h = harness();
+    await configure(h);
+    const c = await start(h, { count: 3 });
+    expect(latest(h)).toMatchObject({ phase: 'running', sourceMode: 'full-track' });
+    const before = h.coordinator.buildSnapshot(1).sessions[0]!.translation.total;
+    expect(before).toBeGreaterThan(0);
+    const ja = { trackKey: 'ja', languageCode: 'ja', label: 'Japanese', kind: 'manual' as const };
+    c.send({
+      type: 'captions/tracks',
+      navigationId: c.navigationId,
+      videoId: c.videoId!,
+      availability: 'available',
+      tracks: [{ trackKey: 'en', languageCode: 'en', label: 'English', kind: 'manual' }, ja],
+    });
+    c.send({
+      type: 'captions/track-data',
+      navigationId: c.navigationId,
+      videoId: c.videoId!,
+      track: ja,
+      format: 'json3',
+      complete: true,
+      rejectedCount: 0,
+      cues: [],
+    });
+    await h.coordinator.idle();
+    await wait(20);
+    expect(latest(h)).toMatchObject({ phase: 'running', sourceMode: 'full-track' });
+    expect(latest(h).translation.total).toBe(before);
+  });
+
   it('still falls back to configured local audio preloading when full captions fail', async () => {
     const h = harness();
     await configure(h, { buffered: true, asr: true });

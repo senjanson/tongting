@@ -29,6 +29,7 @@ const recordId = transcriptRecordId(VIDEO_ID, 'zh-CN', 'en.manual');
 beforeEach(async () => {
   await resetDbForTests();
   globalThis.indexedDB = new IDBFactory();
+  localStorage.clear();
   notes.getNote.mockResolvedValue({
     schemaVersion: 1,
     videoId: VIDEO_ID,
@@ -72,6 +73,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   window.history.replaceState({}, '', '/');
   await resetDbForTests();
+  localStorage.clear();
 });
 
 function start(snapshot = makeSnapshot()) {
@@ -429,5 +431,243 @@ describe('workspace', () => {
       expect(notes.saveNoteChecked).toHaveBeenLastCalledWith(VIDEO_ID, '读取完成后继续编辑', 2),
     );
     expect(area.value).toBe('读取完成后继续编辑');
+  });
+});
+
+describe('workspace note drafts', () => {
+  const OTHER_VIDEO = 'zzzzzzzzzzz';
+  const OLD_DRAFT = '上次没保存的草稿';
+
+  // 旧版本的存储格式：每个视频一份草稿，没有 id。
+  function seedDraft() {
+    localStorage.setItem(
+      `tongting:note-draft:${VIDEO_ID}`,
+      JSON.stringify({ text: OLD_DRAFT, savedAt: 100, baseUpdatedAt: 1 }),
+    );
+  }
+
+  function draftTexts(videoId = VIDEO_ID): string[] {
+    const raw = localStorage.getItem(`tongting:note-draft:${videoId}`);
+    if (!raw) return [];
+    const value = JSON.parse(raw) as { text: string } | { text: string }[];
+    return (Array.isArray(value) ? value : [value]).map((d) => d.text).sort();
+  }
+
+  /** 等待卸载后 dispose 的保存与清理完成。 */
+  const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+
+  async function addOtherRecord() {
+    await putTranscript({
+      schemaVersion: RECORD_SCHEMA_VERSION,
+      recordId: transcriptRecordId(OTHER_VIDEO, 'zh-CN', 'en.manual'),
+      videoId: OTHER_VIDEO,
+      title: '另一个视频',
+      targetLanguage: 'zh-CN',
+      sourceLanguage: 'en',
+      sourceMode: 'full-track',
+      sourceKey: 'en.manual',
+      lastSessionId: 'session-00000002',
+      cues: [makeCue('x', 0)],
+      coverage: { complete: true, ranges: [], gaps: [] },
+      createdAt: 1,
+      updatedAt: 3,
+    });
+    notes.getNote.mockImplementation(async (videoId: string) =>
+      videoId === VIDEO_ID
+        ? { schemaVersion: 1, videoId, text: '已有笔记', updatedAt: 1 }
+        : undefined,
+    );
+  }
+
+  const noteArea = () => screen.findByLabelText('视频笔记') as Promise<HTMLTextAreaElement>;
+
+  it('keeps an unhandled draft when switching videos A→B→A', async () => {
+    seedDraft();
+    await addOtherRecord();
+    start();
+    expect(await screen.findByText('发现未保存的笔记草稿')).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: /另一个视频/ }));
+    await waitFor(() => expect(notes.getNote).toHaveBeenCalledWith(OTHER_VIDEO));
+    await waitFor(() => expect(screen.queryByText('发现未保存的笔记草稿')).toBeNull());
+    await settle();
+    expect(draftTexts()).toEqual([OLD_DRAFT]);
+
+    fireEvent.click(screen.getByRole('button', { name: /记录中的视频标题/ }));
+    expect(await screen.findByText('发现未保存的笔记草稿')).toBeTruthy();
+    expect(draftTexts()).toEqual([OLD_DRAFT]);
+    expect(notes.saveNoteChecked).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unhandled draft when the component unmounts', async () => {
+    seedDraft();
+    start();
+    expect(await screen.findByText('发现未保存的笔记草稿')).toBeTruthy();
+    cleanup();
+    await settle();
+    expect(draftTexts()).toEqual([OLD_DRAFT]);
+  });
+
+  it.each(['focus', 'broadcast'] as const)(
+    'keeps an unhandled draft when a %s reload reads a newer note',
+    async (trigger) => {
+      seedDraft();
+      start();
+      expect(await screen.findByText('发现未保存的笔记草稿')).toBeTruthy();
+      notes.getNote.mockResolvedValue({
+        schemaVersion: 1,
+        videoId: VIDEO_ID,
+        text: '其他页面的新版本',
+        updatedAt: 2,
+      });
+      if (trigger === 'focus') {
+        act(() => window.dispatchEvent(new Event('focus')));
+      } else {
+        const channel = new BroadcastChannel('tongting:notes');
+        channel.postMessage({ videoId: VIDEO_ID, updatedAt: 2 });
+        channel.close();
+      }
+      expect(await screen.findByDisplayValue('其他页面的新版本')).toBeTruthy();
+      expect(await screen.findByText('发现未保存的笔记草稿')).toBeTruthy();
+      await settle();
+      expect(draftTexts()).toEqual([OLD_DRAFT]);
+    },
+  );
+
+  it('keeps an unhandled draft when other text is typed and saved instead', async () => {
+    seedDraft();
+    start();
+    expect(await screen.findByText('发现未保存的笔记草稿')).toBeTruthy();
+    fireEvent.change(await noteArea(), { target: { value: '另写的内容' } });
+    expect(await screen.findByText('已保存', {}, { timeout: 3_000 })).toBeTruthy();
+    expect(notes.saveNoteChecked).toHaveBeenLastCalledWith(VIDEO_ID, '另写的内容', 1);
+    expect(draftTexts()).toEqual([OLD_DRAFT]);
+    expect(screen.getByText('发现未保存的笔记草稿')).toBeTruthy();
+    cleanup();
+    await settle();
+    expect(draftTexts()).toEqual([OLD_DRAFT]);
+  });
+
+  it('writes this page’s draft next to an unhandled one when switching right after typing, and removes only its own once saved', async () => {
+    seedDraft();
+    await addOtherRecord();
+    let release!: () => void;
+    notes.saveNoteChecked.mockImplementationOnce(
+      async (videoId: string, text: string, expected: number) => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return { schemaVersion: 1, videoId, text, updatedAt: expected + 1 };
+      },
+    );
+    start();
+    expect(await screen.findByText('发现未保存的笔记草稿')).toBeTruthy();
+    fireEvent.change(await noteArea(), { target: { value: '刚输入就切换' } });
+    fireEvent.click(screen.getByRole('button', { name: /另一个视频/ }));
+    await waitFor(() =>
+      expect(notes.saveNoteChecked).toHaveBeenCalledWith(VIDEO_ID, '刚输入就切换', 1),
+    );
+    // 保存完成前两份草稿并存：本页草稿不覆盖用户尚未处理的旧草稿。
+    expect(draftTexts()).toEqual([OLD_DRAFT, '刚输入就切换'].sort());
+    await act(async () => release());
+    await waitFor(() => expect(draftTexts()).toEqual([OLD_DRAFT]));
+  });
+
+  it('drops this page’s beforeunload draft once newer content is saved, keeping the unhandled one', async () => {
+    seedDraft();
+    const quota = new DOMException('quota', 'QuotaExceededError');
+    notes.saveNoteChecked.mockRejectedValueOnce(quota).mockRejectedValueOnce(quota);
+    start();
+    expect(await screen.findByText('发现未保存的笔记草稿')).toBeTruthy();
+    const area = await noteArea();
+    fireEvent.change(area, { target: { value: '离开前没保存的内容' } });
+    expect(
+      await screen.findByText('保存失败，内容仍在输入框中', {}, { timeout: 3_000 }),
+    ).toBeTruthy();
+    // 用户尝试离开（随后取消）：本页草稿与旧草稿并存，离开前的再次保存仍失败。
+    act(() => {
+      window.dispatchEvent(new Event('beforeunload', { cancelable: true }));
+    });
+    await waitFor(() => expect(notes.saveNoteChecked).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(draftTexts()).toEqual([OLD_DRAFT, '离开前没保存的内容'].sort());
+    // 继续编辑并保存成功：本页草稿已被取代，删除；旧草稿保留。
+    fireEvent.change(area, { target: { value: '离开前没保存的内容，继续写' } });
+    await waitFor(() =>
+      expect(notes.saveNoteChecked).toHaveBeenLastCalledWith(
+        VIDEO_ID,
+        '离开前没保存的内容，继续写',
+        1,
+      ),
+    );
+    expect(await screen.findByText('已保存', {}, { timeout: 3_000 })).toBeTruthy();
+    expect(draftTexts()).toEqual([OLD_DRAFT]);
+  });
+
+  it('removes the draft once its restored content is saved', async () => {
+    seedDraft();
+    start();
+    expect(await screen.findByText('发现未保存的笔记草稿')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '恢复草稿' }));
+    expect((await noteArea()).value).toBe(OLD_DRAFT);
+    expect(screen.queryByText('发现未保存的笔记草稿')).toBeNull();
+    expect(await screen.findByText('已保存', {}, { timeout: 3_000 })).toBeTruthy();
+    expect(notes.saveNoteChecked).toHaveBeenLastCalledWith(VIDEO_ID, OLD_DRAFT, 1);
+    expect(draftTexts()).toEqual([]);
+  });
+
+  it('removes a draft that matches the saved note without prompting', async () => {
+    localStorage.setItem(
+      `tongting:note-draft:${VIDEO_ID}`,
+      JSON.stringify({ text: '已有笔记', savedAt: 100, baseUpdatedAt: 1 }),
+    );
+    start();
+    expect(await screen.findByDisplayValue('已有笔记')).toBeTruthy();
+    expect(screen.queryByText('发现未保存的笔记草稿')).toBeNull();
+    expect(draftTexts()).toEqual([]);
+  });
+
+  it('keeps a failed save as a draft next to an unhandled one and offers them one after another', async () => {
+    seedDraft();
+    notes.saveNoteChecked.mockRejectedValue(new DOMException('quota', 'QuotaExceededError'));
+    start();
+    expect(await screen.findByText('发现未保存的笔记草稿')).toBeTruthy();
+    fireEvent.change(await noteArea(), { target: { value: '保存失败的新内容' } });
+    expect(
+      await screen.findByText('保存失败，内容仍在输入框中', {}, { timeout: 3_000 }),
+    ).toBeTruthy();
+    cleanup();
+    await settle();
+    expect(draftTexts()).toEqual([OLD_DRAFT, '保存失败的新内容'].sort());
+
+    // 下次打开先提示最新的一份；丢弃后接着提示旧草稿，恢复得到旧草稿的内容。
+    start();
+    expect(await screen.findByText('发现未保存的笔记草稿')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '丢弃草稿' }));
+    expect(draftTexts()).toEqual([OLD_DRAFT]);
+    expect(screen.getByText('发现未保存的笔记草稿')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '恢复草稿' }));
+    expect((await noteArea()).value).toBe(OLD_DRAFT);
+  });
+
+  it('keeps an unhandled draft when 载入最新版本 discards this page’s changes after a conflict', async () => {
+    seedDraft();
+    notes.saveNoteChecked.mockRejectedValueOnce(new notes.NoteConflictError('conflict'));
+    start();
+    expect(await screen.findByText('发现未保存的笔记草稿')).toBeTruthy();
+    fireEvent.change(await noteArea(), { target: { value: '冲突中的本页修改' } });
+    expect(
+      await screen.findByText('笔记已在其他页面修改，未保存本页内容', {}, { timeout: 3_000 }),
+    ).toBeTruthy();
+    notes.getNote.mockResolvedValue({
+      schemaVersion: 1,
+      videoId: VIDEO_ID,
+      text: '其他页面的新版本',
+      updatedAt: 2,
+    });
+    fireEvent.click(screen.getByRole('button', { name: '载入最新版本（放弃本页修改）' }));
+    expect(await screen.findByDisplayValue('其他页面的新版本')).toBeTruthy();
+    expect(await screen.findByText('发现未保存的笔记草稿')).toBeTruthy();
+    await settle();
+    expect(draftTexts()).toEqual([OLD_DRAFT]);
   });
 });

@@ -156,6 +156,8 @@ export class FakeOffscreen {
   requests: OffscreenRequest[] = [];
   status: OffscreenStatus | null = null;
   captureStartDelay?: Promise<void>;
+  /** 视频结束时的识别尾段排空：设置后 capture/drain 等它完成才返回。 */
+  drainDelay?: Promise<void>;
   private eventListeners: ((e: OffscreenEvent) => void)[] = [];
   private helloListeners: ((s: OffscreenStatus) => void)[] = [];
   handledPorts: PortLike[] = [];
@@ -168,6 +170,10 @@ export class FakeOffscreen {
   async request(req: OffscreenRequest) {
     this.requests.push(structuredClone(req));
     if (req.kind === 'capture/start' && this.captureStartDelay) await this.captureStartDelay;
+    if (req.kind === 'capture/drain' && this.drainDelay) {
+      await this.drainDelay;
+      return { drained: true };
+    }
     return { ok: true };
   }
   onEvent(l: (e: OffscreenEvent) => void) {

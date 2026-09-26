@@ -731,6 +731,27 @@ export class CaptureSession {
     this.emitStatus(true);
   }
 
+  /**
+   * 视频自然结束：收尾分段器中已缓冲的音频，等待锚点确认与识别队列排空，让结尾几秒也能识别。
+   * 结束之后的音频按已收到的暂停锚点丢弃。超时、停止或识别被阻断时返回，不无限等待。
+   * @returns 是否在期限内排空。
+   */
+  async drain(timeoutMs: number): Promise<boolean> {
+    const queue = this.queue;
+    if (this.stateValue !== 'active' || !queue || !this.recognitionEnabled) return true;
+    const deadline = this.deps.now() + timeoutMs;
+    this.flushPipeline();
+    // 刚切出的分段要等 anchorSettleMs 后才按时间线入队。
+    await new Promise<void>((resolve) => this.setTimer(resolve, this.tuning.anchorSettleMs + 20));
+    if (this.stateValue !== 'active' || this.queue !== queue) return false;
+    return Promise.race([
+      queue.whenIdle().then(() => true),
+      new Promise<boolean>((resolve) =>
+        this.setTimer(() => resolve(false), Math.max(0, deadline - this.deps.now())),
+      ),
+    ]);
+  }
+
   setOriginalGain(gain: number, rampMs: number): void {
     const target = Math.min(1, Math.max(0, gain));
     if (this.stateValue === 'requesting' && !this.isStopping) {

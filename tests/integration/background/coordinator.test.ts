@@ -1189,6 +1189,117 @@ describe('Coordinator – 语音识别模式', () => {
     expect(s.error?.code).toBe('video-ended');
   });
 
+  describe('video end with live ASR: the tail is recognised before the session ends', () => {
+    async function startAsr() {
+      const h = createHarness();
+      const ui = await configure(h, { asr: true });
+      const content = h.content(1);
+      content.hello();
+      content.navigate('aaaaaaaaaaa', { tracks: false });
+      await wait(20);
+      await ui.command({ kind: 'session/start', tabId: 1 });
+      await h.coordinator.idle();
+      const start = h.offscreen.requests.find((r) => r.kind === 'capture/start') as {
+        leaseId: string;
+        owner: { sessionId: string; tabId: number; epoch: number };
+      };
+      const result = (segmentId: string, startMs: number, endMs: number, text: string) =>
+        h.offscreen.emitEvent({
+          kind: 'asr/result',
+          leaseId: start.leaseId,
+          owner: start.owner,
+          segmentId,
+          startMs,
+          endMs,
+          endEstimated: false,
+          text,
+          final: true,
+          revision: 0,
+        });
+      let release!: () => void;
+      h.offscreen.drainDelay = new Promise<void>((r) => (release = r));
+      content.player({ currentTimeMs: 599_990 }, 'tick');
+      await wait(10);
+      result('seg-1', 585_000, 590_000, 'Early words.');
+      await wait(10);
+      return { h, ui, content, start, result, release };
+    }
+
+    it('keeps capturing until the tail is recognised and translated, then ends with video-ended', async () => {
+      const { h, ui, content, start, result, release } = await startAsr();
+      content.player({ currentTimeMs: 600_000, ended: true, paused: true }, 'ended');
+      await wait(20);
+      // 先发结束锚点（之后的音频不属于视频），再请求排空；此时不停止捕获。
+      const kinds = h.offscreen.kinds();
+      const anchorAt = kinds.lastIndexOf('timeline/anchor');
+      expect(anchorAt).toBeGreaterThanOrEqual(0);
+      expect(kinds.indexOf('capture/drain')).toBeGreaterThan(anchorAt);
+      expect(
+        (h.offscreen.requests[anchorAt] as { anchor: { paused: boolean } }).anchor.paused,
+      ).toBe(true);
+      expect(kinds).not.toContain('capture/stop');
+      expect(ui.lastSnapshot()!.sessions[0]!.phase).toBe('running');
+
+      result('seg-2', 596_000, 599_500, 'Tail words.');
+      await wait(20);
+      const scheduler = FakeScheduler.all.at(-1)!;
+      const tail = scheduler.cues.find((c) => c.sourceText === 'Tail words.');
+      expect(tail).toBeDefined();
+      release();
+      await wait(20);
+      // 尾段还没翻译完：继续等待（有上限）。
+      expect(h.offscreen.kinds()).not.toContain('capture/stop');
+      scheduler.emit(
+        scheduler.cues.map((c) => ({
+          cueId: c.id,
+          cueRevision: c.revision,
+          state: 'done' as const,
+          translatedText: '译文',
+        })),
+      );
+      await wait(400);
+      await h.coordinator.idle();
+      expect(h.offscreen.requests).toContainEqual(
+        expect.objectContaining({ kind: 'capture/stop', leaseId: start.leaseId }),
+      );
+      const s = ui.lastSnapshot()!.sessions[0]!;
+      expect(s.phase).toBe('error');
+      expect(s.error?.code).toBe('video-ended');
+      await wait(50);
+      const texts = [...h.transcripts.values()].flatMap((r) =>
+        (r as { cues: { sourceText: string }[] }).cues.map((c) => c.sourceText),
+      );
+      expect(texts).toContain('Tail words.');
+    });
+
+    it('replaying during the drain cancels the end and keeps the session running', async () => {
+      const { h, ui, content, release } = await startAsr();
+      content.player({ currentTimeMs: 600_000, ended: true, paused: true }, 'ended');
+      await wait(20);
+      content.player({ currentTimeMs: 0, ended: false, paused: false }, 'seeked');
+      await wait(20);
+      release();
+      await wait(200);
+      await h.coordinator.idle();
+      expect(h.offscreen.kinds()).not.toContain('capture/stop');
+      const s = ui.lastSnapshot()!.sessions[0]!;
+      expect(s.phase).toBe('running');
+      expect(s.error).toBeUndefined();
+    });
+
+    it('stops within the translation limit when the tail is never translated', async () => {
+      const { h, ui, content, result, release } = await startAsr();
+      h.deps.timings = { asrEndTranslateMs: 100 };
+      content.player({ currentTimeMs: 600_000, ended: true, paused: true }, 'ended');
+      await wait(20);
+      result('seg-2', 596_000, 599_500, 'Tail words.');
+      release();
+      await wait(500);
+      await h.coordinator.idle();
+      expect(ui.lastSnapshot()!.sessions[0]!.error?.code).toBe('video-ended');
+    });
+  });
+
   it('T26: a throwing cleanup step does not prevent the remaining resources from being released', async () => {
     const h = createHarness();
     const ui = await configure(h, { asr: true });
