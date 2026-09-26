@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setDiagSink } from '@src/diagnostics/log';
 import { createDiagnosticsStore, DIAG_STORAGE_KEY } from '@src/diagnostics/store';
-import { API_KEY, configure, createHarness, MemoryArea, wait } from './harness';
+import { API_KEY, configure, createHarness, FakeScheduler, MemoryArea, wait } from './harness';
 
 afterEach(() => setDiagSink(undefined));
 
@@ -74,6 +74,74 @@ describe('诊断日志', () => {
     await wait(30);
     const saved = area.data.get(DIAG_STORAGE_KEY) as { entries: unknown[] };
     expect(saved.entries.length).toBe(entries);
+  });
+
+  it('翻译失败记录错误码、HTTP 状态与服务错误类型；同类失败只在变化时和每 20 次记录', async () => {
+    const { h, store } = withDiagnostics();
+    const ui = await configure(h);
+    const content = h.content(1, { documentId: 'doc-1' });
+    content.hello();
+    content.navigate('aaaaaaaaaaa');
+    await wait(20);
+    await ui.command({ kind: 'session/start', tabId: 1 });
+    await wait(30);
+    content.trackData();
+    await h.coordinator.idle();
+    await wait(100);
+    const scheduler = FakeScheduler.all.at(-1)!;
+    const cues = scheduler.cues;
+    expect(cues.length).toBeGreaterThan(1);
+    const fail = (cue: (typeof cues)[number], httpStatus: number, detail: string) => ({
+      cueId: cue.id,
+      cueRevision: cue.revision,
+      state: 'failed' as const,
+      error: {
+        code: httpStatus === 429 ? 'rate-limited' : 'server-error',
+        category: 'network' as const,
+        retryable: true,
+        message: `HTTP ${httpStatus} https://api.example.com/v1/responses?key=SECRET`,
+        httpStatus,
+        detail,
+      },
+    });
+    for (let i = 0; i < 21; i++) scheduler.emit([fail(cues[0]!, 500, 'server_error')]);
+    scheduler.emit([fail(cues[1]!, 429, 'rate_limit')]);
+    await wait(50);
+    const failures = store.entries().filter((e) => e.event === 'translate.failed');
+    expect(
+      failures.map((e) => (e.data as { httpStatus: number; count: number }).httpStatus),
+    ).toEqual([500, 500, 429]);
+    expect(failures.map((e) => (e.data as { count: number }).count)).toEqual([1, 20, 1]);
+    expect(failures[0]).toMatchObject({
+      level: 'warn',
+      data: { code: 'server-error', detail: 'server_error', model: 'gpt-5.6-terra' },
+    });
+    expect(JSON.stringify(failures)).not.toContain('SECRET');
+  });
+
+  it('记录检查连接结果与界面操作失败（只记命令种类，不记参数）', async () => {
+    const { h, store } = withDiagnostics();
+    const ui = await configure(h);
+    const check = await ui.command({ kind: 'connection/check', scope: 'text' } as never);
+    expect(check.ok).toBe(true);
+    const logged = store.entries().find((e) => e.event === 'connection.check');
+    // 测试替身的文本检查不返回检查项，只返回检测到的协议。
+    expect(logged?.data).toMatchObject({
+      baseUrl: 'https://api.example.com',
+      model: 'gpt-5.6-terra',
+      detectedProtocol: 'responses',
+      items: [],
+    });
+
+    await ui.command({ kind: 'credentials/clear' });
+    const discover = await ui.command({ kind: 'models/discover' });
+    expect(discover.ok).toBe(false);
+    const failed = store.entries().filter((e) => e.event === 'ui.command-failed');
+    expect(failed.at(-1)).toMatchObject({
+      level: 'warn',
+      data: { command: 'models/discover', code: 'missing-api-key', category: 'config' },
+    });
+    expect(JSON.stringify(store.entries())).not.toContain(API_KEY);
   });
 
   it('页面上报的非法记录被丢弃，且不会触发快照', async () => {

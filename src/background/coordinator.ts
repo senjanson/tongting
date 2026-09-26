@@ -937,11 +937,26 @@ export class Coordinator implements SessionHost {
               const data = await this.handleCommand(msg.command, conn);
               conn.send({ type: 'result', requestId: msg.requestId, ok: true, data });
             } catch (error) {
+              const info = toAppErrorInfo(error);
+              // 诊断日志：只记命令种类与错误信息，不记命令参数（可能含 Key）。
+              if (info.category !== 'cancelled')
+                diag(
+                  'ui.command-failed',
+                  {
+                    command: msg.command.kind,
+                    code: info.code,
+                    category: info.category,
+                    httpStatus: info.httpStatus,
+                    detail: info.detail,
+                    message: info.message,
+                  },
+                  'warn',
+                );
               conn.send({
                 type: 'result',
                 requestId: msg.requestId,
                 ok: false,
-                error: toAppErrorInfo(error),
+                error: info,
               });
             }
             return;
@@ -2251,6 +2266,27 @@ export class Coordinator implements SessionHost {
       models: models?.filter((model) => model.length <= 200).slice(0, 1_000),
     };
     this.lastConnectionReport = report;
+    diag(
+      'connection.check',
+      {
+        items: checked.map((item) => ({
+          key: item.key,
+          status: item.status,
+          reason: item.reasonCode,
+          latencyMs: item.latencyMs,
+          message: item.message,
+        })),
+        detectedProtocol,
+        models: models?.length,
+        baseUrl: redactUrl(this.settingsValue.provider.baseUrl),
+        model: this.settingsValue.provider.model,
+        asr: this.settingsValue.asr.backend,
+        tts: this.settingsValue.tts.backend,
+      },
+      checked.some((item) => item.status === 'failed' || item.status === 'unsupported')
+        ? 'warn'
+        : 'info',
+    );
     this.persistCapabilities();
     this.publish();
     return report;

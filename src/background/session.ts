@@ -206,6 +206,8 @@ export class TranslationSession {
   private originalVolumeKey?: string;
   /** 诊断日志：上一次记录的原声音量状态，只在变化时记录。 */
   private lastAudioLog?: string;
+  /** 诊断日志：同类翻译失败的计数。 */
+  private translationFailureLog: { key: string; count: number } = { key: '', count: 0 };
   private dubbingSpeaking = false;
   private endedPaused = false;
   private contentPatch = new Map<string, DisplayCue>();
@@ -1991,6 +1993,35 @@ export class TranslationSession {
   // 翻译结果
   // ---------------------------------------------------------------------------
 
+  /** 诊断日志：翻译失败的错误码、HTTP 状态与服务返回的错误类型；同类失败只在变化时和每 20 次记录一次。 */
+  private logTranslationFailure(error: AppErrorInfo | undefined): void {
+    const key = `${error?.code}|${error?.httpStatus}|${error?.detail}`;
+    if (key === this.translationFailureLog.key) {
+      this.translationFailureLog.count++;
+      if (this.translationFailureLog.count % 20 !== 0) return;
+    } else {
+      this.translationFailureLog = { key, count: 1 };
+    }
+    const settings = this.host.settings();
+    diag(
+      'translate.failed',
+      {
+        session: this.identity.sessionId,
+        code: error?.code,
+        category: error?.category,
+        httpStatus: error?.httpStatus,
+        retryable: error?.retryable,
+        retryAfterMs: error?.retryAfterMs,
+        detail: error?.detail,
+        message: error?.message,
+        count: this.translationFailureLog.count,
+        model: settings.provider.model,
+        protocol: settings.provider.detectedProtocol ?? settings.provider.protocol,
+      },
+      'warn',
+    );
+  }
+
   private applyTranslationUpdates(updates: CueTranslationUpdate[]): void {
     if (this.isStopping) return;
     const changed: Cue[] = [];
@@ -2014,6 +2045,7 @@ export class TranslationSession {
         next = { ...cue, translationState: 'failed', translationError: u.error };
         latestError = u.error;
         this.lastTranslationFailure = u.error;
+        this.logTranslationFailure(u.error);
       } else if (u.state === 'skipped') {
         next = { ...cue, translationState: 'skipped', translatedText: undefined };
       } else if (u.state === 'pending') {

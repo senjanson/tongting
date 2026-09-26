@@ -182,8 +182,21 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
   };
 
   /** 诊断记录：只传状态码、长度、参数名等，不传 URL、正文或签名参数值。 */
-  const diagPost = (event: string, data?: Obj, level?: 'info' | 'warn' | 'error') =>
-    post({ type: 'diag', event, ...(level ? { level } : {}), ...(data ? { data } : {}) });
+  let isolatedSeen = false;
+  let earlyDiag: Array<{
+    type: 'diag';
+    event: string;
+    level?: 'info' | 'warn' | 'error';
+    data: Obj;
+  }> = [];
+  const diagPost = (event: string, data: Obj = {}, level?: 'info' | 'warn' | 'error') => {
+    const msg = { type: 'diag' as const, event, ...(level ? { level } : {}), data };
+    if (!isolatedSeen) {
+      earlyDiag.push(msg);
+      if (earlyDiag.length > 30) earlyDiag.shift();
+    }
+    post(msg);
+  };
 
   /** 描述一次 timedtext 响应（含空正文与失败状态）。 */
   const describeTimedtext = (raw: string, via: string, status: number, bodyLength: number) => {
@@ -666,6 +679,11 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
           e.name === trackName,
       );
       if (cached) {
+        diagPost('bridge.load-track-cached', {
+          video: videoId,
+          status: cached.status,
+          bodyLength: cached.body.length,
+        });
         post({
           type: 'timedtext',
           url: cached.url,
@@ -779,6 +797,13 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
     if (ev.source !== win) return;
     const d = ev.data;
     if (!isObj(d) || d.__tongting !== BRIDGE_TAG || d.dir !== 'to-main') return;
+    if (!isolatedSeen) {
+      // 内容脚本（document_idle）就绪前的诊断记录没有接收方：收到它的第一条消息后补发。
+      isolatedSeen = true;
+      const early = earlyDiag;
+      earlyDiag = [];
+      for (const m of early) post({ ...m, data: { ...m.data, early: true } });
+    }
     try {
       switch (d.type) {
         case 'request-caption-selection': {

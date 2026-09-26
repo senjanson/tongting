@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { cancelledError, type AppErrorInfo } from '@src/domain/errors';
+import { releaseDiagSink, setDiagSink, type DiagRecord } from '@src/diagnostics/log';
 import { errorFromHttpStatus } from '@src/providers/text/http-errors';
 import type {
   TranslateBatchInput,
@@ -287,6 +288,9 @@ describe('#6 circuit breaker for systematic failures', () => {
   });
 
   it('persistent 5xx across batches opens the breaker instead of retrying forever', async () => {
+    const logged: DiagRecord[] = [];
+    const sink = (record: DiagRecord) => logged.push(record);
+    setDiagSink(sink);
     const { clock, provider, scheduler } = setup();
     const fake = provider as FakeProvider;
     scheduler.setPlayhead({ mediaTimeMs: 0, playing: false, playbackRate: 1 });
@@ -306,12 +310,21 @@ describe('#6 circuit breaker for systematic failures', () => {
     expect(scheduler.stats().blockedError).toMatchObject({
       code: 'circuit-open',
       category: 'server',
+      detail: 'last=server-error http=503',
     });
     const calls = fake.calls.length;
     expect(calls).toBeLessThanOrEqual(6);
     await clock.advance(600_000);
     await settle(10);
     expect(fake.calls.length).toBe(calls);
+    // 诊断日志：同类失败只记第一次（之后每 20 次记一次），带 HTTP 状态。
+    releaseDiagSink(sink);
+    const failures = logged.filter((r) => r.event === 'translate.request-failed');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      level: 'warn',
+      data: { code: 'server-error', category: 'server', httpStatus: 503, count: 1 },
+    });
   });
 
   it('a success resets the failure streak', async () => {

@@ -31,7 +31,7 @@ export interface ContentDiagSenderOptions {
 
 export function createContentDiagSender(opts: ContentDiagSenderOptions): ContentDiagSender {
   const maxBuffer = opts.maxBuffer ?? 300;
-  const flushDelayMs = opts.flushDelayMs ?? 1_000;
+  const flushDelayMs = opts.flushDelayMs ?? 300;
   let buffer: DiagLogEntry[] = [];
   let timer: unknown;
   let disposed = false;

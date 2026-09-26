@@ -44,6 +44,7 @@ import type {
   TranslationSchedulerDeps,
 } from './types';
 import { t as tr } from '../i18n';
+import { diag } from '../diagnostics/log';
 
 export interface SchedulerTimers {
   setTimeout(callback: () => void, ms: number): unknown;
@@ -403,7 +404,7 @@ export function createTranslationSchedulerWithOptions(
       category: info.category,
       retryable: true,
       message: tr('background.scheduler.circuitOpen', { count: consecutiveFailedCalls }),
-      detail: `last=${info.code}`,
+      detail: `last=${info.code}${info.httpStatus ? ` http=${info.httpStatus}` : ''}`,
       at: now(),
     };
   }
@@ -838,12 +839,14 @@ export function createTranslationSchedulerWithOptions(
         consecutiveFailedCalls = 0;
         noteSuccess();
       } else {
-        noteFailedCall({
+        const info: AppErrorInfo = {
           code: 'translation-incomplete',
           category: 'format',
           retryable: true,
           message: tr('background.scheduler.noValidTranslation'),
-        });
+        };
+        noteFailedCall(info);
+        logRequestFailure(info, batch);
       }
     }
 
@@ -932,6 +935,34 @@ export function createTranslationSchedulerWithOptions(
     successesSinceRateLimit = 0;
   }
 
+  /** 诊断日志：每次请求失败的错误码、HTTP 状态与服务返回的错误类型；同类失败只在变化时和每 20 次记录。 */
+  let failureLog = { key: '', count: 0 };
+  function logRequestFailure(info: AppErrorInfo, batch: Batch): void {
+    const key = `${info.code}|${info.httpStatus}|${info.detail}`;
+    if (key === failureLog.key) {
+      failureLog.count++;
+      if (failureLog.count % 20 !== 0) return;
+    } else {
+      failureLog = { key, count: 1 };
+    }
+    diag(
+      'translate.request-failed',
+      {
+        code: info.code,
+        category: info.category,
+        httpStatus: info.httpStatus,
+        retryable: info.retryable,
+        retryAfterMs: info.retryAfterMs,
+        detail: info.detail,
+        message: info.message,
+        cues: batch.cues.length,
+        consecutiveFailedCalls,
+        count: failureLog.count,
+      },
+      'warn',
+    );
+  }
+
   function onBatchFailure(batch: Batch, error: unknown): void {
     if (disposed || batch.aborted) return;
     inflight.delete(batch.id);
@@ -956,6 +987,7 @@ export function createTranslationSchedulerWithOptions(
       else if (isBlockingError(info)) blockedError = info;
       else noteFailedCall(info);
     }
+    logRequestFailure(info, batch);
 
     const current = isCurrentBatch(batch);
     // 同一次失败只计算一次退避（按尝试次数），同批 cue 同时就绪，重试时仍能合并成完整批次。
