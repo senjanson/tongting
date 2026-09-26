@@ -133,6 +133,9 @@ export const UiCommandSchema = z.discriminatedUnion('kind', [
   }),
   z.object({ kind: z.literal('tts/stop-preview') }),
   z.object({ kind: z.literal('cache/clear') }),
+  /** 诊断日志：导出为纯文本（不含 Key、令牌、字幕原文与带授权参数的 URL）/ 清空。 */
+  z.object({ kind: z.literal('diagnostics/export') }),
+  z.object({ kind: z.literal('diagnostics/clear') }),
 ]);
 export type UiCommand = z.infer<typeof UiCommandSchema>;
 export type UiCommandKind = UiCommand['kind'];
@@ -236,4 +239,6 @@ export interface UiCommandResultMap {
   'tts/preview': { started: true };
   'tts/stop-preview': { stopped: true };
   'cache/clear': { cleared: true };
+  'diagnostics/export': { text: string; entries: number };
+  'diagnostics/clear': { cleared: true };
 }

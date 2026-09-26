@@ -83,6 +83,17 @@ export interface BridgeCaptionSelection {
   vssId: string;
 }
 
+/**
+ * 诊断记录：只含状态码、长度、参数名、错误码等，不含 URL、正文或签名参数。
+ * 页面脚本同样可以伪造此消息；ISOLATED 侧校验形状、再次脱敏，worker 端限速。
+ */
+export interface BridgeDiag {
+  type: 'diag';
+  event: string;
+  level?: 'info' | 'warn' | 'error';
+  data?: unknown;
+}
+
 export type BridgeToIsolated = (
   | BridgePlayerResponse
   | BridgePlayerResponseMissing
@@ -90,6 +101,7 @@ export type BridgeToIsolated = (
   | BridgeCommandResult
   | BridgeCaptionsChanged
   | BridgeCaptionSelection
+  | BridgeDiag
 ) & {
   __tongting: typeof BRIDGE_TAG;
   dir: 'to-isolated';

@@ -86,6 +86,9 @@ import {
   type SecretState,
 } from './settings-store';
 import { getLocale, resolveLocale, setLocale, t, type Locale } from '../i18n';
+import { buildDiagnosticsText, settingsSummary } from '../diagnostics/export';
+import { diag } from '../diagnostics/log';
+import { createStateTracer } from '../diagnostics/state-trace';
 
 const RECORDS_KEY = 'sessionRecords';
 const CONFIG_REVISION_KEY = 'configRevision';
@@ -191,6 +194,7 @@ export class Coordinator implements SessionHost {
   private recoveryRecords = new Map<number, SessionRecord>();
   private snapshotVersion = 0;
   private snapshotTimer?: ReturnType<typeof setTimeout>;
+  private readonly stateTracer = createStateTracer(diag);
   private recordsWrite: Promise<void> = Promise.resolve();
   private recordsTimer?: ReturnType<typeof setTimeout>;
   private orphanTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -742,6 +746,11 @@ export class Coordinator implements SessionHost {
     page: PageState,
     msg: Exclude<ContentToBackground, { type: 'hello' | 'reply' }>,
   ): void {
+    if (msg.type === 'diag/log') {
+      // 只写日志，不影响状态，也不触发快照。
+      this.deps.diagnostics?.addFromPage(page.tabId, msg.entries);
+      return;
+    }
     const slot = this.slots.get(page.tabId);
     const session = slot?.session;
     switch (msg.type) {
@@ -1238,6 +1247,17 @@ export class Coordinator implements SessionHost {
       });
       slot.session = created;
       slot.errorSnapshot = undefined;
+      diag('session.create', {
+        session: created.identity.sessionId,
+        tab: slot.tabId,
+        video: page.videoId,
+        recovered: !!recovery,
+        captions: page.captionsAvailability,
+        tracks: page.tracks.map((t) => `${t.languageCode}:${t.kind}`),
+        credential: !!this.apiKeyState.value,
+        hostPermission: this.hostPermission.granted,
+        settings: settingsSummary(this.settingsValue),
+      });
       created.pushSessionState();
       this.publish();
       const intentAtStart = slot.intentSeq;
@@ -1572,7 +1592,34 @@ export class Coordinator implements SessionHost {
       case 'cache/clear':
         await this.deps.translationCache.clear();
         return { cleared: true };
+      case 'diagnostics/export':
+        return this.exportDiagnostics();
+      case 'diagnostics/clear':
+        await this.deps.diagnostics?.clear();
+        diag('diag.cleared');
+        return { cleared: true };
     }
+  }
+
+  private async exportDiagnostics(): Promise<{ text: string; entries: number }> {
+    const store = this.deps.diagnostics;
+    await store?.ready;
+    const snapshot = this.buildSnapshot(this.snapshotVersion);
+    const entries = store?.entries() ?? [];
+    const text = buildDiagnosticsText({
+      version: this.deps.appVersion ?? 'unknown',
+      userAgent: this.deps.userAgent ?? 'unknown',
+      uiLanguage: this.deps.uiLanguage ?? 'unknown',
+      generatedAt: this.deps.now(),
+      settings: this.settingsValue,
+      credentialConfigured: snapshot.credential.configured,
+      asrTokenConfigured: snapshot.asrToken.configured,
+      hostPermission: snapshot.hostPermission,
+      sessions: snapshot.sessions,
+      pages: snapshot.pages,
+      entries,
+    });
+    return { text, entries: entries.length };
   }
 
   /** 命令携带的 sessionId 与当前会话（或错误快照）不一致：界面状态已过期，拒绝执行。 */
@@ -2651,6 +2698,7 @@ export class Coordinator implements SessionHost {
     if (this.snapshotTimer) return;
     this.snapshotTimer = setTimeout(() => {
       this.snapshotTimer = undefined;
+      this.traceState();
       if (this.uiConnections.size === 0) return;
       this.snapshotVersion++;
       const snapshot = this.buildSnapshot(this.snapshotVersion);
@@ -2658,6 +2706,29 @@ export class Coordinator implements SessionHost {
         if (conn.subscribed) conn.send({ type: 'snapshot', snapshot });
       }
     }, SNAPSHOT_DEBOUNCE_MS);
+  }
+
+  /** 诊断日志：记录会话与页面状态的变化（只在有日志存储时进行）。 */
+  private traceState(): void {
+    if (!this.deps.diagnostics) return;
+    try {
+      const sessions: SessionSnapshot[] = [];
+      for (const slot of this.slots.values()) {
+        if (slot.session) {
+          const snap = slot.session.snapshot();
+          sessions.push({
+            ...snap,
+            phase: slot.session.isStopping ? 'stopping' : snap.phase,
+            desiredState: slot.desired,
+          });
+        } else if (slot.errorSnapshot) {
+          sessions.push({ ...slot.errorSnapshot, desiredState: slot.desired });
+        }
+      }
+      this.stateTracer.trace(sessions, [...this.pages.values()]);
+    } catch {
+      // 日志失败不能影响快照。
+    }
   }
 
   emitUiCues(

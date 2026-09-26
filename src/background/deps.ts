@@ -28,6 +28,7 @@ import type {
 import type { DubbingController, TtsEngine } from '../providers/tts/types';
 import type { MediaOwner } from '../messaging/offscreen-protocol';
 import type { CreateTranslationScheduler, TranslationCache } from '../translation/types';
+import type { DiagnosticsStore } from '../diagnostics/store';
 
 export type NormalizeBaseUrlResult =
   | { ok: true; baseUrl: string; origin: string; originPattern: string }
@@ -139,6 +140,11 @@ export interface CoordinatorDeps {
   };
 
   logger: Pick<Console, 'info' | 'warn' | 'error'>;
+  /** 诊断日志存储；缺失时（例如单元测试）导出为空、清空无操作。 */
+  diagnostics?: DiagnosticsStore;
+  /** 扩展版本与浏览器标识，只用于诊断日志导出。 */
+  appVersion?: string;
+  userAgent?: string;
   /** 测试用：覆盖会话计时参数。 */
   timings?: Partial<SessionTimings>;
 }

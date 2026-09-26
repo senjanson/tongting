@@ -181,6 +181,36 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
     }
   };
 
+  /** 诊断记录：只传状态码、长度、参数名等，不传 URL、正文或签名参数值。 */
+  const diagPost = (event: string, data?: Obj, level?: 'info' | 'warn' | 'error') =>
+    post({ type: 'diag', event, ...(level ? { level } : {}), ...(data ? { data } : {}) });
+
+  /** 描述一次 timedtext 响应（含空正文与失败状态）。 */
+  const describeTimedtext = (raw: string, via: string, status: number, bodyLength: number) => {
+    try {
+      const u = new URL(raw, win.location.href);
+      if (u.origin !== origin() || u.pathname !== '/api/timedtext') return;
+      diagPost(
+        'timedtext.response',
+        {
+          via,
+          status,
+          bodyLength,
+          video: u.searchParams.get('v'),
+          lang: u.searchParams.get('lang'),
+          kind: u.searchParams.get('kind'),
+          tlang: u.searchParams.get('tlang'),
+          fmt: u.searchParams.get('fmt'),
+          hasPot: u.searchParams.has('pot'),
+          params: [...new Set(u.searchParams.keys())].sort().join(','),
+        },
+        status < 200 || status >= 300 || bodyLength === 0 ? 'warn' : 'info',
+      );
+    } catch {
+      /* 诊断失败不影响页面 */
+    }
+  };
+
   // -------------------------------------------------------------------------
   // timedtext 被动观察
   // -------------------------------------------------------------------------
@@ -282,13 +312,22 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
                 ? input.url
                 : '';
         if (raw && inspect(raw)) {
-          promise.then((res) => {
-            if (!res.ok) return;
-            res
-              .clone()
-              .text()
-              .then((body) => emitTimedtext(res.url || raw, res.status, body, 'fetch'), noop);
-          }, noop);
+          promise.then(
+            (res) => {
+              if (!res.ok) {
+                describeTimedtext(res.url || raw, 'fetch', res.status, -1);
+                return;
+              }
+              res
+                .clone()
+                .text()
+                .then((body) => {
+                  describeTimedtext(res.url || raw, 'fetch', res.status, body.length);
+                  emitTimedtext(res.url || raw, res.status, body, 'fetch');
+                }, noop);
+            },
+            () => describeTimedtext(raw, 'fetch', 0, -1),
+          );
         }
       } catch {
         /* 观察失败不影响页面请求 */
@@ -324,13 +363,17 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
           'loadend',
           () => {
             try {
-              if (this.status < 200 || this.status >= 300) return;
+              if (this.status < 200 || this.status >= 300) {
+                describeTimedtext(this.responseURL || url, 'xhr', this.status, -1);
+                return;
+              }
               let body: string | undefined;
               const rt = this.responseType;
               if (rt === '' || rt === 'text') body = this.responseText;
               else if (rt === 'json') body = JSON.stringify(this.response);
               else if (rt === 'arraybuffer' && this.response instanceof ArrayBuffer)
                 body = new TextDecoder().decode(this.response);
+              describeTimedtext(this.responseURL || url, 'xhr', this.status, body?.length ?? 0);
               if (body) emitTimedtext(this.responseURL || url, this.status, body, 'xhr');
             } catch {
               /* ignore */
@@ -423,7 +466,10 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
     commandId: string,
     ok: boolean,
     extra: { code?: string; changedCaptions?: boolean; fetched?: boolean } = {},
-  ) => post({ type: 'command-result', commandId, ok, ...extra });
+  ) => {
+    diagPost('bridge.command-result', { ok, ...extra }, ok ? 'info' : 'warn');
+    post({ type: 'command-result', commandId, ok, ...extra });
+  };
 
   const waitForCapture = (
     videoId: string,
@@ -541,14 +587,24 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
         ]) as Promise<Response>,
         signal,
       );
-      if (!res.ok) return false;
+      if (!res.ok) {
+        describeTimedtext(u.href, 'bridge-fetch', res.status, -1);
+        return false;
+      }
       const body = await abortable(res.text(), signal);
+      describeTimedtext(u.href, 'bridge-fetch', res.status, body.length);
       // 迟到结果：视频已切换则丢弃。
       if (signal.aborted || parseYoutubeUrl(win.location.href).videoId !== videoId) return false;
       if (!body || body.length > BRIDGE_MAX_BODY_CHARS) return false;
       emitTimedtext(u.href, res.status, body, 'bridge-fetch');
       return true;
-    } catch {
+    } catch (error) {
+      if (!signal.aborted)
+        diagPost(
+          'timedtext.fetch-error',
+          { via: 'bridge-fetch', error: error instanceof Error ? error.name : 'unknown' },
+          'warn',
+        );
       return false;
     }
   };
@@ -586,6 +642,15 @@ export function installMainWorldBridge(win: Window & typeof globalThis = window)
           (!d.vssId || t.vssId === d.vssId),
       );
       if (!track) return result(commandId, false, { code: 'track-not-found' });
+      diagPost('bridge.load-track', {
+        video: videoId,
+        lang: track.languageCode,
+        kind: track.kind,
+        fetchOnly: d.fetchOnly === true,
+        hasBaseUrl: !!track.baseUrl,
+        playerApi: !!findPlayerApi()?.setOption,
+        tracks: resp.tracks.length,
+      });
       if (d.fetchOnly === true) {
         const fetched = track.baseUrl ? await fallbackFetch(videoId, track.baseUrl, signal) : false;
         return result(commandId, fetched, { code: fetched ? undefined : 'no-capture', fetched });

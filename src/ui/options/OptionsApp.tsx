@@ -10,6 +10,7 @@ import {
   FlaskConical,
   Keyboard,
   PlugZap,
+  ScrollText,
   ShieldCheck,
   SlidersHorizontal,
   type LucideIcon,
@@ -23,6 +24,7 @@ import { ToastProvider } from '../components/toast';
 import { UiClientProvider, useBackground, useClientState } from '../state/hooks';
 import { ConnectionSection } from './ConnectionSection';
 import { DataSection, DemoSection, ShortcutsSection } from './DataSection';
+import { DiagnosticsSection } from './DiagnosticsSection';
 import { GeneralSection } from './GeneralSection';
 import { GlossarySection } from './GlossarySection';
 import styles from './options.module.css';
@@ -35,6 +37,7 @@ const NAV: ReadonlyArray<{ id: string; label: MessageKey; icon: LucideIcon }> = 
   { id: 'processing', label: 'options.section.processing', icon: AudioLines },
   { id: 'glossary', label: 'options.section.glossary', icon: BookText },
   { id: 'data', label: 'options.section.data', icon: ShieldCheck },
+  { id: 'diagnostics', label: 'options.section.diagnostics', icon: ScrollText },
   { id: 'shortcuts', label: 'options.section.shortcuts', icon: Keyboard },
   { id: 'demo', label: 'options.section.demo', icon: FlaskConical },
 ];
@@ -155,6 +158,7 @@ function OptionsView({
             <ProcessingSection snapshot={snapshot} />
             <GlossarySection glossary={snapshot.settings.glossary} />
             <DataSection snapshot={snapshot} />
+            <DiagnosticsSection />
             <ShortcutsSection />
             <DemoSection />
           </main>

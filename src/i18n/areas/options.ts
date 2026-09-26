@@ -29,8 +29,26 @@ const zhCN = {
   'options.section.processing': '识别与播放',
   'options.section.glossary': '术语表',
   'options.section.data': '数据与隐私',
+  'options.section.diagnostics': '诊断日志',
   'options.section.shortcuts': '快捷键',
   'options.section.demo': '演示模式',
+
+  // ── 诊断日志 ──
+  'options.diagnostics.description':
+    '记录翻译过程中的关键状态，用于排查「读不到字幕」「没有声音」等问题。出问题后复制或下载日志发给开发者即可。',
+  'options.diagnostics.privacy':
+    '只记录状态、错误码、字幕请求的状态码与内容长度等；不包含 API Key、识别服务令牌、字幕原文、音频，链接只保留地址与参数名。日志只保存在本机，最多保留约 1500 条。',
+  'options.diagnostics.copy': '复制日志',
+  'options.diagnostics.download': '下载日志',
+  'options.diagnostics.clear': '清空日志',
+  'options.diagnostics.copied': '已复制 {count} 条日志和当前状态。',
+  'options.diagnostics.copyFailed': '无法写入剪贴板，请改用「下载日志」。',
+  'options.diagnostics.downloaded': '已下载 {count} 条日志和当前状态。',
+  'options.diagnostics.exportFailed': '读取日志失败',
+  'options.diagnostics.cleared': '日志已清空。',
+  'options.diagnostics.clearFailed': '清空日志失败',
+  'options.diagnostics.steps':
+    '排查步骤：打开出问题的视频，开始翻译并等待半分钟左右，再回到这里复制日志。',
 
   // ── 常规 ──
   'options.general.description': '界面语言与外观主题等通用设置。',
@@ -525,6 +543,23 @@ const en: Record<keyof typeof zhCN, string> = {
   'options.section.data': 'Data & privacy',
   'options.section.shortcuts': 'Shortcuts',
   'options.section.demo': 'Demo mode',
+  'options.section.diagnostics': 'Diagnostic log',
+
+  'options.diagnostics.description':
+    'Records key states during translation to troubleshoot problems such as missing captions or no sound. When something goes wrong, copy or download the log and send it to the developer.',
+  'options.diagnostics.privacy':
+    'Only states, error codes, caption request status codes and content lengths are recorded; no API key, recognition token, caption text or audio. Links keep only the address and parameter names. The log stays on this device and keeps about 1,500 entries.',
+  'options.diagnostics.copy': 'Copy log',
+  'options.diagnostics.download': 'Download log',
+  'options.diagnostics.clear': 'Clear log',
+  'options.diagnostics.copied': 'Copied {count} log entries and the current state.',
+  'options.diagnostics.copyFailed': 'Could not write to the clipboard. Use “Download log” instead.',
+  'options.diagnostics.downloaded': 'Downloaded {count} log entries and the current state.',
+  'options.diagnostics.exportFailed': 'Failed to read the log',
+  'options.diagnostics.cleared': 'Log cleared.',
+  'options.diagnostics.clearFailed': 'Failed to clear the log',
+  'options.diagnostics.steps':
+    'To troubleshoot: open the problem video, start translation, wait about half a minute, then come back here and copy the log.',
 
   'options.general.description': 'Interface language, appearance and other general preferences.',
   'options.general.uiLocale': 'Interface language',

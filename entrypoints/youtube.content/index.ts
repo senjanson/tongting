@@ -56,6 +56,7 @@ export default defineContentScript({
       },
       pageInstanceId: randomId('pg-'),
       uiLanguage: uiLanguage(),
+      diagConsole: console,
     });
   },
 });

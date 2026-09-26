@@ -38,6 +38,9 @@ import {
 import { createPortClient, type PortLike } from './port-client';
 import { isAdShowing } from './selectors';
 import { createVisibleCaptionObserver } from './visible-captions';
+import { createContentDiagSender } from '../diagnostics/content-sink';
+import { diag, releaseDiagSink, setDiagSink, type DiagRecord } from '../diagnostics/log';
+import { redact } from '../diagnostics/redact';
 
 export interface YoutubeContentDeps {
   win: Window & typeof globalThis;
@@ -59,6 +62,8 @@ export interface YoutubeContentDeps {
    * 省略时保持当前语言。
    */
   uiLanguage?: string;
+  /** 诊断日志同时输出到的控制台（页面开发者工具可见）；省略时不输出。 */
+  diagConsole?: Pick<Console, 'info' | 'warn' | 'error'>;
   timings?: Partial<ControllerTimings>;
 }
 
@@ -151,6 +156,7 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
     // 广告是页面事实：每次评估实时读取播放器状态。适配器只在变化时发出一次 ad-start，
     // welcome / 会话清空触发的 reset 之后不会补发，不能只靠事件记录。
     isAdShowing: () => isAdShowing(adapter?.root ?? null),
+    onStatus: (status) => diag('page.buffer-gate', status),
   });
 
   const captions = createCaptionSource({
@@ -191,6 +197,16 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
       captions.handleCommandResult(m);
       updateNativeHiding();
     },
+    onDiag: (m) =>
+      diagSender.record(
+        {
+          t: Date.now(),
+          level: m.level ?? 'info',
+          event: m.event,
+          ...(m.data === undefined ? {} : { data: redact(m.data) }),
+        },
+        'bridge',
+      ),
   });
 
   // ---------------------------------------------------------------------------
@@ -285,6 +301,18 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
     clearTimeout: clearT,
   });
 
+  // 诊断日志：暂存本页与 MAIN world 桥的记录，连接 worker 后批量发送（不为日志唤醒 worker）。
+  const diagSender = createContentDiagSender({
+    send: (entries) => !disposed && port.send({ type: 'diag/log', entries }, { wake: false }),
+    canSend: () => !disposed && port.connected && port.welcomed,
+    setTimeout: setT,
+    clearTimeout: clearT,
+    console: deps.diagConsole ?? null,
+  });
+  const diagSink = (record: DiagRecord) => diagSender.record(record, 'page');
+  setDiagSink(diagSink);
+  diag('page.start', { video: nav.videoId, kind: nav.kind });
+
   function send(msg: ContentToBackground | null, wake: boolean): boolean {
     if (disposed || !msg) return false;
     return port.send(msg, { wake });
@@ -320,6 +348,41 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
     hider.set(adapter?.root ?? null, shouldHide);
   }
 
+  /** 诊断：播放器 CC 按钮状态（true / false / 找不到按钮）。 */
+  const ccButtonState = () => {
+    const pressed = adapter?.root
+      ?.querySelector('.ytp-subtitles-button')
+      ?.getAttribute('aria-pressed');
+    return pressed === 'true' ? true : pressed === 'false' ? false : 'missing';
+  };
+  // 诊断：本导航读到的播放器字幕条数（只计数与长度，不记录原文）。
+  let visibleCount = 0;
+  let visibleCountNav = -1;
+  let visibleWatchTimer: unknown;
+  /** 开始读取当前显示字幕后 15 秒仍没有读到任何字幕：记录一次，便于判断 YouTube 是否显示了 CC。 */
+  const watchVisibleCaptions = () => {
+    if (visibleWatchTimer !== undefined) clearT(visibleWatchTimer);
+    const navAt = nav.navigationId;
+    visibleWatchTimer = setT(() => {
+      visibleWatchTimer = undefined;
+      if (disposed || !visible.enabled || nav.navigationId !== navAt) return;
+      if (visibleCountNav === navAt && visibleCount > 0) return;
+      const v = adapter?.video;
+      diag(
+        'page.visible-captions-none',
+        {
+          afterMs: 15_000,
+          nativeCaptionsPresent: visible.snapshot().present,
+          ccButton: ccButtonState(),
+          paused: v?.paused,
+          timeMs: v ? Math.round(v.currentTime * 1000) : undefined,
+          ad: isAdShowing(adapter?.root ?? null),
+        },
+        'warn',
+      );
+    }, 15_000);
+  };
+
   const visible = createVisibleCaptionObserver({
     setTimeout: setT,
     clearTimeout: clearT,
@@ -328,6 +391,15 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
       const v = adapter?.video;
       if (!v || isAdShowing(adapter?.root ?? null)) return;
       if (info.heartbeat && v.paused) return; // 暂停时媒体时间不前进，心跳无意义
+      if (!info.heartbeat && text) {
+        if (visibleCountNav !== nav.navigationId) {
+          visibleCountNav = nav.navigationId;
+          visibleCount = 0;
+        }
+        visibleCount++;
+        if (visibleCount === 1 || visibleCount % 50 === 0)
+          diag('page.visible-caption', { count: visibleCount, length: text.length });
+      }
       const t = Number.isFinite(v.currentTime) ? Math.round(v.currentTime * 1000) : 0;
       send(
         {
@@ -368,6 +440,10 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
     ) {
       // 同步优先退回边播边译：会话继续运行但不再保持视频，闸门在准备阶段暂停的视频要恢复播放。
       // 用户切换连续播放、暂停或停止翻译时仍走 update(null)，已暂停的视频留给用户点击播放。
+      diag('page.buffer-handback', {
+        source: next.sourceMode,
+        holding: playbackBuffer.stats().holding,
+      });
       playbackBuffer.handBack();
     } else {
       playbackBuffer.update(null);
@@ -623,6 +699,7 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
           if (disposed || sessionConfirmed || port.generation !== generation) return;
           if (session) applySession(null);
         }, timings.welcomeSessionTimeoutMs);
+        diagSender.flush();
         return;
       }
       case 'display/settings':
@@ -708,6 +785,19 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
               : req.active
                 ? duck.duck(v, req.level)
                 : duck.release(v);
+          diag(
+            'page.duck',
+            {
+              release: !!req.release,
+              active: req.active,
+              level: req.level,
+              originalVolume: req.originalVolume,
+              outcome,
+              videoVolume: v.volume,
+              videoMuted: v.muted,
+            },
+            !outcome.applied && outcome.reason === 'error' ? 'warn' : 'info',
+          );
           if (!outcome.applied && outcome.reason === 'error') throw youtubeError('duck-failed');
           reply({ ok: true, data: outcome });
           return;
@@ -717,6 +807,13 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
           if (req.enable) visible.enable(adapter?.root ?? null);
           else visible.disable();
           updateNativeHiding();
+          diag('page.visible-captions', {
+            enable: req.enable,
+            enabled: visible.enabled,
+            nativeCaptionsPresent: visible.snapshot().present,
+            ccButton: ccButtonState(),
+          });
+          if (req.enable) watchVisibleCaptions();
           reply({
             ok: true,
             data: { enabled: visible.enabled, nativeCaptionsPresent: visible.snapshot().present },
@@ -740,6 +837,18 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
               },
               signal,
             );
+            diag('page.load-track', {
+              ok: true,
+              track: `${loaded.track.languageCode}:${loaded.track.kind}`,
+              format: loaded.format,
+              cues: loaded.cues.length,
+              complete: loaded.complete,
+              rejected: loaded.rejectedCount,
+            });
+          } catch (error) {
+            const info = toAppErrorInfo(error, { category: 'captions' });
+            diag('page.load-track', { ok: false, code: info.code, detail: info.detail }, 'warn');
+            throw error;
           } finally {
             loadsInFlight--;
             // 本请求先提交 lastSentTrackKey；随后再合并等待期间的最后选择。
@@ -893,6 +1002,11 @@ export function startYoutubeContent(deps: YoutubeContentDeps): YoutubeContentCon
     }
     disposed = true;
     const releases: Array<() => void> = [
+      () => releaseDiagSink(diagSink),
+      () => diagSender.dispose(),
+      () => {
+        if (visibleWatchTimer !== undefined) clearT(visibleWatchTimer);
+      },
       () => playbackBuffer.dispose(),
       () => navAbort.abort(),
       () => clearMetadataTimers(),

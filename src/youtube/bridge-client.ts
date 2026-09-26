@@ -96,6 +96,16 @@ export const BridgeCaptionSelectionSchema = z.object({
 });
 export type BridgeCaptionSelectionMsg = z.infer<typeof BridgeCaptionSelectionSchema>;
 
+/** 桥的诊断记录：事件名受限；data 在 ISOLATED 侧会再次脱敏。 */
+export const BridgeDiagSchema = z.object({
+  ...Envelope,
+  type: z.literal('diag'),
+  event: z.string().regex(/^[A-Za-z0-9._:-]{1,80}$/),
+  level: z.enum(['info', 'warn', 'error']).optional(),
+  data: z.unknown().optional(),
+});
+export type BridgeDiagMsg = z.infer<typeof BridgeDiagSchema>;
+
 export type BridgePlayerResponseMsg = z.infer<typeof BridgePlayerResponseSchema>;
 export type BridgeTimedtextMsg = z.infer<typeof BridgeTimedtextSchema>;
 export type BridgeCommandResultMsg = z.infer<typeof BridgeCommandResultSchema>;
@@ -192,6 +202,7 @@ export interface BridgeClientHandlers {
   onCommandResult(msg: BridgeCommandResultMsg): void;
   onCaptionsChanged?(msg: BridgeCaptionsChangedMsg): void;
   onCaptionSelection?(msg: BridgeCaptionSelectionMsg): void;
+  onDiag?(msg: BridgeDiagMsg): void;
 }
 
 export interface BridgeClient {
@@ -262,6 +273,12 @@ export function createBridgeClient(win: Window, handlers: BridgeClientHandlers):
           case 'caption-selection': {
             const r = BridgeCaptionSelectionSchema.safeParse(d);
             if (r.success) handlers.onCaptionSelection?.(r.data);
+            else rejected++;
+            break;
+          }
+          case 'diag': {
+            const r = BridgeDiagSchema.safeParse(d);
+            if (r.success) handlers.onDiag?.(r.data);
             else rejected++;
             break;
           }

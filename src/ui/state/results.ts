@@ -39,6 +39,11 @@ export const UI_COMMAND_RESULT_SCHEMAS: { [K in UiCommandKind]: z.ZodType<UiComm
     'tts/preview': z.object({ started: z.literal(true) }),
     'tts/stop-preview': z.object({ stopped: z.literal(true) }),
     'cache/clear': z.object({ cleared: z.literal(true) }),
+    'diagnostics/export': z.object({
+      text: z.string(),
+      entries: z.number().int().nonnegative(),
+    }),
+    'diagnostics/clear': z.object({ cleared: z.literal(true) }),
   };
 
 /** 默认命令超时（毫秒）。连接检查包含多项真实请求，需要更长时间。 */

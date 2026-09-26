@@ -110,6 +110,24 @@ export const ContentCaptionErrorSchema = z.object({
   error: AppErrorInfoSchema,
 });
 
+/**
+ * 诊断日志批量上报（页面 / MAIN world 桥）。只含状态、计数、长度、错误码；worker 仍会再次脱敏、限速。
+ * 不唤醒 worker：未连接时由内容脚本自行暂存。
+ */
+export const DiagLogEntrySchema = z.object({
+  t: z.number(),
+  src: z.enum(['page', 'bridge']),
+  level: z.enum(['info', 'warn', 'error']),
+  event: z.string().regex(/^[A-Za-z0-9._:-]{1,80}$/),
+  data: z.unknown().optional(),
+});
+export type DiagLogEntry = z.infer<typeof DiagLogEntrySchema>;
+
+export const ContentDiagSchema = z.object({
+  type: z.literal('diag/log'),
+  entries: z.array(DiagLogEntrySchema).min(1).max(50),
+});
+
 export const ContentReplySchema = z.union([
   z.object({
     type: z.literal('reply'),
@@ -133,6 +151,7 @@ export const ContentToBackgroundSchema = z.union([
   ContentCaptionTrackDataSchema,
   ContentVisibleCaptionSchema,
   ContentCaptionErrorSchema,
+  ContentDiagSchema,
   ContentReplySchema,
 ]);
 export type ContentToBackground = z.infer<typeof ContentToBackgroundSchema>;

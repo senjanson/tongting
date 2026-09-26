@@ -21,6 +21,7 @@ import type {
 } from '../domain/session';
 import { createAudioPreloader, type AudioPreloader } from '../translation/audio-preloader';
 import { translatedUntil } from '../translation/playback-buffer';
+import { diag } from '../diagnostics/log';
 import type { YoutubePreloadResult } from '../providers/asr/youtube-preload';
 import { translationFingerprint, type Settings } from '../domain/settings';
 import type { AsrCueAssembler, IncrementalCaptionAssembler } from '../captions/types';
@@ -203,6 +204,8 @@ export class TranslationSession {
   private duckActive = false;
   private duckSeq = 0;
   private originalVolumeKey?: string;
+  /** 诊断日志：上一次记录的原声音量状态，只在变化时记录。 */
+  private lastAudioLog?: string;
   private dubbingSpeaking = false;
   private endedPaused = false;
   private contentPatch = new Map<string, DisplayCue>();
@@ -630,6 +633,16 @@ export class TranslationSession {
       check();
       this.trackWaiter = undefined;
       this.fullTrackFailure = fullTrackFailureReason(error);
+      diag(
+        'captions.full-track-failed',
+        {
+          session: this.identity.sessionId,
+          track: `${track.languageCode}:${track.kind}`,
+          code: toAppErrorInfo(error, { category: 'captions' }).code,
+          detail: toAppErrorInfo(error, { category: 'captions' }).detail,
+        },
+        'warn',
+      );
       // 完整轨道不可读：退回仅读取当前显示字幕（覆盖有限）。
       const ok = await this.abortable(
         signal,
@@ -1125,6 +1138,16 @@ export class TranslationSession {
       if (event.type === 'speaking') this.setDuck(true);
       else if (event.type === 'idle') this.setDuck(false);
       else if (event.type === 'error') {
+        diag(
+          'tts.error',
+          {
+            session: this.identity.sessionId,
+            backend: this.host.settings().tts.backend,
+            code: event.error.code,
+            message: event.error.message,
+          },
+          'warn',
+        );
         this.setDuck(false);
         this.notice = {
           code: 'tts-error',
@@ -1169,6 +1192,20 @@ export class TranslationSession {
       ? settings.audio.originalVolume
       : this.originalAudioVolume(settings);
     const want = !release && active && settings.audio.duckOriginal;
+    const audioLog = `${release}|${originalVolume}|${want}|${!!this.capture}`;
+    if (audioLog !== this.lastAudioLog) {
+      this.lastAudioLog = audioLog;
+      diag('audio.original', {
+        session: this.identity.sessionId,
+        originalVolume,
+        duck: want,
+        duckLevel: settings.audio.duckLevel,
+        release,
+        via: this.capture ? 'capture' : 'page',
+        mode: settings.audio.originalMode,
+        output: this.outputMode,
+      });
+    }
     if (this.capture && this.capture.state !== 'stopping') {
       const gain = originalVolume * (want ? settings.audio.duckLevel : 1);
       this.host.deps.offscreen

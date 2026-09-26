@@ -28,6 +28,23 @@ import { createTranscriptWriter, getTranscript, putTranscript } from '../storage
 import { createTranslationScheduler } from '../translation/scheduler';
 import { Coordinator } from './coordinator';
 import type { CoordinatorDeps, KeyValueArea } from './deps';
+import { diag, formatDiagEntry, setDiagSink } from '../diagnostics/log';
+import { createDiagnosticsStore } from '../diagnostics/store';
+
+/** 原有的控制台告警同时写入诊断日志（经 diag 脱敏）。 */
+function loggingConsole(): Pick<Console, 'info' | 'warn' | 'error'> {
+  const forward =
+    (level: 'info' | 'warn' | 'error') =>
+    (...args: unknown[]) => {
+      const [first, ...rest] = args;
+      diag(
+        'console',
+        { message: typeof first === 'string' ? first : String(first), args: rest },
+        level,
+      );
+    };
+  return { info: forward('info'), warn: forward('warn'), error: forward('error') };
+}
 
 function area(storageArea: typeof browser.storage.local): KeyValueArea {
   return {
@@ -45,6 +62,20 @@ export function startBackground(): Coordinator {
   void browser.storage.local
     .setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' })
     .catch(() => undefined);
+
+  const diagnostics = createDiagnosticsStore({ area: area(browser.storage.local) });
+  setDiagSink((record) => {
+    const entry = { ...record, src: 'bg' as const };
+    diagnostics.add(entry);
+    const line = formatDiagEntry(entry);
+    if (record.level === 'error') console.error('[vocasub]', line);
+    else if (record.level === 'warn') console.warn('[vocasub]', line);
+    else console.info('[vocasub]', line);
+  });
+  const appVersion = browser.runtime.getManifest().version;
+  const userAgent = typeof navigator === 'undefined' ? 'unknown' : navigator.userAgent;
+  diag('worker.start', { version: appVersion, userAgent });
+  browser.runtime.onSuspend?.addListener(() => void diagnostics.flush());
 
   const offscreen = createOffscreenClient();
   const deps: CoordinatorDeps = {
@@ -135,7 +166,10 @@ export function startBackground(): Coordinator {
     createDubbingController,
     checkLocalAsrHealth: (baseUrl, signal) => checkLocalAsrHealth(baseUrl, signal),
     transcripts: { putTranscript, getTranscript, createWriter: createTranscriptWriter },
-    logger: console,
+    logger: loggingConsole(),
+    diagnostics,
+    appVersion,
+    userAgent,
   };
 
   const coordinator = new Coordinator(deps);

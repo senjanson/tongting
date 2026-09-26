@@ -6,6 +6,7 @@ import type { Cue, RawCaptionCue } from '@src/domain/cue';
 import type { PlayerState } from '@src/domain/session';
 import { Coordinator } from '@src/background/coordinator';
 import type { CoordinatorDeps, KeyValueArea } from '@src/background/deps';
+import type { DiagnosticsStore } from '@src/diagnostics/store';
 import type { PortLike } from '@src/background/connections';
 import type { BackgroundToContent, ContentToBackground } from '@src/messaging/content-protocol';
 import type {
@@ -271,6 +272,8 @@ export function createHarness(
     secureLocal?: MemoryArea;
     /** 浏览器界面语言（首次安装与恢复默认时的目标语言）。 */
     uiLanguage?: string;
+    /** 诊断日志存储（省略时不记录）。 */
+    diagnostics?: DiagnosticsStore;
   } = {},
 ): Harness {
   FakeScheduler.all = [];
@@ -410,6 +413,13 @@ export function createHarness(
       getTranscript: async (id) => transcripts.get(id) as never,
     },
     logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+    ...(options.diagnostics
+      ? {
+          diagnostics: options.diagnostics,
+          appVersion: '9.9.9-test',
+          userAgent: 'HarnessBrowser/1.0',
+        }
+      : {}),
   };
   const coordinator = new Coordinator(deps);
   const h: Harness = {

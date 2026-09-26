@@ -200,7 +200,7 @@ function start() {
         sourceMode,
       },
     });
-  return { controller, welcome, session, clear, ungated };
+  return { controller, welcome, session, clear, ungated, port };
 }
 
 const settle = (ms = 20) => new Promise((r) => setTimeout(r, ms));
@@ -276,6 +276,35 @@ describe('buffer gate inside the content controller', () => {
     await settle(150);
     expect(page.play).not.toHaveBeenCalled();
     expect(page.media.paused).toBe(true);
+  });
+
+  it('page diagnostics wait for the welcome, then report the gate hold and hand-back', async () => {
+    buildPage();
+    const t = start();
+    const diagEntries = () =>
+      t
+        .port()
+        .sent.filter((m) => m.type === 'diag/log')
+        .flatMap((m) => m.entries as Array<{ event: string; src: string; data?: unknown }>);
+    await settle();
+    expect(diagEntries()).toEqual([]);
+    t.welcome();
+    t.session('starting', 0, 3_000);
+    await settle();
+    t.ungated();
+    // 连接就绪后的新记录按 1 秒合并发送。
+    await vi.waitFor(
+      () =>
+        expect(diagEntries().map((e) => e.event)).toEqual(
+          expect.arrayContaining(['page.start', 'page.buffer-gate', 'page.buffer-handback']),
+        ),
+      { timeout: 5_000, interval: 50 },
+    );
+    expect(diagEntries().every((e) => e.src === 'page' || e.src === 'bridge')).toBe(true);
+    expect(diagEntries().find((e) => e.event === 'page.buffer-gate')?.data).toEqual({
+      holding: true,
+      userPaused: false,
+    });
   });
 
   it('falling back to live recognition also restarts the held video', async () => {

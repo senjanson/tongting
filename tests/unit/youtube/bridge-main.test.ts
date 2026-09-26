@@ -128,9 +128,34 @@ describe('MAIN world bridge', () => {
     send({ type: 'load-track', commandId: 'c3', videoId: A, languageCode: 'en', kind: 'standard' });
     await tick();
     expect(player.calls).toEqual([]);
-    expect(posted.map((m) => [m.type, m.via ?? m.ok])).toEqual([
+    expect(posted.filter((m) => m.type !== 'diag').map((m) => [m.type, m.via ?? m.ok])).toEqual([
       ['timedtext', 'replay'],
       ['command-result', true],
     ]);
+  });
+
+  it('logs every observed caption response, including empty bodies, without the URL or signed values', async () => {
+    fetchBody = '';
+    await proxy.fetch(`/api/timedtext?v=${A}&lang=en&fmt=json3&pot=SECRETPOT&signature=SIG`);
+    await tick();
+    const logs = posted.filter((m) => m.type === 'diag' && m.event === 'timedtext.response');
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      level: 'warn',
+      data: {
+        via: 'fetch',
+        status: 200,
+        bodyLength: 0,
+        video: A,
+        lang: 'en',
+        fmt: 'json3',
+        hasPot: true,
+        params: 'fmt,lang,pot,signature,v',
+      },
+    });
+    // 空正文不作为字幕转交，URL 与签名参数值不出现在日志里。
+    expect(posted.some((m) => m.type === 'timedtext')).toBe(false);
+    expect(JSON.stringify(logs)).not.toMatch(/SECRETPOT|SIG\b|https?:/);
+    fetchBody = '{"events":[]}';
   });
 });
