@@ -62,6 +62,22 @@ describe('ASR cue assembler', () => {
     });
   });
 
+  it('shifts the later start by at most the real overlap when dropping repeated words', () => {
+    const a = createAsrCueAssembler({ idPrefix: 'vid:asr', targetLanguage: 'zh-CN' });
+    const store = createStore();
+    store.apply(
+      a.push(seg({ segmentId: 's1', startMs: 0, endMs: 5000, text: 'we are going to the test' })),
+    );
+    store.apply(
+      a.push(seg({ segmentId: 's2', startMs: 4700, endMs: 9000, text: 'the test is over now' })),
+    );
+    const cues = store.sorted();
+    expect(cues.map((c) => c.sourceText)).toEqual(['we are going to the test', 'is over now']);
+    // 音频只重叠 300ms：后一段起点紧接前一段结束，而不是按字符比例推到 6.5s 之后。
+    expect(cues[1]!.startMs).toBe(5000);
+    expect(cues[1]!.endMs).toBe(9000);
+  });
+
   it('does not treat a short common word as overlap', () => {
     const a = createAsrCueAssembler({ idPrefix: 'v', targetLanguage: 'zh-CN' });
     const store = createStore();

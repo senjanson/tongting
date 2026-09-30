@@ -2,7 +2,8 @@
  * ASR 分段结果 → cue。
  *
  * - offscreen 分段约 3–6 秒且相邻分段有少量重叠，识别文本在重叠处会重复；
- *   按「时间重叠 + 文本后缀/前缀相同」共同去重：从后一段开头删除重复 token，并按字符比例后移其起点。
+ *   按「时间重叠 + 文本后缀/前缀相同」共同去重：从后一段开头删除重复 token，并按字符比例后移其起点
+ *   （后移量不超过与前一段的实际重叠时长）。
  * - 前一段仍为临时结果且末词被切断（"te" vs "test"）时，删除前一段的残词。
  * - 已发出的 final 段冻结（文本、起止时间都不再因相邻段变化）：之后到达的相邻段（包括时间更早但迟到的段）
  *   自己让出重叠部分，避免已确认（可能已翻译、朗读）的句子被反复修订。
@@ -189,13 +190,17 @@ export function createAsrCueAssembler(opts: AsrAssemblerOptions): AsrCueAssemble
     }
     if (prev) {
       const r = resolveOverlap(prev, seg);
+      const prevEnd = prev.emitted?.endMs ?? prev.endMs;
       if (r.dropFromB > 0) {
         const total = seg.tokens.reduce((n, t) => n + t.text.length, 0) || 1;
         const dropped = seg.tokens.slice(0, r.dropFromB).reduce((n, t) => n + t.text.length, 0);
-        startMs = seg.startMs + Math.round(((seg.endMs - seg.startMs) * dropped) / total);
+        // 被删的重复词只可能落在与前一段实际重叠的区间内：起点后移不超过该重叠时长，
+        // 否则长段、多重复词会把起点推到真实开口之后很久，留下无字幕的空档。
+        const proportional = Math.round(((seg.endMs - seg.startMs) * dropped) / total);
+        const overlap = Math.max(0, prevEnd - seg.startMs);
+        startMs = seg.startMs + Math.min(proportional, overlap);
         tokens = tokens.slice(r.dropFromB);
       }
-      const prevEnd = prev.emitted?.endMs ?? prev.endMs;
       if (prevEnd > startMs) startMs = prevEnd;
     }
     if (!tokens.length) return null;

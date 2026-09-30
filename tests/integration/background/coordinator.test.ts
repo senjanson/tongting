@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   API_KEY,
   EXT_ORIGIN,
@@ -12,6 +12,12 @@ import {
   wait,
   type Harness,
 } from './harness';
+
+/** 等到快照里出现会话再读 ID：固定延时在负载高时会读到空列表。 */
+async function firstSessionId(ui: Awaited<ReturnType<typeof configure>>): Promise<string> {
+  await vi.waitFor(() => expect(ui.lastSnapshot()?.sessions[0]).toBeDefined());
+  return ui.lastSnapshot()!.sessions[0]!.identity.sessionId;
+}
 
 async function startCaptionSession(h: Harness, tabId = 1, videoId = 'aaaaaaaaaaa') {
   const ui = await configure(h);
@@ -816,8 +822,7 @@ describe('Coordinator – 语音识别模式', () => {
     content.navigate('aaaaaaaaaaa');
     await wait(20);
     await ui.command({ kind: 'session/start', tabId: 1 });
-    await wait(30);
-    const firstId = ui.lastSnapshot()!.sessions[0]!.identity.sessionId;
+    const firstId = await firstSessionId(ui);
     await ui.command({ kind: 'settings/update', patch: { style: 'faithful' } });
     await wait(80);
     content.trackData();
@@ -838,8 +843,7 @@ describe('Coordinator – 语音识别模式', () => {
     content.navigate('aaaaaaaaaaa');
     await wait(20);
     await ui.command({ kind: 'session/start', tabId: 1 });
-    await wait(30);
-    const firstId = ui.lastSnapshot()!.sessions[0]!.identity.sessionId;
+    const firstId = await firstSessionId(ui);
     await ui.command({
       kind: 'settings/update',
       patch: { search: { userLanguage: 'en', keywordLanguage: 'ja' } },
@@ -951,6 +955,38 @@ describe('Coordinator – 语音识别模式', () => {
     await wait(100);
     expect(h.offscreen.kinds()).toContain('capture/stop');
     expect(starts()).toBe(2);
+    const last = h.offscreen.requests.filter((r) => r.kind === 'capture/start').at(-1) as {
+      asr: { token?: string };
+    };
+    expect(last.asr.token).toBe('local-token-rotated-99');
+    expect(ui.lastSnapshot()!.sessions[0]!.phase).toBe('running');
+  });
+
+  it('captures with the new pairing token when a session starts while the token is still being saved', async () => {
+    const h = createHarness();
+    const ui = await configure(h, { asr: true });
+    const content = h.content(1);
+    content.hello();
+    content.navigate('aaaaaaaaaaa', { tracks: false });
+    await wait(20);
+    // 令牌持久化被挂起：期间启动的会话读到的令牌必须与它记录的路由一致，保存完成后才能正确重建捕获。
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    for (const area of [h.local, h.session, h.secureLocal]) {
+      const set = area.set.bind(area);
+      area.set = async (items) => {
+        if (Object.keys(items).some((key) => key.includes('asrToken'))) await gate;
+        return set(items);
+      };
+    }
+    const saving = ui.command({ kind: 'asr/set-token', token: 'local-token-rotated-99' });
+    await wait(10);
+    const starting = ui.command({ kind: 'session/start', tabId: 1 });
+    await wait(60);
+    release();
+    await Promise.all([saving, starting]);
+    await h.coordinator.idle();
+    await wait(100);
     const last = h.offscreen.requests.filter((r) => r.kind === 'capture/start').at(-1) as {
       asr: { token?: string };
     };

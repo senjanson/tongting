@@ -223,6 +223,34 @@ describe('vtt', () => {
     ]);
   });
 
+  it('keeps genuinely repeated cues in hand-written vtt instead of treating them as rolling lines', () => {
+    const body = [
+      'WEBVTT',
+      '',
+      '00:00.000 --> 00:02.000',
+      '[Music]',
+      '',
+      '00:02.000 --> 00:04.000',
+      '[Music]',
+      '',
+      '00:04.000 --> 00:05.000',
+      'No.',
+      '',
+      '00:05.000 --> 00:07.000',
+      'No.',
+      'I said no.',
+      '',
+    ].join('\n');
+    const r = parseVtt(body);
+    expectWellFormed(r.cues);
+    // 相接且文本相同的 cue 由 finalizeCandidates 合并成一条，显示时长不丢。
+    expect(r.cues).toEqual([
+      { startMs: 0, endMs: 4000, text: '[Music]' },
+      { startMs: 4000, endMs: 5000, text: 'No.' },
+      { startMs: 5000, endMs: 7000, text: 'No. I said no.' },
+    ]);
+  });
+
   it('requires the WEBVTT header', () => {
     expect(() => parseVtt('00:00.000 --> 00:01.000\nhi')).toThrow(CaptionParseError);
   });

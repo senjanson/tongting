@@ -364,6 +364,11 @@ describe('service URL permissions', () => {
     expect(checkLocalAsrUrl('http://127.0.0.1').ok).toBe(false);
     expect(checkLocalAsrUrl('https://127.0.0.1:8765').ok).toBe(false);
     expect(checkLocalAsrUrl('http://127.0.0.1:8765/v1?x=1').ok).toBe(false);
+    // 服务端只接受 1024–65535：低端口能通过校验却永远连不上。
+    expect(checkLocalAsrUrl('http://127.0.0.1:80').ok).toBe(false);
+    expect(checkLocalAsrUrl('http://127.0.0.1:1023').ok).toBe(false);
+    expect(checkLocalAsrUrl('http://127.0.0.1:1024').ok).toBe(true);
+    expect(checkLocalAsrUrl('http://127.0.0.1:65536').ok).toBe(false);
     expect(sameOrigin('https://api.example.com', 'https://API.example.com:443/*')).toBe(true);
     expect(sameOrigin('https://a.example.com:8443', 'https://a.example.com')).toBe(false);
     expect(sameOrigin(undefined, 'https://a.example.com')).toBe(false);

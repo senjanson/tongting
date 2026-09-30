@@ -181,6 +181,8 @@ export class TranslationSession {
 
   private readonly cues = new Map<string, Cue>();
   private sortedCache: Cue[] | null = null;
+  /** 重建 assembler 后新识别段的 ID → 复用的历史 cue ID（见 adoptHistoricalAsrCue）。 */
+  private readonly asrCueAliases = new Map<string, string>();
   private scheduler?: TranslationScheduler;
   private preloader?: AudioPreloader;
   private bufferTimer?: ReturnType<typeof setInterval>;
@@ -394,7 +396,12 @@ export class TranslationSession {
       sourceReady = await this.tryCaptionSource(settings, check, signal);
     }
     check();
-    const canPreload = settings.playbackMode === 'buffered' && this.canPreloadAudio(settings);
+    let canPreload = settings.playbackMode === 'buffered' && this.canPreloadAudio(settings);
+    if (canPreload && this.sourceMode === 'incremental-captions') {
+      // 已有边播边译来源时先确认预读路由可用（令牌、地址、主机权限）：不可用就保留该来源按边播边译继续，
+      // 而不是先拆掉来源再让整个启动失败。
+      canPreload = await this.preloadRouteReady(settings, check, signal);
+    }
     if (
       settings.playbackMode === 'buffered' &&
       this.sourceMode === 'incremental-captions' &&
@@ -803,6 +810,26 @@ export class TranslationSession {
       settings.asr.backend === 'local' &&
       !!this.host.deps.preloadYoutubeAudio
     );
+  }
+
+  /** 预读路由是否可用：配置/权限错误视为不可用（由调用方回退），其他错误（如取消）照常抛出。 */
+  private async preloadRouteReady(
+    settings: Settings,
+    check: () => void,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    try {
+      await this.resolveAsrRoute(settings, check, signal);
+      return true;
+    } catch (error) {
+      if (
+        error instanceof AppError &&
+        (error.info.category === 'config' || error.info.category === 'permission')
+      ) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   private async startPreloadedAsr(
@@ -1705,29 +1732,64 @@ export class TranslationSession {
     }
   }
 
+  /**
+   * 重建 assembler 后，同一已确认音频区间再次识别时复用历史 cue（ID、修订、时间）；
+   * 此后该段的更新与撤回都按别名落到历史 cue 上，而不是在新 ID 下留下一份永远不会清理的副本。
+   * 返回 undefined 表示本次结果应忽略（已确认的历史 cue 不因临时结果降级）。
+   */
+  private adoptHistoricalAsrCue(cue: Cue): Cue | undefined {
+    const alias = this.asrCueAliases.get(cue.id);
+    if (alias !== undefined) {
+      const target = this.cues.get(alias);
+      if (!target) {
+        this.asrCueAliases.delete(cue.id);
+        return cue;
+      }
+      return this.mergeIntoHistoricalCue(cue, target);
+    }
+    // 已确认段的后续更新不再查找；临时段每次更新都查（临时文本可能到后来才与历史一致）。
+    if (this.cues.get(cue.id)?.stability === 'final') return cue;
+    const target = Array.from(this.cues.values()).find(
+      (old) =>
+        old.id !== cue.id &&
+        old.source === 'asr' &&
+        old.stability === 'final' &&
+        old.sourceText === cue.sourceText &&
+        Math.min(old.endMs, cue.endMs) - Math.max(old.startMs, cue.startMs) >=
+          0.8 * Math.max(old.endMs - old.startMs, cue.endMs - cue.startMs),
+    );
+    if (!target) return cue;
+    this.asrCueAliases.set(cue.id, target.id);
+    return this.mergeIntoHistoricalCue(cue, target);
+  }
+
+  private mergeIntoHistoricalCue(cue: Cue, target: Cue): Cue | undefined {
+    if (cue.stability !== 'final') return undefined;
+    if (cue.sourceText === target.sourceText) {
+      return {
+        ...cue,
+        id: target.id,
+        revision: target.revision,
+        startMs: target.startMs,
+        endMs: target.endMs,
+      };
+    }
+    // 再次识别得到不同文本：作为历史 cue 的新修订。
+    return { ...cue, id: target.id, revision: target.revision + 1 };
+  }
+
   private upsertCues(upserts: Cue[], removedIds: string[]): void {
     if (upserts.length === 0 && removedIds.length === 0) return;
     const changed: Cue[] = [];
+    const removed: string[] = [];
     for (const raw of upserts) {
       let cue = this.markSameLanguage({ ...raw, targetLanguage: this.targetLanguage });
-      // 恢复/跳转会重建 assembler；同一已确认音频区间再次识别时复用历史 ID。
-      if (cue.source === 'asr' && !this.cues.has(cue.id)) {
-        const duplicate = Array.from(this.cues.values()).find(
-          (old) =>
-            old.source === 'asr' &&
-            old.stability === 'final' &&
-            old.sourceText === cue.sourceText &&
-            Math.min(old.endMs, cue.endMs) - Math.max(old.startMs, cue.startMs) >=
-              0.8 * Math.max(old.endMs - old.startMs, cue.endMs - cue.startMs),
-        );
-        if (duplicate)
-          cue = {
-            ...cue,
-            id: duplicate.id,
-            revision: duplicate.revision,
-            startMs: duplicate.startMs,
-            endMs: duplicate.endMs,
-          };
+      if (cue.source === 'asr') {
+        const adopted = this.adoptHistoricalAsrCue(cue);
+        // 该段对上了历史 cue：撤掉此前在新 ID 下显示的临时副本。
+        if (adopted?.id !== cue.id && this.cues.has(cue.id)) removed.push(cue.id);
+        if (!adopted) continue;
+        cue = adopted;
       }
       const prev = this.cues.get(cue.id);
       // 同一修订、同一原文（例如增量来源只延长结束时间或由 interim 转为 final）：保留翻译状态与译文，
@@ -1744,17 +1806,23 @@ export class TranslationSession {
       this.cues.set(cue.id, cue);
       changed.push(cue);
     }
-    for (const id of removedIds) this.cues.delete(id);
+    for (const id of removedIds) {
+      // assembler 撤回的是它自己的（临时）段：对应的历史 cue 已确认，不随之删除。
+      if (this.asrCueAliases.delete(id)) continue;
+      removed.push(id);
+    }
+    if (changed.length === 0 && removed.length === 0) return;
+    for (const id of removed) this.cues.delete(id);
     this.sortedCache = null;
     this.cueVersion++;
-    if (removedIds.length) this.scheduler?.removeCues(removedIds);
+    if (removed.length) this.scheduler?.removeCues(removed);
     this.scheduler?.upsertCues(changed);
-    this.queueContentPatch(changed, removedIds);
+    this.queueContentPatch(changed, removed);
     this.host.emitUiCues(this.identity.sessionId, {
       cueVersion: this.cueVersion,
       full: false,
       cues: changed,
-      removedIds,
+      removedIds: removed,
     });
     // 已有译文的字幕后转为 final（或 final 字幕仅调整时间）时，也交给配音控制器。
     if (this.dubbing && this.phase === 'running' && !this.endedPaused) {

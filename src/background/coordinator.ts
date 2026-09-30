@@ -2079,15 +2079,17 @@ export class Coordinator implements SessionHost {
   private async setAsrToken(token: string, intent: number): Promise<{ persisted: boolean }> {
     if (intent !== this.asrTokenIntent) throw cancelledError('credential superseded');
     rememberSecret(token);
-    this.invalidateCredentials('asrToken');
     const remember = this.settingsValue.rememberCredentials;
     const persisted = await saveSecret(this.deps.storage, 'asrToken', token, remember);
     if (intent !== this.asrTokenIntent) throw cancelledError('credential superseded');
+    // 令牌与代数在同一个同步步骤生效（同 setApiKey）：持久化期间若有会话启动，
+    // 它记录的路由键/指纹必须与它实际读到的令牌一致，否则保存完成后不会重建捕获。
     this.asrTokenState = {
       value: token,
       storage: persisted ? (remember ? 'local' : 'session') : 'none',
       cleanupPending: !persisted || undefined,
     };
+    this.invalidateCredentials('asrToken');
     this.setCapability('localAsr', { status: 'unknown', configRevision: this.configRevisionValue });
     this.afterConfigChange();
     this.publish();

@@ -3,8 +3,8 @@
  *
  * - 支持可选 cue 标识、`hh:mm:ss.ttt` / `mm:ss.ttt` 时间与 cue settings；跳过 NOTE/STYLE/REGION 块；
  * - 剥离 <c>、<v>、<b>、<i>、<u>、<ruby>、<rt>、<lang> 与 `<00:00:01.000>` 时间标签，实体只解码一层；
- * - YouTube 自动字幕 VTT 会滚动重复上一行，并插入约 10ms 的过渡 cue：
- *   去掉与上一条末尾相同的开头行，完全重复的过渡 cue 丢弃。
+ * - YouTube 自动字幕 VTT（含行内时间标签）会滚动重复上一行，并插入约 10ms 的过渡 cue：
+ *   去掉与上一条末尾相同的开头行，完全重复的过渡 cue 丢弃；不带行内时间标签的 VTT 不做滚动去重。
  */
 import {
   CaptionParseError,
@@ -19,6 +19,9 @@ import { decodeEntities, normalizeCaptionLines } from './text';
 
 const TIMING_RE =
   /^((?:\d{1,3}:)?\d{1,2}:\d{2}[.,]\d{1,3})\s+-->\s+((?:\d{1,3}:)?\d{1,2}:\d{2}[.,]\d{1,3})(?:\s+.*)?$/;
+/** 行内时间标签 `<00:00:01.000>`：YouTube 自动字幕 VTT 特有。 */
+const INLINE_TIMESTAMP_RE = /<\d{1,3}:\d{2}(?::\d{2})?[.,]\d{1,3}>/;
+const INLINE_TIMESTAMP_RE_G = new RegExp(INLINE_TIMESTAMP_RE.source, 'g');
 
 export function parseVttTimestamp(ts: string): number | undefined {
   const m = /^(?:(\d{1,3}):)?(\d{1,2}):(\d{2})[.,](\d{1,3})$/.exec(ts.trim());
@@ -33,7 +36,7 @@ export function parseVttTimestamp(ts: string): number | undefined {
 
 function cueTextToLines(raw: string): string[] {
   const noTags = raw
-    .replace(/<\d{1,3}:\d{2}(?::\d{2})?[.,]\d{1,3}>/g, '') // 行内时间戳
+    .replace(INLINE_TIMESTAMP_RE_G, '') // 行内时间戳
     .replace(/<\/?(?:c|v|b|i|u|ruby|rt|lang)(?:[.\s][^<>]*)?>/gi, '');
   return normalizeCaptionLines(decodeEntities(noTags));
 }
@@ -49,6 +52,9 @@ export function parseVtt(body: string): CaptionParseResult {
   const candidates: CueCandidate[] = [];
   let prevLines: string[] = [];
   let prevEnd = -1;
+  // 滚动去重只针对 YouTube 自动字幕（带行内时间标签）：人工字幕里相接且文本相同的 cue
+  // （[Music]、副歌、"No." / "No."）是真实内容，交给 finalizeCandidates 合并而不是丢弃。
+  const rolling = INLINE_TIMESTAMP_RE.test(text);
 
   for (let bi = 1; bi < blocks.length; bi++) {
     const lines = blocks[bi]!.split('\n');
@@ -73,7 +79,7 @@ export function parseVtt(body: string): CaptionParseResult {
     let newLines = fullLines;
 
     // 滚动字幕：当前 cue 开头若与上一条 cue 末尾若干行相同（且时间相接），去掉这些重复行。
-    if (prevLines.length && fullLines.length && start <= prevEnd + 50) {
+    if (rolling && prevLines.length && fullLines.length && start <= prevEnd + 50) {
       for (let k = Math.min(prevLines.length, fullLines.length); k >= 1; k--) {
         const tail = prevLines.slice(prevLines.length - k);
         if (tail.every((l, i) => l === fullLines[i])) {

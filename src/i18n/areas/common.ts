@@ -80,7 +80,7 @@ const zhCN = {
   // 地址校验
   'common.url.wildcardHost': '服务地址的主机名不能包含 *。',
   'common.url.localAsrOnly':
-    '本地识别服务地址只允许 http://127.0.0.1:<端口>，例如 http://127.0.0.1:8765。',
+    '本地识别服务地址只允许 http://127.0.0.1:<端口>（端口 1024–65535），例如 http://127.0.0.1:8765。',
 
   // 服务配置
   'common.config.invalidUrl': '服务地址无效：{detail}',
@@ -324,7 +324,7 @@ const en: Record<keyof typeof zhCN, string> = {
 
   'common.url.wildcardHost': 'The service host name cannot contain *.',
   'common.url.localAsrOnly':
-    'The local recognition service must be http://127.0.0.1:<port>, e.g. http://127.0.0.1:8765.',
+    'The local recognition service must be http://127.0.0.1:<port> (port 1024–65535), e.g. http://127.0.0.1:8765.',
 
   'common.config.invalidUrl': 'Invalid service URL: {detail}',
   'common.config.missingBoth':

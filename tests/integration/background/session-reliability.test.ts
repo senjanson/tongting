@@ -212,6 +212,33 @@ describe('buffered captions diagnostics and recovery', () => {
     expect(latest(h).notice).toBeUndefined();
     expect(h.offscreen.kinds()).not.toContain('capture/start');
   });
+
+  it('keeps translating as the video plays when local preloading is selected but not usable', async () => {
+    const h = harness();
+    await configure(h, { buffered: true, asr: true });
+    // 选了本地识别但还没配对：预读路由不可用，不能先拆掉边播边译来源再让启动失败。
+    await h.coordinator.handleCommand({ kind: 'asr/clear-token' });
+    await h.coordinator.idle();
+    h.deps.preloadYoutubeAudio = vi.fn(async (request) => ({
+      startMs: request.startMs,
+      durationMs: request.durationMs,
+      text: '',
+      segments: [],
+    }));
+    const c = await start(h, { fallback: true });
+    expect(latest(h).error).toBeUndefined();
+    expect(latest(h)).toMatchObject({
+      phase: 'running',
+      sourceMode: 'incremental-captions',
+      notice: { code: 'incremental-captions', level: 'warning' },
+    });
+    expect(h.deps.preloadYoutubeAudio).not.toHaveBeenCalled();
+    expect(
+      c.requests
+        .filter((r) => r.request.kind === 'captions/observe-visible')
+        .map((r) => (r.request as { enable: boolean }).enable),
+    ).toEqual([true]);
+  });
 });
 
 describe('translation problems take priority and source notices return after recovery', () => {

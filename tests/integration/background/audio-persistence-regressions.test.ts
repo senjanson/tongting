@@ -212,6 +212,70 @@ describe('audio and persistence review regressions', () => {
     await restored.stop('done');
   });
 
+  it('folds a re-recognition of confirmed audio into the historical cue without leaving a duplicate', async () => {
+    const { h, ui, make } = await fixture(true);
+    const first = make();
+    await first.start({ stillWanted: () => true });
+    const req = h.offscreen.requests.find((r) => r.kind === 'capture/start') as Extract<
+      OffscreenRequest,
+      { kind: 'capture/start' }
+    >;
+    first.onOffscreenEvent({
+      kind: 'asr/result',
+      leaseId: req.leaseId,
+      owner: req.owner,
+      segmentId: 'before',
+      text: 'Hello world',
+      startMs: 0,
+      endMs: 2000,
+      revision: 0,
+      final: true,
+      language: 'en',
+      endEstimated: false,
+    });
+    const historical = FakeScheduler.all.at(-1)!.cues[0]!;
+    FakeScheduler.all.at(-1)!.emit([
+      {
+        cueId: historical.id,
+        cueRevision: 0,
+        state: 'done',
+        translatedText: '你好世界',
+        translationKey: 'k',
+      },
+    ]);
+    await first.stop('worker-restart');
+    await ui.command({ kind: 'settings/update', patch: { provider: { model: 'new-model' } } });
+    const restored = make();
+    await restored.start({ stillWanted: () => true, recovery: {} });
+    const again = h.offscreen.requests.filter((r) => r.kind === 'capture/start').at(-1) as Extract<
+      OffscreenRequest,
+      { kind: 'capture/start' }
+    >;
+    const base = {
+      kind: 'asr/result' as const,
+      leaseId: again.leaseId,
+      owner: again.owner,
+      segmentId: 'again',
+      startMs: 0,
+      endMs: 2000,
+      language: 'en',
+      endEstimated: false,
+    };
+    // 同一段音频再次识别：临时结果先后与历史文本不同/相同，最后确认。
+    restored.onOffscreenEvent({ ...base, revision: 0, final: false, text: 'Hello wor' });
+    restored.onOffscreenEvent({ ...base, revision: 1, final: false, text: 'Hello world' });
+    // 已确认的历史 cue 不被临时结果降级。
+    expect(restored.sortedCues().filter((c) => c.stability === 'final')).toHaveLength(1);
+    expect(restored.sortedCues().filter((c) => c.sourceText === 'Hello world')).toHaveLength(1);
+    restored.onOffscreenEvent({ ...base, revision: 1, final: true, text: 'Hello world' });
+    expect(restored.sortedCues()).toMatchObject([
+      { id: historical.id, sourceText: 'Hello world', stability: 'final' },
+    ]);
+    const scheduler = FakeScheduler.all.at(-1)!;
+    expect(scheduler.cues.map((c) => c.id)).toEqual([historical.id]);
+    await restored.stop('done');
+  });
+
   it('freezes title and language while a save is debounced or waiting for storage', async () => {
     const { h, ui, content, make } = await fixture();
     const session = make();

@@ -25,12 +25,16 @@ export function checkServiceUrl(input: string, locale: Locale = getLocale()): Or
   };
 }
 
-/** 本地识别服务地址校验：只允许 http://127.0.0.1:<端口>，不带路径、查询或凭证。 */
+/** 本地识别服务只接受的端口范围（与 services/asr-local 的 validate_port 一致）。 */
+const LOCAL_ASR_MIN_PORT = 1024;
+const LOCAL_ASR_MAX_PORT = 65_535;
+
+/** 本地识别服务地址校验：只允许 http://127.0.0.1:<端口>（1024–65535），不带路径、查询或凭证。 */
 export function checkLocalAsrUrl(input: string, locale: Locale = getLocale()): OriginCheck {
   const value = input.trim();
   const match = /^http:\/\/127\.0\.0\.1:(\d{1,5})\/?$/.exec(value);
   const port = match ? Number(match[1]) : NaN;
-  if (!match || !Number.isInteger(port) || port < 1 || port > 65_535) {
+  if (!match || !Number.isInteger(port) || port < LOCAL_ASR_MIN_PORT || port > LOCAL_ASR_MAX_PORT) {
     return {
       ok: false,
       reason: translate(locale, 'common.url.localAsrOnly'),

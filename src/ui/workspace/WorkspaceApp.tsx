@@ -241,6 +241,7 @@ function WorkspaceView() {
     () => ({ recordId: null, videoId: initialVideoId() }),
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // 记录实时会话的变化与刚结束的会话（渲染期间按条件更新，React 推荐的派生方式）。
   const liveKey = liveSessionsKey(snapshot);
@@ -320,13 +321,15 @@ function WorkspaceView() {
   const videoId = selected?.videoId ?? selection.videoId;
 
   const onDelete = async () => {
-    if (!selected) return;
+    // 确认按钮不阻止重复点击：删除进行中再次点击会重复执行并弹出两次提示。
+    if (!selected || deleting) return;
     if (isRecordInUse(snapshot, selected.recordId)) {
       // 确认期间开始了翻译：删除会被 worker 写回，不执行。
       notify(t('options.workspace.deleteInUse'), 'warning');
       setConfirmDelete(false);
       return;
     }
+    setDeleting(true);
     try {
       await deleteTranscript(selected.recordId);
       notify(t('options.workspace.deleted'), 'success');
@@ -335,6 +338,7 @@ function WorkspaceView() {
     } catch {
       notify(t('options.workspace.deleteFailed'), 'danger');
     } finally {
+      setDeleting(false);
       setConfirmDelete(false);
     }
   };
@@ -433,6 +437,7 @@ function WorkspaceView() {
         title={t('options.workspace.deleteTitle')}
         confirmLabel={t('options.workspace.deleteRecord')}
         danger
+        busy={deleting}
         onConfirm={() => void onDelete()}
         onCancel={() => setConfirmDelete(false)}
       >
